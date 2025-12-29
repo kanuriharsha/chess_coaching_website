@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { Chess, Square, Move } from 'chess.js';
 import {
   getSquareColor,
@@ -116,6 +116,15 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
     },
     [game, interactive, selectedSquare, possibleMoves, onMove, onSquareClick]
   );
+
+  // If an external selected square is provided, compute its possible moves
+  useEffect(() => {
+    if (selectedSquare) {
+      setPossibleMoves(getLegalMoves(game, selectedSquare as Square));
+    } else {
+      setPossibleMoves([]);
+    }
+  }, [game, selectedSquare]);
 
   const isSelected = (square: Square) => selectedSquare === square;
   const isLastMove = (square: Square) =>

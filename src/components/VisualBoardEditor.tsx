@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { Chess, Square } from 'chess.js';
+import { getPossibleSquares, isCapture } from '@/lib/chess';
 import { Button } from './ui/button';
 import { RotateCcw, Trash2, Play, Save, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
@@ -56,6 +57,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
   const [solutionGame, setSolutionGame] = useState<Chess | null>(null);
   const [solutionMoves, setSolutionMoves] = useState<string[]>([]);
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
+  const [possibleTargets, setPossibleTargets] = useState<string[]>([]);
 
   // Convert board array to FEN
   const boardToFen = useCallback((): string => {
@@ -131,11 +133,13 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
           toast.error('Invalid move');
         }
         setSelectedSquare(null);
+        setPossibleTargets([]);
       } else {
         // Select square if it has a piece of current turn
         const piece = solutionGame.get(square);
         if (piece && piece.color === solutionGame.turn()) {
           setSelectedSquare(square);
+          setPossibleTargets(getPossibleSquares(solutionGame, square));
         }
       }
     }
@@ -189,6 +193,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
       setSolutionGame(new Chess(solutionGame.fen()));
       setSolutionMoves(prev => prev.slice(0, -1));
       setSelectedSquare(null);
+      setPossibleTargets([]);
     }
   };
 
@@ -197,6 +202,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
     setMode('setup');
     setSolutionGame(null);
     setSelectedSquare(null);
+    setPossibleTargets([]);
   };
 
   // Save puzzle
@@ -284,6 +290,15 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                             className="w-10 h-10 sm:w-12 sm:h-12 object-contain pointer-events-none"
                             draggable={false}
                           />
+                        )}
+                        {/* Move indicator dot (solution mode) */}
+                        {mode === 'solution' && possibleTargets.includes(square) && !piece && (
+                          <span className="absolute w-3 h-3 rounded-full bg-black/70" style={{ opacity: 0.9 }} />
+                        )}
+
+                        {/* Capture indicator ring */}
+                        {mode === 'solution' && possibleTargets.includes(square) && piece && selectedSquare && solutionGame && isCapture(solutionGame, selectedSquare as Square, square as Square) && (
+                          <span className="absolute w-8 h-8 rounded-full border-2 border-red-500/80" style={{ boxSizing: 'border-box' }} />
                         )}
                         {/* Coordinate labels */}
                         {file === 0 && (
