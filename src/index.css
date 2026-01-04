@@ -1,0 +1,310 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Chess-inspired color palette */
+    --background: 45 30% 97%;
+    --foreground: 150 10% 15%;
+
+    --card: 45 25% 95%;
+    --card-foreground: 150 10% 15%;
+
+    --popover: 45 30% 97%;
+    --popover-foreground: 150 10% 15%;
+
+    /* Forest green - primary chess accent */
+    --primary: 93 32% 46%;
+    --primary-foreground: 45 30% 97%;
+
+    /* Warm cream secondary */
+    --secondary: 45 25% 90%;
+    --secondary-foreground: 150 10% 20%;
+
+    --muted: 45 15% 88%;
+    --muted-foreground: 150 8% 45%;
+
+    /* Sage green accent */
+    --accent: 93 25% 55%;
+    --accent-foreground: 45 30% 97%;
+
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 45 30% 97%;
+
+    --border: 45 15% 85%;
+    --input: 45 15% 88%;
+    --ring: 93 32% 46%;
+
+    --radius: 0.75rem;
+
+    /* Chess board colors - Chess.com style */
+    --board-light: 68 56% 90%;
+    --board-dark: 93 36% 51%;
+    --board-highlight: 54 100% 62%;
+    --board-move-dot: 0 0% 0%;
+    --board-selected: 54 100% 65%;
+    --board-last-move: 54 80% 72%;
+
+    /* Success/feedback colors */
+    --success: 142 70% 45%;
+    --success-foreground: 45 30% 97%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 150 10% 15%;
+    --brilliant: 280 70% 55%;
+    --brilliant-foreground: 45 30% 97%;
+
+    /* Sidebar */
+    --sidebar-background: 93 25% 25%;
+    --sidebar-foreground: 45 25% 92%;
+    --sidebar-primary: 93 35% 50%;
+    --sidebar-primary-foreground: 45 30% 97%;
+    --sidebar-accent: 93 20% 35%;
+    --sidebar-accent-foreground: 45 25% 92%;
+    --sidebar-border: 93 20% 30%;
+    --sidebar-ring: 93 32% 46%;
+  }
+
+  .dark {
+    --background: 150 15% 10%;
+    --foreground: 45 25% 92%;
+
+    --card: 150 12% 14%;
+    --card-foreground: 45 25% 92%;
+
+    --popover: 150 12% 14%;
+    --popover-foreground: 45 25% 92%;
+
+    --primary: 93 35% 50%;
+    --primary-foreground: 150 15% 10%;
+
+    --secondary: 150 10% 20%;
+    --secondary-foreground: 45 25% 92%;
+
+    --muted: 150 10% 20%;
+    --muted-foreground: 45 15% 60%;
+
+    --accent: 93 30% 45%;
+    --accent-foreground: 45 25% 92%;
+
+    --destructive: 0 60% 45%;
+    --destructive-foreground: 45 25% 92%;
+
+    --border: 150 10% 20%;
+    --input: 150 10% 20%;
+    --ring: 93 35% 50%;
+
+    /* Chess board colors - Chess.com style dark mode */
+    --board-light: 68 56% 90%;
+    --board-dark: 93 36% 51%;
+    --board-highlight: 54 100% 62%;
+    --board-selected: 54 100% 65%;
+    --board-last-move: 54 80% 72%;
+
+    --sidebar-background: 150 15% 8%;
+    --sidebar-foreground: 45 25% 92%;
+    --sidebar-primary: 93 35% 50%;
+    --sidebar-primary-foreground: 150 15% 10%;
+    --sidebar-accent: 150 10% 15%;
+    --sidebar-accent-foreground: 45 25% 92%;
+    --sidebar-border: 150 10% 18%;
+    --sidebar-ring: 93 35% 50%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: 'Playfair Display', serif;
+  }
+}
+
+@layer components {
+  .chess-board-container {
+    @apply rounded-md overflow-hidden;
+    box-shadow: 
+      0 4px 20px rgba(0, 0, 0, 0.3),
+      0 0 0 3px #312e2b;
+    border-radius: 4px;
+  }
+
+  .chess-square-light {
+    background-color: #ebecd0;
+  }
+
+  .chess-square-dark {
+    background-color: #779556;
+  }
+
+  .chess-square-selected {
+    background-color: #f7f769 !important;
+  }
+
+  .chess-square-last-move {
+    background-color: #f7f683 !important;
+  }
+
+  .chess-square-highlight {
+    background-color: #ffff5a !important;
+  }
+
+  .move-dot {
+    @apply absolute rounded-full pointer-events-none;
+    width: 28%;
+    height: 28%;
+    top: 36%;
+    left: 36%;
+    background-color: rgba(0, 0, 0, 0.12);
+  }
+
+  .capture-ring {
+    @apply absolute rounded-full pointer-events-none;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    border: 5px solid rgba(0, 0, 0, 0.12);
+    box-sizing: border-box;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-muted-foreground transition-all duration-200;
+    @apply hover:bg-secondary hover:text-foreground;
+  }
+
+  .nav-item-active {
+    @apply bg-primary text-primary-foreground shadow-md;
+    @apply hover:bg-primary hover:text-primary-foreground;
+  }
+
+  .card-premium {
+    @apply bg-card rounded-xl border border-border shadow-lg;
+    @apply transition-all duration-300 hover:shadow-xl hover:border-primary/30;
+  }
+
+  .btn-premium {
+    @apply bg-primary text-primary-foreground font-medium rounded-lg px-6 py-3;
+    @apply shadow-lg shadow-primary/25 transition-all duration-200;
+    @apply hover:shadow-xl hover:shadow-primary/30 hover:scale-[1.02];
+    @apply active:scale-[0.98];
+  }
+
+  .feedback-checkmate {
+    @apply bg-success text-success-foreground;
+  }
+
+  .feedback-brilliant {
+    @apply bg-brilliant text-brilliant-foreground;
+  }
+
+  .feedback-good {
+    @apply bg-primary text-primary-foreground;
+  }
+
+  .puzzle-card-locked {
+    @apply opacity-60 cursor-not-allowed;
+  }
+
+  .input-premium {
+    @apply w-full px-4 py-3 rounded-lg border border-border bg-background;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary;
+    @apply transition-all duration-200 placeholder:text-muted-foreground;
+  }
+
+  .label-premium {
+    @apply block text-sm font-medium text-foreground mb-2;
+  }
+}
+
+@layer utilities {
+  .animate-piece-move {
+    animation: piece-move 0.15s ease-out;
+  }
+
+  .animate-feedback-pop {
+    animation: feedback-pop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  .animate-pulse-soft {
+    animation: pulse-soft 2s ease-in-out infinite;
+  }
+
+  @keyframes piece-move {
+    from {
+      transform: scale(1.1);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+
+  @keyframes feedback-pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.5);
+    }
+    70% {
+      transform: scale(1.1);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+
+  @keyframes pulse-soft {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.7;
+    }
+  }
+
+  @keyframes pulse-border {
+    0%, 100% {
+      border-color: hsl(var(--primary));
+      box-shadow: 0 0 0 0 hsl(var(--primary) / 0.4);
+    }
+    50% {
+      border-color: hsl(var(--primary) / 0.6);
+      box-shadow: 0 0 20px 5px hsl(var(--primary) / 0.2);
+    }
+  }
+
+  .animate-pulse-border {
+    animation: pulse-border 2s ease-in-out infinite;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}
