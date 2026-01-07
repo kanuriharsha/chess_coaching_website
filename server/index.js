@@ -32,6 +32,17 @@ const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://harsha:harsha@cluster0.gwmwpwl.mongodb.net/harshachess?retryWrites=true&w=majority';
 const JWT_SECRET = process.env.JWT_SECRET || 'harshachess_jwt_secret_key_2024';
 
+// Helper to create a loose regex that ignores spaces and case between characters
+function makeLooseRegex(input) {
+  if (!input || typeof input !== 'string') return null;
+  const cleaned = input.replace(/\s+/g, '');
+  // escape regex special chars
+  const escaped = cleaned.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  // allow any amount of whitespace between characters and match full string
+  const parts = escaped.split('');
+  return new RegExp('^' + parts.map(c => c + '\\s*').join('') + '$', 'i');
+}
+
 // Middleware
 app.use(cors({
   origin: allowedOrigins,
@@ -235,33 +246,44 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body || {};
-    console.log('[LOGIN] Incoming login request body:', req.body);
     if (!username || !password) {
       return res.status(400).json({ message: 'Username and password required' });
     }
 
-    const user = await User.findOne({ username });
-    console.log('[LOGIN] Found user:', user ? { id: user._id.toString(), username: user.username } : null);
-    if (!user || user.password !== password) {
-      console.log('[LOGIN] Invalid credentials for', username);
-      return res.status(401).json({ message: 'Invalid credentials' });
+    // Find user by username allowing spaces and case-insensitive variations
+    const usernameRegex = makeLooseRegex(username);
+    let foundUser = null;
+    if (usernameRegex) {
+      foundUser = await User.findOne({ username: { $regex: usernameRegex } });
+    } else {
+      foundUser = await User.findOne({ username });
     }
 
-    if (!user.isEnabled) {
+    if (!foundUser) {
+      return res.status(401).json({ message: 'Invalid credentials, please try with correct credentials' });
+    }
+
+    // Compare passwords ignoring spaces and case
+    const normalize = (s) => (s || '').toString().replace(/\s+/g, '').toLowerCase();
+    if (normalize(foundUser.password) !== normalize(password)) {
+      return res.status(401).json({ message: 'Invalid credentials, please try with correct credentials' });
+    }
+
+    if (!foundUser.isEnabled) {
       return res.status(403).json({ message: 'Account disabled' });
     }
 
-    const token = jwt.sign({ id: user._id.toString(), role: user.role }, JWT_SECRET, { expiresIn: '7d' });
+    const token = jwt.sign({ id: foundUser._id.toString(), role: foundUser.role }, JWT_SECRET, { expiresIn: '7d' });
 
     res.json({
       token,
       user: {
-        id: user._id,
-        username: user.username,
-        role: user.role,
-        isEnabled: user.isEnabled,
-        onboardingComplete: user.onboardingComplete,
-        profile: user.profile
+        id: foundUser._id,
+        username: foundUser.username,
+        role: foundUser.role,
+        isEnabled: foundUser.isEnabled,
+        onboardingComplete: foundUser.onboardingComplete,
+        profile: foundUser.profile
       }
     });
   } catch (error) {

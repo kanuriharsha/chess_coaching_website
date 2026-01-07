@@ -16,13 +16,13 @@ const Login = () => {
     e.preventDefault();
     setIsLoading(true);
 
-    const success = await login(username, password);
+    const result = await login(username, password);
 
-    if (success) {
+    if (result.success) {
       toast.success('Welcome back!');
       navigate('/puzzles');
     } else {
-      toast.error('Invalid credentials or account disabled');
+      toast.error(result.message || 'Invalid credentials or account disabled');
     }
 
     setIsLoading(false);

@@ -45,7 +45,7 @@ export interface StudentProfile {
 
 interface AuthContextType {
   user: User | null;
-  login: (username: string, password: string) => Promise<boolean>;
+  login: (username: string, password: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
   completeOnboarding: (profile: StudentProfile) => Promise<void>;
   isLoading: boolean;
@@ -102,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const login = async (username: string, password: string): Promise<boolean> => {
+  const login = async (username: string, password: string): Promise<{ success: boolean; message?: string }> => {
     try {
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
@@ -118,12 +118,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(data.token);
         localStorage.setItem('chessCoach_token', data.token);
         localStorage.setItem('chessCoach_user', JSON.stringify(data.user));
-        return true;
+        return { success: true };
       }
-      return false;
+
+      // Try to extract error message from server
+      let serverMsg = undefined;
+      try {
+        const body = await response.json();
+        serverMsg = body?.message;
+      } catch (e) {
+        try {
+          serverMsg = await response.text();
+        } catch (e2) {
+          serverMsg = undefined;
+        }
+      }
+
+      return { success: false, message: serverMsg || 'Invalid credentials or account disabled' };
     } catch (error) {
       console.error('Login error:', error);
-      return false;
+      return { success: false, message: 'Network or server error' };
     }
   };
 
