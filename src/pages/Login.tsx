@@ -29,24 +29,24 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-background px-4">
+    <div className="h-screen flex flex-col items-center justify-center bg-background px-4 py-8">
       <div className="w-full max-w-md animate-fade-in">
         {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary mb-4 shadow-premium">
-            <Crown className="w-8 h-8 text-primary-foreground" />
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary mb-3 shadow-premium">
+            <Crown className="w-7 h-7 text-primary-foreground" />
           </div>
-          <h1 className="font-serif text-3xl font-bold text-foreground">Learn chess from Kanuri Harsha Vardhan</h1>
-          <p className="text-muted-foreground mt-2">Master the game, one move at a time</p>
+          <h1 className="font-serif text-2xl md:text-3xl font-bold text-foreground">Chess Coach</h1>
+          <p className="text-muted-foreground mt-1 text-sm md:text-base">Master the game, one move at a time</p>
         </div>
 
         {/* Login Card */}
-        <div className="card-premium p-8">
-          <h2 className="font-serif text-2xl font-semibold text-foreground mb-6 text-center">
+        <div className="card-premium p-6 md:p-8">
+          <h2 className="font-serif text-xl md:text-2xl font-semibold text-foreground mb-4 md:mb-6 text-center">
             Sign In
           </h2>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4 md:space-y-5">
             <div>
               <label htmlFor="username" className="label-premium">
                 Username
@@ -98,17 +98,6 @@ const Login = () => {
               )}
             </button>
           </form>
-
-          <div className="mt-6 pt-6 border-t border-border">
-            <p className="text-sm text-center text-muted-foreground">
-              Created and designed by Kanuri Harsha Vardhan with ❤️
-            </p>
-          </div>
-        </div>
-
-        {/* Chess pieces decoration */}
-        <div className="flex justify-center gap-4 mt-8 text-4xl opacity-20">
-          ♔ ♕ ♗ ♘ ♖
         </div>
       </div>
     </div>

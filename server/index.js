@@ -156,12 +156,42 @@ const contentAccessSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   // Puzzle access by category
   puzzleAccess: {
-    'mate-in-1': { enabled: { type: Boolean, default: false }, limit: { type: Number, default: 0 } },
-    'mate-in-2': { enabled: { type: Boolean, default: false }, limit: { type: Number, default: 0 } },
-    'mate-in-3': { enabled: { type: Boolean, default: false }, limit: { type: Number, default: 0 } },
-    'pins': { enabled: { type: Boolean, default: false }, limit: { type: Number, default: 0 } },
-    'forks': { enabled: { type: Boolean, default: false }, limit: { type: Number, default: 0 } },
-    'traps': { enabled: { type: Boolean, default: false }, limit: { type: Number, default: 0 } }
+    'mate-in-1': { 
+      enabled: { type: Boolean, default: false }, 
+      limit: { type: Number, default: 0 },
+      rangeStart: { type: Number, default: null },
+      rangeEnd: { type: Number, default: null }
+    },
+    'mate-in-2': { 
+      enabled: { type: Boolean, default: false }, 
+      limit: { type: Number, default: 0 },
+      rangeStart: { type: Number, default: null },
+      rangeEnd: { type: Number, default: null }
+    },
+    'mate-in-3': { 
+      enabled: { type: Boolean, default: false }, 
+      limit: { type: Number, default: 0 },
+      rangeStart: { type: Number, default: null },
+      rangeEnd: { type: Number, default: null }
+    },
+    'pins': { 
+      enabled: { type: Boolean, default: false }, 
+      limit: { type: Number, default: 0 },
+      rangeStart: { type: Number, default: null },
+      rangeEnd: { type: Number, default: null }
+    },
+    'forks': { 
+      enabled: { type: Boolean, default: false }, 
+      limit: { type: Number, default: 0 },
+      rangeStart: { type: Number, default: null },
+      rangeEnd: { type: Number, default: null }
+    },
+    'traps': { 
+      enabled: { type: Boolean, default: false }, 
+      limit: { type: Number, default: 0 },
+      rangeStart: { type: Number, default: null },
+      rangeEnd: { type: Number, default: null }
+    }
   },
   // Opening access
   openingAccess: {
@@ -1391,12 +1421,12 @@ app.get('/api/my-content-access', async (req, res) => {
       access = await ContentAccess.create({
         userId: decoded.id,
         puzzleAccess: {
-          'mate-in-1': { enabled: false, limit: 0 },
-          'mate-in-2': { enabled: false, limit: 0 },
-          'mate-in-3': { enabled: false, limit: 0 },
-          'pins': { enabled: false, limit: 0 },
-          'forks': { enabled: false, limit: 0 },
-          'traps': { enabled: false, limit: 0 }
+          'mate-in-1': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null },
+          'mate-in-2': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null },
+          'mate-in-3': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null },
+          'pins': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null },
+          'forks': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null },
+          'traps': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null }
         },
         openingAccess: { enabled: false, allowedOpenings: [] },
         bestGamesAccess: { enabled: false, allowedGames: [] }

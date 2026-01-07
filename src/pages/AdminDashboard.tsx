@@ -101,7 +101,7 @@ interface BestGameData {
 interface ContentAccess {
   userId: string;
   puzzleAccess: {
-    [key: string]: { enabled: boolean; limit: number };
+    [key: string]: { enabled: boolean; limit: number; rangeStart?: number; rangeEnd?: number };
   };
   openingAccess: {
     enabled: boolean;
@@ -430,7 +430,7 @@ const AdminDashboard = () => {
     }
   };
 
-  const updatePuzzleAccess = (category: string, field: 'enabled' | 'limit', value: boolean | number) => {
+  const updatePuzzleAccess = (category: string, field: 'enabled' | 'limit' | 'rangeStart' | 'rangeEnd', value: boolean | number | null) => {
     if (!userContentAccess) return;
     
     setUserContentAccess({
@@ -2548,26 +2548,54 @@ const AdminDashboard = () => {
                                 onCheckedChange={(checked) => updatePuzzleAccess(cat.id, 'enabled', checked)}
                               />
                             </div>
-                            <div className="flex items-center gap-2">
-                              <Label className="text-sm text-muted-foreground">Puzzle Limit:</Label>
-                              <Input
-                                type="number"
-                                min="0"
-                                max={puzzleCounts[cat.id] || 100}
-                                value={userContentAccess.puzzleAccess?.[cat.id]?.limit || 0}
-                                onChange={(e) => updatePuzzleAccess(cat.id, 'limit', parseInt(e.target.value) || 0)}
-                                className="w-20 h-8"
-                                disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled}
-                              />
-                              <span className="text-sm text-muted-foreground">
-                                / {puzzleCounts[cat.id] || 0} available
-                              </span>
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-2">
+                                <Label className="text-sm text-muted-foreground">Puzzle Limit:</Label>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  max={puzzleCounts[cat.id] || 100}
+                                  value={userContentAccess.puzzleAccess?.[cat.id]?.limit || 0}
+                                  onChange={(e) => updatePuzzleAccess(cat.id, 'limit', parseInt(e.target.value) || 0)}
+                                  className="w-20 h-8"
+                                  disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled}
+                                />
+                                <span className="text-sm text-muted-foreground">
+                                  / {puzzleCounts[cat.id] || 0} available
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Label className="text-sm text-muted-foreground">Range:</Label>
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  max={puzzleCounts[cat.id] || 100}
+                                  placeholder="Start"
+                                  value={userContentAccess.puzzleAccess?.[cat.id]?.rangeStart || ''}
+                                  onChange={(e) => updatePuzzleAccess(cat.id, 'rangeStart', e.target.value ? parseInt(e.target.value) : null)}
+                                  className="w-16 h-8"
+                                  disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled}
+                                />
+                                <span className="text-sm text-muted-foreground">to</span>
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  max={puzzleCounts[cat.id] || 100}
+                                  placeholder="End"
+                                  value={userContentAccess.puzzleAccess?.[cat.id]?.rangeEnd || ''}
+                                  onChange={(e) => updatePuzzleAccess(cat.id, 'rangeEnd', e.target.value ? parseInt(e.target.value) : null)}
+                                  className="w-16 h-8"
+                                  disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled}
+                                />
+                              </div>
                             </div>
                             <p className="text-xs text-muted-foreground mt-2">
                               {userContentAccess.puzzleAccess?.[cat.id]?.enabled 
-                                ? userContentAccess.puzzleAccess?.[cat.id]?.limit === 0 
-                                  ? '✓ All puzzles unlocked' 
-                                  : `✓ ${userContentAccess.puzzleAccess?.[cat.id]?.limit} puzzles unlocked`
+                                ? userContentAccess.puzzleAccess?.[cat.id]?.rangeStart && userContentAccess.puzzleAccess?.[cat.id]?.rangeEnd
+                                  ? `✓ Puzzles ${userContentAccess.puzzleAccess?.[cat.id]?.rangeStart}-${userContentAccess.puzzleAccess?.[cat.id]?.rangeEnd} unlocked`
+                                  : userContentAccess.puzzleAccess?.[cat.id]?.limit === 0 
+                                    ? '✓ All puzzles unlocked' 
+                                    : `✓ First ${userContentAccess.puzzleAccess?.[cat.id]?.limit} puzzles unlocked`
                                 : '🔒 Category locked'}
                             </p>
                           </div>

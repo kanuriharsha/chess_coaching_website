@@ -40,7 +40,9 @@ interface ContentAccess {
   puzzleAccess: {
     [category: string]: {
       enabled: boolean;
-      limit: number;
+      limit: number; // 0 = unlimited
+      rangeStart?: number; // 1-based inclusive
+      rangeEnd?: number; // 1-based inclusive
     };
   };
   openingAccess: {
@@ -164,13 +166,23 @@ const Puzzles = () => {
       if (response.ok) {
         let puzzles: PuzzleData[] = await response.json();
         
-        // Apply access limit for non-admin users
+        // Apply access limit or range for non-admin users
         const limit = getAccessLimit(category);
-        if (!isAdmin && limit > 0) {
-          puzzles = puzzles.map((puzzle, index) => ({
-            ...puzzle,
-            isLocked: index >= limit
-          }));
+        const rangeCfg = contentAccess?.puzzleAccess?.[category];
+        if (!isAdmin) {
+          if (rangeCfg && rangeCfg.rangeStart && rangeCfg.rangeEnd && rangeCfg.rangeEnd >= rangeCfg.rangeStart) {
+            const start = Math.max(1, rangeCfg.rangeStart) - 1; // convert to 0-based index
+            const end = Math.min(puzzles.length, rangeCfg.rangeEnd) - 1;
+            puzzles = puzzles.map((puzzle, index) => ({
+              ...puzzle,
+              isLocked: index < start || index > end
+            }));
+          } else if (limit > 0) {
+            puzzles = puzzles.map((puzzle, index) => ({
+              ...puzzle,
+              isLocked: index >= limit
+            }));
+          }
         }
 
         // Ensure unlocked puzzles appear first for students
@@ -376,16 +388,34 @@ const Puzzles = () => {
                     <PuzzleIcon className="w-4 h-4 text-primary" />
                     <span className="text-muted-foreground">{category.count} puzzles</span>
                   </div>
-                  {/* Show access limit badge */}
-                  {!isAdmin && hasAccessToCategory(category.id) && accessLimit > 0 && (
-                    <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 bg-warning/20 text-warning-foreground rounded-full text-xs">
-                      <ShieldOff className="w-3 h-3" />
-                      {accessLimit} unlocked
-                    </div>
-                  )}
-                  {!isAdmin && hasAccessToCategory(category.id) && accessLimit === 0 && (
-                    <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 bg-success/20 text-success rounded-full text-xs">
-                      ✓ Full access
+                  {/* Show access info */}
+                  {!isAdmin && hasAccessToCategory(category.id) && (
+                    <div className="mt-2">
+                      {(() => {
+                        const accessCfg = contentAccess?.puzzleAccess?.[category.id];
+                        if (accessCfg?.rangeStart && accessCfg?.rangeEnd) {
+                          return (
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/20 text-blue-700 dark:text-blue-300 rounded-full text-xs">
+                              <ShieldOff className="w-3 h-3" />
+                              Puzzles {accessCfg.rangeStart}-{accessCfg.rangeEnd}
+                            </div>
+                          );
+                        } else if (accessCfg?.limit === 0) {
+                          return (
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-success/20 text-success rounded-full text-xs">
+                              ✓ Full access
+                            </div>
+                          );
+                        } else if (accessCfg?.limit && accessCfg.limit > 0) {
+                          return (
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-warning/20 text-warning-foreground rounded-full text-xs">
+                              <ShieldOff className="w-3 h-3" />
+                              First {accessCfg.limit} unlocked
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
                     </div>
                   )}
                 </button>
