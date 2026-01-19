@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Chess, Square } from 'chess.js';
 import ChessBoard from '@/components/ChessBoard';
+import PromotionDialog from '@/components/PromotionDialog';
+import { isPromotionMove } from '@/lib/chess';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Lock, CheckCircle, Puzzle as PuzzleIcon, ArrowRight, RotateCcw, Lightbulb, ShieldOff, Plus, Edit3 } from 'lucide-react';
@@ -210,7 +212,15 @@ const Puzzles = () => {
       if (solved || !currentPuzzle) return false;
 
       const gameCopy = new Chess(game.fen());
-      const move = gameCopy.move({ from, to, promotion: 'q' });
+      // If move requires promotion, ask user to choose piece
+      const moveVerbose = gameCopy.moves({ square: from, verbose: true }).find(m => m.to === to);
+      if (moveVerbose && moveVerbose.promotion) {
+        setPendingPromotion({ from, to, gameCopy });
+        setShowPromotion(true);
+        return false;
+      }
+
+      const move = gameCopy.move({ from, to });
 
       if (move) {
         setGame(gameCopy);
@@ -261,6 +271,41 @@ const Puzzles = () => {
     },
     [game, solved, playSound, currentPuzzle, attempts, selectedCategory, puzzleCategories, trackPuzzleAttempt]
   );
+
+  // Promotion modal state for puzzles
+  const [showPromotion, setShowPromotion] = useState(false);
+  const [pendingPromotion, setPendingPromotion] = useState<null | { from: Square; to: Square; gameCopy: Chess }>(null);
+
+  const handlePromotionSelect = (piece: 'q' | 'r' | 'b' | 'n') => {
+    if (!pendingPromotion || !currentPuzzle) return;
+    const { from, to, gameCopy } = pendingPromotion;
+    try {
+      const mv = gameCopy.move({ from, to, promotion: piece });
+      if (mv) {
+        setGame(gameCopy);
+        setLastMove({ from, to });
+        const newAttempts = attempts + 1;
+        setAttempts(newAttempts);
+
+        if (currentPuzzle.solution.includes(to) || currentPuzzle.solution.includes(mv.san)) {
+          setSolved(true);
+          toast.success('Checkmate! Brilliant move! ♔');
+          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, puzzleCategories.find(c => c.id === selectedCategory)?.name || '', 'passed', newAttempts, currentPuzzleIndex + 1);
+        } else {
+          toast.error('Not quite right, try again!');
+          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, puzzleCategories.find(c => c.id === selectedCategory)?.name || '', 'failed', newAttempts, currentPuzzleIndex + 1);
+          setTimeout(() => {
+            setGame(new Chess(currentPuzzle.fen));
+            setLastMove(null);
+          }, 1000);
+        }
+      }
+    } catch (err) {
+      toast.error('Invalid promotion move');
+    }
+    setPendingPromotion(null);
+    setShowPromotion(false);
+  };
 
   const resetPuzzle = () => {
     if (currentPuzzle) {
@@ -493,6 +538,12 @@ const Puzzles = () => {
                     onMove={handleMove}
                     interactive={!solved && !currentPuzzle?.isLocked}
                     lastMove={lastMove}
+                  />
+                  <PromotionDialog 
+                    open={showPromotion} 
+                    onOpenChange={setShowPromotion} 
+                    onSelect={handlePromotionSelect}
+                    color={(pendingPromotion && pendingPromotion.gameCopy.get(pendingPromotion.from)?.color) as 'w' | 'b' | undefined}
                   />
                 </div>
               </div>

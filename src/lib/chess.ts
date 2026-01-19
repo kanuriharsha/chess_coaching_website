@@ -71,9 +71,10 @@ export function validateMove(
   to: Square
 ): Move | null {
   try {
-    const tempGame = new Chess(game.fen());
-    const move = tempGame.move({ from, to, promotion: 'q' });
-    return move;
+    // Look up legal moves from the square and match target
+    const moves = game.moves({ square: from, verbose: true });
+    const m = moves.find((mv) => mv.to === to);
+    return m || null;
   } catch {
     return null;
   }
@@ -87,8 +88,16 @@ export function makeMove(
   promotion?: PieceSymbol
 ): Move | null {
   try {
-    const move = game.move({ from, to, promotion: promotion || 'q' });
-    return move;
+    // Check if the move is one of the legal moves and whether it requires promotion
+    const moves = game.moves({ square: from, verbose: true });
+    const target = moves.find((mv) => mv.to === to);
+    if (!target) return null;
+    if (target.promotion && !promotion) {
+      // Promotion required but not provided
+      return null;
+    }
+    const mv = game.move({ from, to, promotion: promotion });
+    return mv;
   } catch {
     return null;
   }
@@ -98,6 +107,13 @@ export function makeMove(
 export function getPossibleSquares(game: Chess, square: Square): Square[] {
   const moves = getLegalMoves(game, square);
   return moves.map((m) => m.to);
+}
+
+// Return true if a move from->to would require promotion
+export function isPromotionMove(game: Chess, from: Square, to: Square): boolean {
+  const moves = game.moves({ square: from, verbose: true });
+  const mv = moves.find(m => m.to === to);
+  return !!(mv && mv.promotion);
 }
 
 // Check game status

@@ -5,6 +5,7 @@ import ChessBoard from '@/components/ChessBoard';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
+import PromotionDialog from '@/components/PromotionDialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -29,6 +30,8 @@ const BestGameEditor = () => {
   const [game, setGame] = useState(new Chess());
   const [currentMoveIndex, setCurrentMoveIndex] = useState(-1);
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
+  const [showPromotion, setShowPromotion] = useState(false);
+  const [pendingPromotion, setPendingPromotion] = useState<null | { from: string; to: string; gameCopy: Chess }>(null);
 
   useEffect(() => {
     if (isEditMode && id) {
@@ -101,16 +104,19 @@ const BestGameEditor = () => {
     if (selectedSquare) {
       // Try to make a move
       try {
-        const move = game.move({
-          from: selectedSquare as Square,
-          to: square as Square,
-          promotion: 'q',
-        });
-        if (move) {
-          setMoves([...moves, move.san]);
-          setGame(new Chess(game.fen()));
-          setCurrentMoveIndex(moves.length);
-          toast.success(`Move recorded: ${move.san}`);
+        const gameCopy = new Chess(game.fen());
+        const mvVerbose = gameCopy.moves({ square: selectedSquare as Square, verbose: true }).find(m => m.to === square);
+        if (mvVerbose && mvVerbose.promotion) {
+          setPendingPromotion({ from: selectedSquare, to: square, gameCopy });
+          setShowPromotion(true);
+        } else {
+          const move = game.move({ from: selectedSquare as Square, to: square as Square });
+          if (move) {
+            setMoves([...moves, move.san]);
+            setGame(new Chess(game.fen()));
+            setCurrentMoveIndex(moves.length);
+            toast.success(`Move recorded: ${move.san}`);
+          }
         }
       } catch (e) {
         toast.error('Invalid move');
@@ -123,6 +129,24 @@ const BestGameEditor = () => {
         setSelectedSquare(square);
       }
     }
+  };
+
+  const handlePromotionSelect = (piece: 'q' | 'r' | 'b' | 'n') => {
+    if (!pendingPromotion) return;
+    const { from, to, gameCopy } = pendingPromotion;
+    try {
+      const mv = gameCopy.move({ from: from as Square, to: to as Square, promotion: piece });
+      if (mv) {
+        setMoves(prev => [...prev, mv.san]);
+        setGame(new Chess(gameCopy.fen()));
+        setCurrentMoveIndex(moves.length);
+        toast.success(`Move recorded: ${mv.san}`);
+      }
+    } catch (err) {
+      toast.error('Invalid promotion move');
+    }
+    setPendingPromotion(null);
+    setShowPromotion(false);
   };
 
   const undoLastMove = () => {
@@ -255,6 +279,12 @@ const BestGameEditor = () => {
               interactive={currentMoveIndex === moves.length - 1 || moves.length === 0}
               onSquareClick={handleSquareClick}
               selectedSquare={selectedSquare}
+            />
+            <PromotionDialog 
+              open={showPromotion} 
+              onOpenChange={setShowPromotion} 
+              onSelect={handlePromotionSelect}
+              color={(pendingPromotion && pendingPromotion.gameCopy.get(pendingPromotion.from)?.color) as 'w' | 'b' | undefined}
             />
 
             {/* Navigation Controls */}

@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Chess, Square } from 'chess.js';
-import { getPossibleSquares, isCapture } from '@/lib/chess';
+import { getPossibleSquares, isCapture, isPromotionMove } from '@/lib/chess';
+import PromotionDialog from './PromotionDialog';
 import { Button } from './ui/button';
 import { RotateCcw, Trash2, Play, Save, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
@@ -66,6 +67,8 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
   const [solutionMoves, setSolutionMoves] = useState<string[]>([]);
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [possibleTargets, setPossibleTargets] = useState<string[]>([]);
+  const [showPromotionDialog, setShowPromotionDialog] = useState(false);
+  const [pendingPromotion, setPendingPromotion] = useState<null | { from: string; to: string; gameCopy: Chess }>(null);
 
   // Load initial FEN and solution if provided (for editing existing puzzles)
   React.useEffect(() => {
@@ -188,19 +191,20 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
       if (selectedSquare) {
         // Try to make move
         try {
-          const move = solutionGame.move({
-            from: selectedSquare as Square,
-            to: square,
-            promotion: 'q'
-          });
-          
-          if (move) {
-            setSolutionMoves(prev => [...prev, move.san]);
-            setSolutionGame(new Chess(solutionGame.fen()));
-            toast.success(`Move recorded: ${move.san}`);
-            
-            if (solutionGame.isCheckmate()) {
-              toast.success('Checkmate! Great puzzle!');
+          const gameCopy = new Chess(solutionGame.fen());
+          const moveVerbose = gameCopy.moves({ square: selectedSquare as Square, verbose: true }).find(m => m.to === square);
+          if (moveVerbose && moveVerbose.promotion) {
+            setPendingPromotion({ from: selectedSquare as string, to: square, gameCopy });
+            setShowPromotionDialog(true);
+          } else {
+            const move = solutionGame.move({ from: selectedSquare as Square, to: square });
+            if (move) {
+              setSolutionMoves(prev => [...prev, move.san]);
+              setSolutionGame(new Chess(solutionGame.fen()));
+              toast.success(`Move recorded: ${move.san}`);
+              if (solutionGame.isCheckmate()) {
+                toast.success('Checkmate! Great puzzle!');
+              }
             }
           }
         } catch (e) {
@@ -217,6 +221,23 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
         }
       }
     }
+  };
+
+  const handlePromotionSelect = (piece: 'q' | 'r' | 'b' | 'n') => {
+    if (!pendingPromotion || !solutionGame) return;
+    const { from, to, gameCopy } = pendingPromotion;
+    try {
+      const mv = gameCopy.move({ from: from as Square, to: to as Square, promotion: piece });
+      if (mv) {
+        setSolutionMoves(prev => [...prev, mv.san]);
+        setSolutionGame(new Chess(gameCopy.fen()));
+        toast.success(`Move recorded: ${mv.san}`);
+      }
+    } catch (err) {
+      toast.error('Invalid promotion move');
+    }
+    setPendingPromotion(null);
+    setShowPromotionDialog(false);
   };
 
   // Clear the board
@@ -402,7 +423,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
           {/* Piece palette - below board, only in setup mode */}
           {mode === 'setup' && (
             <div className="mt-4 p-3 bg-gray-50 rounded-lg border">
-              {/* White pieces row */}
+              
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-xs font-medium text-gray-500 w-14">White:</span>
                 <div className="flex gap-1 flex-wrap">
@@ -546,6 +567,12 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
           </>
         )}
       </div>
+      <PromotionDialog 
+        open={showPromotionDialog} 
+        onOpenChange={setShowPromotionDialog} 
+        onSelect={handlePromotionSelect}
+        color={(pendingPromotion && solutionGame?.get(pendingPromotion.from as Square)?.color) as 'w' | 'b' | undefined}
+      />
     </div>
   );
 };

@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { useChessSound } from '@/hooks/useChessSound';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
 import { Button } from '@/components/ui/button';
+import PromotionDialog from '@/components/PromotionDialog';
 
 type GameMode = 'normal' | 'friendly';
 type Opponent = 'computer' | 'coach';
@@ -30,6 +31,8 @@ const Games = () => {
   const [playerColor, setPlayerColor] = useState<'white' | 'black'>('white');
   const [lastMove, setLastMove] = useState<{ from: Square; to: Square } | null>(null);
   const [moveHistory, setMoveHistory] = useState<string[]>([]);
+  const [showPromotion, setShowPromotion] = useState(false);
+  const [pendingPromotion, setPendingPromotion] = useState<null | { from: Square; to: Square; gameCopy: Chess }>(null);
   const { playSound } = useChessSound();
   const { trackPageVisit } = useActivityTracker();
   const [admins, setAdmins] = useState<Admin[]>([]);
@@ -69,6 +72,27 @@ const Games = () => {
     }
   }, [opponent]);
 
+  // const handlePromotionSelect = (piece: 'q' | 'r' | 'b' | 'n') => {
+  //   if (!pendingPromotion) return;
+  //   const { from, to, gameCopy } = pendingPromotion;
+  //   try {
+  //     const mv = gameCopy.move({ from, to, promotion: piece });
+  //     if (mv) {
+  //       setGame(gameCopy);
+  //       setLastMove({ from, to });
+  //       setMoveHistory(prev => [...prev, mv.san]);
+  //       playSound('promote');
+  //       if (gameCopy.isCheckmate()) {
+  //         toast.success('Checkmate! 🎉');
+  //       }
+  //     }
+  //   } catch (err) {
+  //     toast.error('Invalid promotion move');
+  //   }
+  //   setPendingPromotion(null);
+  //   setShowPromotion(false);
+  // };
+
   const handleMove = useCallback(
     (from: Square, to: Square): boolean => {
       const isPlayerTurn =
@@ -78,7 +102,14 @@ const Games = () => {
       if (!isPlayerTurn) return false;
 
       const gameCopy = new Chess(game.fen());
-      const move = gameCopy.move({ from, to, promotion: 'q' });
+      const mvVerbose = gameCopy.moves({ square: from, verbose: true }).find(m => m.to === to);
+      if (mvVerbose && mvVerbose.promotion) {
+        setPendingPromotion({ from, to, gameCopy });
+        setShowPromotion(true);
+        return false;
+      }
+
+      const move = gameCopy.move({ from, to });
 
       if (move) {
         setGame(gameCopy);
@@ -108,6 +139,27 @@ const Games = () => {
     },
     [game, playerColor, playSound]
   );
+
+  const handlePromotionSelect = (piece: 'q' | 'r' | 'b' | 'n') => {
+    if (!pendingPromotion) return;
+    const { from, to, gameCopy } = pendingPromotion;
+    try {
+      const mv = gameCopy.move({ from, to, promotion: piece });
+      if (mv) {
+        setGame(gameCopy);
+        setLastMove({ from, to });
+        setMoveHistory(prev => [...prev, mv.san]);
+        playSound('promote');
+        if (gameCopy.isCheckmate()) {
+          toast.success('Checkmate! 🎉');
+        }
+      }
+    } catch (err) {
+      toast.error('Invalid promotion move');
+    }
+    setPendingPromotion(null);
+    setShowPromotion(false);
+  };
 
   // Computer move
   useEffect(() => {
@@ -203,8 +255,14 @@ const Games = () => {
             </p>
           </div>
           <LiveChessGame game={currentGame} onLeave={handleLeaveGame} />
-        </div>
-      </AppLayout>
+          </div>
+          <PromotionDialog
+            open={showPromotion}
+            onOpenChange={setShowPromotion}
+            onSelect={handlePromotionSelect}
+            color={(pendingPromotion && pendingPromotion.gameCopy.get(pendingPromotion.from)?.color) as 'w' | 'b' | undefined}
+          />
+        </AppLayout>
     );
   }
 

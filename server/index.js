@@ -1525,6 +1525,32 @@ const gameRequests = new Map(); // requestId -> requestData
 const userSockets = new Map(); // userId -> socketIds[]
 const socketUsers = new Map(); // socketId -> userId
 
+// Helper: serialize current game state for resume/rejoin events
+const getGameStatePayload = (game) => ({
+  id: game.id,
+  fen: game.fen,
+  moves: game.moves,
+  turn: game.turn,
+  whiteTime: game.whiteTime,
+  blackTime: game.blackTime,
+  white: game.white,
+  black: game.black,
+  status: game.status,
+  mode: game.mode,
+  startedAt: game.startedAt,
+  lastMoveAt: game.lastMoveAt
+});
+
+// Simple per-game promise queue to process moves sequentially and avoid race conditions
+const enqueueGameWork = (gameId, work) => {
+  const game = activeGames.get(gameId);
+  if (!game) return Promise.resolve();
+  game._lock = (game._lock || Promise.resolve()).then(() => work(game)).catch((err) => {
+    console.error(`💥 Error in queued game work for ${gameId}:`, err);
+  });
+  return game._lock;
+};
+
 // Helper: check if a user (admin or student) is already in an active game
 function isUserInActiveGame(userId) {
   for (const game of activeGames.values()) {
@@ -1577,6 +1603,33 @@ io.on('connection', (socket) => {
   if (socket.user.role === 'student') {
     socket.broadcast.emit('user:online', { userId, username: socket.user.username });
   }
+
+  // If this user has an active game, immediately reattach and send the latest state
+  activeGames.forEach((game) => {
+    if (game.status === 'active' && (String(game.white.id) === userId || String(game.black.id) === userId)) {
+      const isWhite = String(game.white.id) === userId;
+      // Mark player as back online
+      if (game.offline) {
+        game.offline[isWhite ? 'white' : 'black'] = false;
+      }
+
+      // Send full game snapshot to the reconnecting socket
+      socket.emit('game:resume', getGameStatePayload(game));
+
+      // Notify opponent about player coming back online
+      const opponentId = isWhite ? game.black.id : game.white.id;
+      const opponentSockets = userSockets.get(opponentId);
+      if (opponentSockets && opponentSockets.length > 0) {
+        opponentSockets.forEach((sid) => {
+          io.to(sid).emit('game:player-status', {
+            gameId: game.id,
+            player: isWhite ? 'white' : 'black',
+            online: true
+          });
+        });
+      }
+    }
+  });
 
   // ---- GAME REQUEST EVENTS ----
   
@@ -1739,7 +1792,9 @@ io.on('connection', (socket) => {
       turn: 'w',
       status: 'active',
       startedAt: new Date().toISOString(),
-      lastMoveAt: new Date().toISOString()
+      lastMoveAt: new Date().toISOString(),
+      offline: { white: false, black: false },
+      _lock: Promise.resolve()
     };
     
     activeGames.set(gameId, game);
@@ -1952,16 +2007,24 @@ io.on('connection', (socket) => {
       socket.broadcast.emit('user:offline', { userId, username: socket.user.username });
     }
     
-    // Handle active games - if player disconnects, give them 60 seconds to reconnect
-    activeGames.forEach((game, gameId) => {
-      if ((game.white.id === userId || game.black.id === userId) && game.status === 'active') {
-        setTimeout(() => {
-          // Check if player reconnected
-          if (!userSockets.has(userId)) {
-            const isWhite = game.white.id === userId;
-            endGame(gameId, isWhite ? 'black' : 'white', 'abandonment');
-          }
-        }, 60000); // 60 seconds grace period
+    // Handle active games: mark player offline but do NOT end the game. Clocks keep running server-side.
+    activeGames.forEach((game) => {
+      if ((String(game.white.id) === userId || String(game.black.id) === userId) && game.status === 'active') {
+        const isWhite = String(game.white.id) === userId;
+        if (game.offline) {
+          game.offline[isWhite ? 'white' : 'black'] = true;
+        }
+        const opponentId = isWhite ? game.black.id : game.white.id;
+        const opponentSockets = userSockets.get(opponentId);
+        if (opponentSockets && opponentSockets.length > 0) {
+          opponentSockets.forEach((sid) => {
+            io.to(sid).emit('game:player-status', {
+              gameId: game.id,
+              player: isWhite ? 'white' : 'black',
+              online: false
+            });
+          });
+        }
       }
     });
   });

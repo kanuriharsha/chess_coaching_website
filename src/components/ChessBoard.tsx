@@ -134,15 +134,21 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
   const isPossibleCapture = (square: Square) => {
     if (!selectedSquare) return false;
     return (
-      isPossibleMove(square) && isCapture(game, selectedSquare, square)
+      isPossibleMove(square) && isCapture(game, selectedSquare as Square, square)
     );
   };
   const isHighlighted = (square: Square) => highlightSquares.includes(square);
 
   return (
     <div className="chess-board-container">
-      <div className="relative aspect-square w-full max-w-[min(100vw-2rem,500px)] mx-auto">
-        {board.map((row, rowIndex) => (
+      <div className="flex items-center gap-3">
+        {/* Black label on left (top for white, bottom for black) */}
+        <div className="text-sm font-bold text-gray-600 writing-mode-vertical-rl rotate-180">
+          {orientation === 'white' ? 'Black' : 'White'}
+        </div>
+        
+        <div className="relative aspect-square w-full max-w-[min(100vw-2rem,500px)] mx-auto">
+          {board.map((row, rowIndex) => (
           <div key={rowIndex} className="flex">
             {row.map(({ square, piece, row: actualRow, col: actualCol }) => {
               const squareColorClass =
@@ -226,6 +232,12 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
             })}
           </div>
         ))}
+        </div>
+        
+        {/* White label on right (bottom for white, top for black) */}
+        <div className="text-sm font-bold text-gray-600 writing-mode-vertical-rl">
+          {orientation === 'white' ? 'White' : 'Black'}
+        </div>
       </div>
     </div>
   );

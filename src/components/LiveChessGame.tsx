@@ -7,6 +7,7 @@ import { Flag, Clock, User, RotateCcw, Handshake, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useChessSound } from '@/hooks/useChessSound';
 import { Button } from '@/components/ui/button';
+import PromotionDialog from '@/components/PromotionDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,6 +44,8 @@ const LiveChessGame = ({ game: initialGame, onLeave }: LiveChessGameProps) => {
   const [drawOffered, setDrawOffered] = useState(false);
   const [showDrawOffer, setShowDrawOffer] = useState(false);
   const [drawOfferFrom, setDrawOfferFrom] = useState('');
+  const [showPromotionDialog, setShowPromotionDialog] = useState(false);
+  const [pendingPromotion, setPendingPromotion] = useState<null | { from: Square; to: Square; chessCopy: Chess }>(null);
 
   // Determine player color
   const isWhite = activeGame.white.id === user?.id;
@@ -194,12 +197,24 @@ const LiveChessGame = ({ game: initialGame, onLeave }: LiveChessGameProps) => {
       }
 
       const chessCopy = new Chess(chess.fen());
-      const move = chessCopy.move({ from, to, promotion: 'q' });
+      // If this move requires promotion, open chooser instead of auto-promoting
+      const moveVerbose = chessCopy.moves({ square: from, verbose: true }).find(m => m.to === to);
+      if (moveVerbose && moveVerbose.promotion && !moveVerbose.promotion) {
+        // should not happen, but guard
+      }
+
+      if (moveVerbose && moveVerbose.promotion) {
+        setPendingPromotion({ from, to, chessCopy });
+        setShowPromotionDialog(true);
+        return false; // handled after selection
+      }
+
+      const move = chessCopy.move({ from, to });
 
       if (move) {
         setChess(chessCopy);
         setLastMove({ from, to });
-        
+
         // Send move to server with the new FEN
         makeMove(from, to, move.promotion, chessCopy.fen());
         
@@ -253,6 +268,25 @@ const LiveChessGame = ({ game: initialGame, onLeave }: LiveChessGameProps) => {
   const handleDeclineDraw = () => {
     setShowDrawOffer(false);
     toast.info('Draw offer declined');
+  };
+
+  const handlePromotionSelect = (piece: 'q' | 'r' | 'b' | 'n') => {
+    if (!pendingPromotion) return;
+    const { from, to, chessCopy } = pendingPromotion;
+    try {
+      const mv = chessCopy.move({ from, to, promotion: piece });
+      if (mv) {
+        setChess(chessCopy);
+        setLastMove({ from, to });
+        makeMove(from, to, mv.promotion, chessCopy.fen());
+        // Play promoted sound
+        playSound('promote');
+      }
+    } catch (err) {
+      toast.error('Invalid promotion move');
+    }
+    setPendingPromotion(null);
+    setShowPromotionDialog(false);
   };
 
   const whiteTime = activeGame.whiteTime;
@@ -424,6 +458,13 @@ const LiveChessGame = ({ game: initialGame, onLeave }: LiveChessGameProps) => {
       </div>
 
       {/* Resign Confirmation Dialog */}
+      <PromotionDialog 
+        open={showPromotionDialog} 
+        onOpenChange={setShowPromotionDialog} 
+        onSelect={handlePromotionSelect}
+        color={(pendingPromotion && game.get(pendingPromotion.from)?.color) as 'w' | 'b' | undefined}
+      />
+      
       <AlertDialog open={showResignDialog} onOpenChange={setShowResignDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
