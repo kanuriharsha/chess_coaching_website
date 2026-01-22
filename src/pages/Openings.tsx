@@ -90,7 +90,7 @@ const Openings = () => {
   const navigate = useNavigate();
   const [openings, setOpenings] = useState<Opening[]>([]);
   const [selectedOpening, setSelectedOpening] = useState<Opening | null>(null);
-  const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
+  const [currentMoveIndex, setCurrentMoveIndex] = useState(-1);
   const [game, setGame] = useState(new Chess());
   const [contentAccess, setContentAccess] = useState<ContentAccess | null>(null);
   const [isContentLocked, setIsContentLocked] = useState(false);
@@ -187,7 +187,7 @@ const Openings = () => {
     }
     setSelectedOpening(opening);
     trackOpeningViewed(opening.name, opening.category);
-    setCurrentMoveIndex(0);
+    setCurrentMoveIndex(-1);
     setGame(new Chess(opening.startFen || undefined));
   };
 

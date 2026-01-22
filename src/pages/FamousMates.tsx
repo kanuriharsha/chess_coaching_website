@@ -79,7 +79,7 @@ const FamousMates = () => {
   const navigate = useNavigate();
   const [famousMates, setFamousMates] = useState<FamousMate[]>([]);
   const [selectedMate, setSelectedMate] = useState<FamousMate | null>(null);
-  const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
+  const [currentMoveIndex, setCurrentMoveIndex] = useState(-1);
   const [game, setGame] = useState(new Chess());
   const [contentAccess, setContentAccess] = useState<ContentAccess | null>(null);
   const [isContentLocked, setIsContentLocked] = useState(false);
@@ -179,7 +179,7 @@ const FamousMates = () => {
       }
     }
     setSelectedMate(mate);
-    setCurrentMoveIndex(0);
+    setCurrentMoveIndex(-1);
     setGame(new Chess(mate.startFen || undefined));
   };
 
