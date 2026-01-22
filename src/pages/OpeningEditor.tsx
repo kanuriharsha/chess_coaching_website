@@ -179,7 +179,7 @@ const OpeningEditor = () => {
     const newMoves = moves.slice(0, -1);
     setMoves(newMoves);
     
-    const newGame = new Chess();
+    const newGame = new Chess(setupFen || undefined);
     newMoves.forEach(move => {
       newGame.move(move.san);
     });
@@ -190,7 +190,7 @@ const OpeningEditor = () => {
   };
 
   const goToMove = (index: number) => {
-    const newGame = new Chess();
+    const newGame = new Chess(setupFen || undefined);
     for (let i = 0; i <= index && i < moves.length; i++) {
       newGame.move(moves[i].san);
     }
@@ -200,7 +200,7 @@ const OpeningEditor = () => {
   };
 
   const resetToStart = () => {
-    setGame(new Chess());
+    setGame(new Chess(setupFen || undefined));
     setCurrentMoveIndex(-1);
     setSelectedSquare(null);
   };
