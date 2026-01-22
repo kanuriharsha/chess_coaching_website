@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import ChessBoard from '@/components/ChessBoard';
@@ -94,6 +94,7 @@ const Openings = () => {
   const [contentAccess, setContentAccess] = useState<ContentAccess | null>(null);
   const [isContentLocked, setIsContentLocked] = useState(false);
   const { trackPageVisit, trackOpeningViewed } = useActivityTracker();
+  const sortedRef = useRef(false); // Track if we've sorted the data
 
   const isAdmin = user?.role === 'admin';
 
@@ -145,21 +146,22 @@ const Openings = () => {
     if (!isAdmin && contentAccess?.openingAccess?.enabled && openings.length > 0) {
       const hasGranularAccess = contentAccess.openingAccess.allowedOpenings?.length > 0;
       
-      if (hasGranularAccess) {
-        // If there's a specific allowed list, put those first
+      if (hasGranularAccess && !sortedRef.current) {
+        // If there's a specific allowed list, put unlocked first, locked after
         const allowed = new Set(contentAccess.openingAccess.allowedOpenings.map(String));
         const reordered = [...openings].sort((a, b) => {
           const aKey = (a._id || a.id)?.toString() || '';
           const bKey = (b._id || b.id)?.toString() || '';
-          const aAllowed = allowed.has(aKey) ? 0 : 1;
-          const bAllowed = allowed.has(bKey) ? 0 : 1;
-          return aAllowed - bAllowed; // allowed (0) come first, locked (1) come after
+          const aAllowed = allowed.has(aKey) ? 0 : 1; // unlocked = 0
+          const bAllowed = allowed.has(bKey) ? 0 : 1; // locked = 1
+          return aAllowed - bAllowed; // 0 - 1 = -1 (unlocked first), 1 - 0 = 1 (locked after)
         });
         setOpenings(reordered);
+        sortedRef.current = true;
       }
       // If allowedOpenings is empty, all openings are unlocked, no need to reorder
     }
-  }, [contentAccess, isAdmin]);
+  }, [contentAccess, isAdmin, openings]);
 
   const selectOpening = (opening: Opening) => {
     // Check if openings are globally locked

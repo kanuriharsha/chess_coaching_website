@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import ChessBoard from '@/components/ChessBoard';
@@ -83,6 +83,7 @@ const FamousMates = () => {
   const [contentAccess, setContentAccess] = useState<ContentAccess | null>(null);
   const [isContentLocked, setIsContentLocked] = useState(false);
   const { trackPageVisit } = useActivityTracker();
+  const sortedRef = useRef(false);
 
   const isAdmin = user?.role === 'admin';
 
@@ -138,21 +139,22 @@ const FamousMates = () => {
     if (!isAdmin && contentAccess?.famousMatesAccess?.enabled && famousMates.length > 0) {
       const hasGranularAccess = contentAccess.famousMatesAccess.allowedMates?.length > 0;
       
-      if (hasGranularAccess) {
-        // If there's a specific allowed list, put those first
+      if (hasGranularAccess && !sortedRef.current) {
+        // If there's a specific allowed list, put unlocked first, locked after
         const allowed = new Set(contentAccess.famousMatesAccess.allowedMates.map(String));
         const reordered = [...famousMates].sort((a, b) => {
           const aKey = (a._id || a.id)?.toString() || '';
           const bKey = (b._id || b.id)?.toString() || '';
-          const aAllowed = allowed.has(aKey) ? 0 : 1;
-          const bAllowed = allowed.has(bKey) ? 0 : 1;
-          return aAllowed - bAllowed; // allowed (0) come first, locked (1) come after
+          const aAllowed = allowed.has(aKey) ? 0 : 1; // unlocked = 0
+          const bAllowed = allowed.has(bKey) ? 0 : 1; // locked = 1
+          return aAllowed - bAllowed; // unlocked first, locked after
         });
         setFamousMates(reordered);
+        sortedRef.current = true;
       }
       // If allowedMates is empty, all mates are unlocked, no need to reorder
     }
-  }, [contentAccess, isAdmin]);
+  }, [contentAccess, isAdmin, famousMates]);
 
   const selectMate = (mate: FamousMate) => {
     // Check if famous mates are globally locked

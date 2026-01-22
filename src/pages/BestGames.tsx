@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Chess } from 'chess.js';
 import ChessBoard from '@/components/ChessBoard';
@@ -81,6 +81,7 @@ const BestGames = () => {
   const [contentAccess, setContentAccess] = useState<ContentAccess | null>(null);
   const [isContentLocked, setIsContentLocked] = useState(false);
   const { trackPageVisit, trackGameViewed } = useActivityTracker();
+  const sortedRef = useRef(false);
 
   const isAdmin = user?.role === 'admin';
 
@@ -136,21 +137,22 @@ const BestGames = () => {
     if (!isAdmin && contentAccess?.bestGamesAccess?.enabled && bestGames.length > 0) {
       const hasGranularAccess = contentAccess.bestGamesAccess.allowedGames?.length > 0;
       
-      if (hasGranularAccess) {
-        // If there's a specific allowed list, put those first
+      if (hasGranularAccess && !sortedRef.current) {
+        // If there's a specific allowed list, put unlocked first, locked after
         const allowed = new Set(contentAccess.bestGamesAccess.allowedGames.map(String));
         const reordered = [...bestGames].sort((a, b) => {
           const aKey = (a._id || a.id)?.toString() || '';
           const bKey = (b._id || b.id)?.toString() || '';
-          const aAllowed = allowed.has(aKey) ? 0 : 1;
-          const bAllowed = allowed.has(bKey) ? 0 : 1;
-          return aAllowed - bAllowed; // allowed (0) come first, locked (1) come after
+          const aAllowed = allowed.has(aKey) ? 0 : 1; // unlocked = 0
+          const bAllowed = allowed.has(bKey) ? 0 : 1; // locked = 1
+          return aAllowed - bAllowed; // unlocked first, locked after
         });
         setBestGames(reordered);
+        sortedRef.current = true;
       }
       // If allowedGames is empty, all games are unlocked, no need to reorder
     }
-  }, [contentAccess, isAdmin]);
+  }, [contentAccess, isAdmin, bestGames]);
 
   const selectGame = (bestGame: BestGame) => {
     // Check if best games are globally locked
