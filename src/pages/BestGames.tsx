@@ -74,7 +74,7 @@ const defaultBestGames: BestGame[] = [
 const BestGames = () => {
   const { user, token } = useAuth();
   const navigate = useNavigate();
-  const [bestGames, setBestGames] = useState<BestGame[]>(defaultBestGames);
+  const [bestGames, setBestGames] = useState<BestGame[]>([]);
   const [selectedGame, setSelectedGame] = useState<BestGame | null>(null);
   const [currentMoveIndex, setCurrentMoveIndex] = useState(-1);
   const [game, setGame] = useState(new Chess());
@@ -123,20 +123,7 @@ const BestGames = () => {
       if (response.ok) {
         const data: BestGame[] = await response.json();
         const enabledGames = data.filter(g => g.isEnabled !== false);
-        if (enabledGames.length > 0) {
-          // If student has allowed games list, place allowed ones first
-          if (!isAdmin && contentAccess?.bestGamesAccess?.allowedGames?.length) {
-            const allowed = new Set(contentAccess.bestGamesAccess.allowedGames.map(String));
-            enabledGames.sort((a, b) => {
-              const aKey = (a._id || a.id)?.toString() || '';
-              const bKey = (b._id || b.id)?.toString() || '';
-              const aAllowed = allowed.has(aKey) ? 0 : 1;
-              const bAllowed = allowed.has(bKey) ? 0 : 1;
-              return aAllowed - bAllowed;
-            });
-          }
-          setBestGames(enabledGames);
-        }
+        setBestGames(enabledGames);
       }
     } catch (error) {
       console.error('Load best games error:', error);
@@ -144,28 +131,47 @@ const BestGames = () => {
     }
   };
 
-  // Reorder when content access loads
+  // Reorder best games when contentAccess becomes available - ALWAYS sort for non-admin users
   useEffect(() => {
-    if (!isAdmin && contentAccess?.bestGamesAccess?.allowedGames?.length && bestGames.length > 0) {
-      const allowed = new Set(contentAccess.bestGamesAccess.allowedGames.map(String));
-      const reordered = [...bestGames].sort((a, b) => {
-        const aKey = (a._id || a.id)?.toString() || '';
-        const bKey = (b._id || b.id)?.toString() || '';
-        const aAllowed = allowed.has(aKey) ? 0 : 1;
-        const bAllowed = allowed.has(bKey) ? 0 : 1;
-        return aAllowed - bAllowed;
-      });
-      setBestGames(reordered);
+    if (!isAdmin && contentAccess?.bestGamesAccess?.enabled && bestGames.length > 0) {
+      const hasGranularAccess = contentAccess.bestGamesAccess.allowedGames?.length > 0;
+      
+      if (hasGranularAccess) {
+        // If there's a specific allowed list, put those first
+        const allowed = new Set(contentAccess.bestGamesAccess.allowedGames.map(String));
+        const reordered = [...bestGames].sort((a, b) => {
+          const aKey = (a._id || a.id)?.toString() || '';
+          const bKey = (b._id || b.id)?.toString() || '';
+          const aAllowed = allowed.has(aKey) ? 0 : 1;
+          const bAllowed = allowed.has(bKey) ? 0 : 1;
+          return aAllowed - bAllowed; // allowed (0) come first, locked (1) come after
+        });
+        setBestGames(reordered);
+      }
+      // If allowedGames is empty, all games are unlocked, no need to reorder
     }
-  }, [contentAccess]);
+  }, [contentAccess, isAdmin]);
 
   const selectGame = (bestGame: BestGame) => {
+    // Check if best games are globally locked
     if (!isAdmin && isContentLocked) {
       toast.error('Content Locked', {
         description: 'Best Games are locked. Contact your instructor to unlock.',
         icon: <Lock className="w-4 h-4" />,
       });
       return;
+    }
+    // Check if this specific game is allowed (granular access)
+    if (!isAdmin && contentAccess?.bestGamesAccess?.allowedGames?.length) {
+      const gameId = (bestGame._id || bestGame.id)?.toString() || '';
+      const allowed = contentAccess.bestGamesAccess.allowedGames.map(String);
+      if (!allowed.includes(gameId)) {
+        toast.error('Content Locked', {
+          description: 'This game is locked. Contact your instructor to unlock.',
+          icon: <Lock className="w-4 h-4" />,
+        });
+        return;
+      }
     }
     setSelectedGame(bestGame);
     setCurrentMoveIndex(-1);
@@ -262,14 +268,22 @@ const BestGames = () => {
           /* Game List */
           <div className="space-y-4">
             <div className="grid gap-4">
-              {bestGames.map((bestGame) => (
+              {bestGames.map((bestGame) => {
+                // Determine if this specific game is locked
+                const gameId = (bestGame._id || bestGame.id)?.toString() || '';
+                const hasGranularAccess = !isAdmin && contentAccess?.bestGamesAccess?.allowedGames?.length;
+                const isGameLocked = hasGranularAccess 
+                  ? !contentAccess.bestGamesAccess.allowedGames.map(String).includes(gameId)
+                  : (!isAdmin && isContentLocked);
+                
+                return (
                 <button
                   key={bestGame.id || bestGame._id}
                   onClick={() => selectGame(bestGame)}
                   className="card-premium p-5 text-left group hover:border-primary/50 relative"
                 >
                   {/* Locked Badge - Top Right Corner */}
-                  {!isAdmin && isContentLocked && (
+                  {isGameLocked && (
                     <div className="absolute top-3 right-3 z-10 flex items-center gap-1 px-2 py-1 bg-destructive/90 text-destructive-foreground rounded-md text-xs font-medium shadow-sm">
                       <Lock className="w-3 h-3" />
                       Locked
@@ -307,7 +321,8 @@ const BestGames = () => {
                     )}
                   </div>
                 </button>
-              ))}
+              );
+              })}
             </div>
           </div>
         ) : (

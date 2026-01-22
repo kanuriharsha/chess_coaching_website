@@ -132,9 +132,7 @@
 @layer components {
   .chess-board-container {
     @apply rounded-md overflow-hidden;
-    box-shadow: 
-      0 4px 20px rgba(0, 0, 0, 0.3),
-      0 0 0 3px #312e2b;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
     border-radius: 4px;
   }
 

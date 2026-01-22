@@ -136,6 +136,23 @@ const openingSchema = new mongoose.Schema({
 
 const Opening = mongoose.model('Opening', openingSchema, 'openings');
 
+// Famous Mates Schema
+const famousMateSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  description: { type: String },
+  category: { type: String, required: true, default: 'Famous Mates' },
+  moves: [{
+    san: { type: String, required: true },
+    comment: { type: String },
+    evaluation: { type: String, enum: ['best', 'brilliant', 'good', 'inaccuracy'] }
+  }],
+  isEnabled: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+const FamousMate = mongoose.model('FamousMate', famousMateSchema, 'famousmates');
+
 // Best Game Schema
 const bestGameSchema = new mongoose.Schema({
   title: { type: String, required: true },
@@ -191,12 +208,23 @@ const contentAccessSchema = new mongoose.Schema({
       limit: { type: Number, default: 0 },
       rangeStart: { type: Number, default: null },
       rangeEnd: { type: Number, default: null }
+    },
+    'famous-mates': { 
+      enabled: { type: Boolean, default: false }, 
+      limit: { type: Number, default: 0 },
+      rangeStart: { type: Number, default: null },
+      rangeEnd: { type: Number, default: null }
     }
   },
   // Opening access
   openingAccess: {
     enabled: { type: Boolean, default: false },
     allowedOpenings: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Opening' }]
+  },
+  // Famous Mates access
+  famousMatesAccess: {
+    enabled: { type: Boolean, default: false },
+    allowedMates: [{ type: mongoose.Schema.Types.ObjectId, ref: 'FamousMate' }]
   },
   // Best games access
   bestGamesAccess: {
@@ -1268,6 +1296,89 @@ app.delete('/api/openings/:id', async (req, res) => {
   }
 });
 
+// ============ FAMOUS MATES ROUTES ============
+
+// Get all famous mates
+app.get('/api/famous-mates', async (req, res) => {
+  try {
+    const famousMates = await FamousMate.find().sort({ createdAt: -1 });
+    res.json(famousMates);
+  } catch (error) {
+    console.error('Get famous mates error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get single famous mate by ID
+app.get('/api/famous-mates/:id', async (req, res) => {
+  try {
+    const famousMate = await FamousMate.findById(req.params.id);
+    if (!famousMate) return res.status(404).json({ message: 'Famous mate not found' });
+    res.json(famousMate);
+  } catch (error) {
+    console.error('Get famous mate error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Create famous mate (admin only)
+app.post('/api/famous-mates', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ message: 'No token provided' });
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const requestingUser = await User.findById(decoded.id);
+    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+
+    const famousMate = await FamousMate.create(req.body);
+    res.status(201).json({ success: true, famousMate });
+  } catch (error) {
+    console.error('Create famous mate error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update famous mate (admin only)
+app.put('/api/famous-mates/:id', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ message: 'No token provided' });
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const requestingUser = await User.findById(decoded.id);
+    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+
+    const famousMate = await FamousMate.findByIdAndUpdate(
+      req.params.id,
+      { ...req.body, updatedAt: new Date() },
+      { new: true }
+    );
+    res.json({ success: true, famousMate });
+  } catch (error) {
+    console.error('Update famous mate error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Delete famous mate (admin only)
+app.delete('/api/famous-mates/:id', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ message: 'No token provided' });
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const requestingUser = await User.findById(decoded.id);
+    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+
+    await FamousMate.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: 'Famous mate deleted' });
+  } catch (error) {
+    console.error('Delete famous mate error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // ============ BEST GAME ROUTES ============
 
 // Get all best games
@@ -1355,6 +1466,7 @@ app.get('/api/stats', async (req, res) => {
     const activeStudents = await User.countDocuments({ role: 'student', isEnabled: true });
     const totalPuzzles = await Puzzle.countDocuments();
     const totalOpenings = await Opening.countDocuments();
+    const totalFamousMates = await FamousMate.countDocuments();
     const totalBestGames = await BestGame.countDocuments();
 
     res.json({
@@ -1362,6 +1474,7 @@ app.get('/api/stats', async (req, res) => {
       activeStudents,
       totalPuzzles,
       totalOpenings,
+      totalFamousMates,
       totalBestGames
     });
   } catch (error) {

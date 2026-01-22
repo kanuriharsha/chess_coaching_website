@@ -13,6 +13,7 @@ import {
   X,
   LayoutDashboard,
   PlusCircle,
+  Skull,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -31,6 +32,7 @@ const Navigation = () => {
     { to: '/puzzles', icon: Puzzle, label: 'Puzzles' },
     { to: '/games', icon: Swords, label: 'Games' },
     { to: '/openings', icon: BookOpen, label: 'Openings' },
+    { to: '/famous-mates', icon: Crown, label: 'Famous Mates' },
     { to: '/best-games', icon: Trophy, label: 'Best Games' },
     { to: '/profile', icon: User, label: 'Profile' },
   ];

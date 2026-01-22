@@ -141,9 +141,9 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
 
   return (
     <div className="chess-board-container">
-      <div className="flex items-center gap-3">
-        {/* Black label on left (top for white, bottom for black) */}
-        <div className="text-sm font-bold text-gray-600 writing-mode-vertical-rl rotate-180">
+      <div className="flex flex-col items-center gap-1">
+        {/* Top label - subtle and small */}
+        <div className="text-[0.65rem] font-normal text-muted-foreground opacity-50">
           {orientation === 'white' ? 'Black' : 'White'}
         </div>
         
@@ -234,8 +234,8 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
         ))}
         </div>
         
-        {/* White label on right (bottom for white, top for black) */}
-        <div className="text-sm font-bold text-gray-600 writing-mode-vertical-rl">
+        {/* Bottom label - subtle and small */}
+        <div className="text-[0.65rem] font-normal text-muted-foreground opacity-50">
           {orientation === 'white' ? 'White' : 'Black'}
         </div>
       </div>

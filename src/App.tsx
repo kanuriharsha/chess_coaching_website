@@ -10,6 +10,8 @@ import Puzzles from "./pages/Puzzles";
 import Games from "./pages/Games";
 import Openings from "./pages/Openings";
 import OpeningEditor from "./pages/OpeningEditor";
+import FamousMates from "./pages/FamousMates";
+import FamousMatesEditor from "./pages/FamousMatesEditor";
 import BestGames from "./pages/BestGames";
 import BestGameEditor from "./pages/BestGameEditor";
 import Profile from "./pages/Profile";
@@ -160,6 +162,30 @@ const AppRoutes = () => (
       element={
         <ProtectedRoute>
           <OpeningEditor />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/famous-mates"
+      element={
+        <ProtectedRoute>
+          <FamousMates />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/famous-mates/create"
+      element={
+        <ProtectedRoute>
+          <FamousMatesEditor />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/famous-mates/edit/:id"
+      element={
+        <ProtectedRoute>
+          <FamousMatesEditor />
         </ProtectedRoute>
       }
     />

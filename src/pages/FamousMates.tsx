@@ -4,14 +4,14 @@ import { Chess } from 'chess.js';
 import ChessBoard from '@/components/ChessBoard';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
-import { ChevronLeft, ChevronRight, SkipBack, SkipForward, BookOpen, Lock, Plus, Edit } from 'lucide-react';
+import { ChevronLeft, ChevronRight, SkipBack, SkipForward, Crown, Lock, Plus, Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
-interface Opening {
+interface FamousMate {
   _id?: string;
   id?: string;
   name: string;
@@ -32,78 +32,67 @@ interface ContentAccess {
     enabled: boolean;
     allowedOpenings: string[];
   };
+  famousMatesAccess: {
+    enabled: boolean;
+    allowedMates: string[];
+  };
   bestGamesAccess: {
     enabled: boolean;
     allowedGames: string[];
   };
 }
 
-// Default openings (fallback)
-const defaultOpenings: Opening[] = [
+// Default famous mates (fallback)
+const defaultFamousMates: FamousMate[] = [
   {
-    id: 'italian-game',
-    name: 'Italian Game',
-    description: 'One of the oldest openings, focusing on rapid development and center control.',
-    category: 'Open Games',
+    id: 'fools-mate',
+    name: "Fool's Mate",
+    description: 'The fastest possible checkmate in chess, occurring in just two moves.',
+    category: 'Famous Mates',
     moves: [
-      { san: 'e4', comment: 'Control the center with the king pawn', evaluation: 'best' },
-      { san: 'e5', comment: 'Black mirrors the move' },
-      { san: 'Nf3', comment: 'Develop knight and attack e5', evaluation: 'best' },
-      { san: 'Nc6', comment: 'Defend the pawn' },
-      { san: 'Bc4', comment: 'The Italian Game! Targets f7', evaluation: 'brilliant' },
-      { san: 'Bc5', comment: 'The Giuoco Piano response' },
+      { san: 'f3', comment: 'A very weak move, exposing the king', evaluation: 'inaccuracy' },
+      { san: 'e5', comment: 'Black develops normally' },
+      { san: 'g4', comment: 'Another terrible move!', evaluation: 'inaccuracy' },
+      { san: 'Qh4#', comment: 'Checkmate! The queen delivers mate', evaluation: 'brilliant' },
     ],
   },
   {
-    id: 'sicilian-defense',
-    name: 'Sicilian Defense',
-    description: 'The most popular response to 1.e4, fighting for the center asymmetrically.',
-    category: 'Semi-Open Games',
+    id: 'scholars-mate',
+    name: "Scholar's Mate",
+    description: 'A four-move checkmate that targets the f7 square.',
+    category: 'Famous Mates',
     moves: [
-      { san: 'e4', comment: 'The king pawn opening' },
-      { san: 'c5', comment: 'The Sicilian! Fights for d4', evaluation: 'best' },
-      { san: 'Nf3', comment: 'Most common continuation', evaluation: 'best' },
-      { san: 'd6', comment: 'Preparing for development' },
-      { san: 'd4', comment: 'Opening the center', evaluation: 'best' },
-      { san: 'cxd4', comment: 'Trading for central control' },
-    ],
-  },
-  {
-    id: 'queens-gambit',
-    name: "Queen's Gambit",
-    description: 'A classic opening that offers a pawn for central control.',
-    category: 'Closed Games',
-    moves: [
-      { san: 'd4', comment: 'The queen pawn opening', evaluation: 'best' },
-      { san: 'd5', comment: 'Symmetrical response' },
-      { san: 'c4', comment: "The Queen's Gambit!", evaluation: 'brilliant' },
-      { san: 'e6', comment: 'Declining the gambit', evaluation: 'good' },
-      { san: 'Nc3', comment: 'Develop and support center', evaluation: 'best' },
-      { san: 'Nf6', comment: 'Natural development' },
+      { san: 'e4', comment: 'Control the center' },
+      { san: 'e5', comment: 'Black responds symmetrically' },
+      { san: 'Bc4', comment: 'Target f7', evaluation: 'good' },
+      { san: 'Nc6', comment: 'Develop the knight' },
+      { san: 'Qh5', comment: 'Threaten f7', evaluation: 'good' },
+      { san: 'Nf6', comment: 'Defend but...', evaluation: 'inaccuracy' },
+      { san: 'Qxf7#', comment: 'Checkmate!', evaluation: 'brilliant' },
     ],
   },
 ];
 
-const Openings = () => {
+const FamousMates = () => {
   const { user, token } = useAuth();
   const navigate = useNavigate();
-  const [openings, setOpenings] = useState<Opening[]>([]);
-  const [selectedOpening, setSelectedOpening] = useState<Opening | null>(null);
+  const [famousMates, setFamousMates] = useState<FamousMate[]>([]);
+  const [selectedMate, setSelectedMate] = useState<FamousMate | null>(null);
   const [currentMoveIndex, setCurrentMoveIndex] = useState(0);
   const [game, setGame] = useState(new Chess());
   const [contentAccess, setContentAccess] = useState<ContentAccess | null>(null);
   const [isContentLocked, setIsContentLocked] = useState(false);
-  const { trackPageVisit, trackOpeningViewed } = useActivityTracker();
+  const { trackPageVisit } = useActivityTracker();
 
   const isAdmin = user?.role === 'admin';
 
   // Track page visit
   useEffect(() => {
-    trackPageVisit('Openings');
+    trackPageVisit('Famous Mates');
   }, []);
 
   useEffect(() => {
-    loadOpenings();
+    loadFamousMates();
     if (!isAdmin) {
       loadContentAccess();
     }
@@ -119,88 +108,91 @@ const Openings = () => {
       if (response.ok) {
         const access = await response.json();
         setContentAccess(access);
-        setIsContentLocked(!access.openingAccess?.enabled);
+        setIsContentLocked(!access.famousMatesAccess?.enabled);
       }
     } catch (error) {
       console.error('Load content access error:', error);
     }
   };
 
-  const loadOpenings = async () => {
+  useEffect(() => {
+    loadFamousMates();
+  }, []);
+
+  const loadFamousMates = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/openings`);
+      const response = await fetch(`${API_BASE_URL}/famous-mates`);
       if (response.ok) {
-        const data: Opening[] = await response.json();
-        const enabledOpenings = data.filter(o => o.isEnabled !== false);
-        setOpenings(enabledOpenings);
+        const data: FamousMate[] = await response.json();
+        const enabledMates = data.filter(m => m.isEnabled !== false);
+        setFamousMates(enabledMates);
       }
     } catch (error) {
-      console.error('Load openings error:', error);
-      // Keep default openings on error
+      console.error('Load famous mates error:', error);
+      // Keep default mates on error
     }
   };
 
-  // Reorder openings when contentAccess becomes available - ALWAYS sort for non-admin users
+  // Reorder famous mates when contentAccess becomes available - ALWAYS sort for non-admin users
   useEffect(() => {
-    if (!isAdmin && contentAccess?.openingAccess?.enabled && openings.length > 0) {
-      const hasGranularAccess = contentAccess.openingAccess.allowedOpenings?.length > 0;
+    if (!isAdmin && contentAccess?.famousMatesAccess?.enabled && famousMates.length > 0) {
+      const hasGranularAccess = contentAccess.famousMatesAccess.allowedMates?.length > 0;
       
       if (hasGranularAccess) {
         // If there's a specific allowed list, put those first
-        const allowed = new Set(contentAccess.openingAccess.allowedOpenings.map(String));
-        const reordered = [...openings].sort((a, b) => {
+        const allowed = new Set(contentAccess.famousMatesAccess.allowedMates.map(String));
+        const reordered = [...famousMates].sort((a, b) => {
           const aKey = (a._id || a.id)?.toString() || '';
           const bKey = (b._id || b.id)?.toString() || '';
           const aAllowed = allowed.has(aKey) ? 0 : 1;
           const bAllowed = allowed.has(bKey) ? 0 : 1;
           return aAllowed - bAllowed; // allowed (0) come first, locked (1) come after
         });
-        setOpenings(reordered);
+        setFamousMates(reordered);
       }
-      // If allowedOpenings is empty, all openings are unlocked, no need to reorder
+      // If allowedMates is empty, all mates are unlocked, no need to reorder
     }
   }, [contentAccess, isAdmin]);
 
-  const selectOpening = (opening: Opening) => {
-    // Check if openings are globally locked
+  const selectMate = (mate: FamousMate) => {
+    // Check if famous mates are globally locked
     if (!isAdmin && isContentLocked) {
       toast.error('Content Locked', {
-        description: 'Openings are locked. Contact your instructor to unlock.',
+        description: 'Famous Mates are locked. Contact your instructor to unlock.',
         icon: <Lock className="w-4 h-4" />,
       });
       return;
     }
-    // Check if this specific opening is allowed (granular access)
-    if (!isAdmin && contentAccess?.openingAccess?.allowedOpenings?.length) {
-      const openingId = (opening._id || opening.id)?.toString() || '';
-      const allowed = contentAccess.openingAccess.allowedOpenings.map(String);
-      if (!allowed.includes(openingId)) {
+    // Check if this specific mate is allowed (granular access)
+    if (!isAdmin && contentAccess?.famousMatesAccess?.allowedMates?.length) {
+      const mateId = (mate._id || mate.id)?.toString() || '';
+      const allowed = contentAccess.famousMatesAccess.allowedMates.map(String);
+      if (!allowed.includes(mateId)) {
         toast.error('Content Locked', {
-          description: 'This opening is locked. Contact your instructor to unlock.',
+          description: 'This famous mate is locked. Contact your instructor to unlock.',
           icon: <Lock className="w-4 h-4" />,
         });
         return;
       }
     }
-    setSelectedOpening(opening);
-    trackOpeningViewed(opening.name, opening.category);
+    setSelectedMate(mate);
     setCurrentMoveIndex(0);
     setGame(new Chess());
   };
 
   const goToMove = (index: number) => {
-    if (!selectedOpening) return;
+    if (!selectedMate) return;
     
     const newGame = new Chess();
-    for (let i = 0; i <= index && i < selectedOpening.moves.length; i++) {
-      newGame.move(selectedOpening.moves[i].san);
+    for (let i = 0; i <= index && i < selectedMate.moves.length; i++) {
+      newGame.move(selectedMate.moves[i].san);
     }
     setGame(newGame);
     setCurrentMoveIndex(index);
   };
 
   const nextMove = () => {
-    if (!selectedOpening || currentMoveIndex >= selectedOpening.moves.length - 1) return;
+    if (!selectedMate || currentMoveIndex >= selectedMate.moves.length - 1) return;
     goToMove(currentMoveIndex + 1);
   };
 
@@ -220,8 +212,8 @@ const Openings = () => {
   };
 
   const goToEnd = () => {
-    if (!selectedOpening) return;
-    goToMove(selectedOpening.moves.length - 1);
+    if (!selectedMate) return;
+    goToMove(selectedMate.moves.length - 1);
   };
 
   const getEvaluationColor = (evaluation?: string) => {
@@ -247,41 +239,41 @@ const Openings = () => {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="font-serif text-3xl md:text-4xl font-bold text-foreground mb-2">
-                Openings
+                Famous Mates
               </h1>
               <p className="text-muted-foreground">
-                Master essential opening principles and theory
+                Learn the most famous checkmate patterns in chess history
               </p>
             </div>
-            {isAdmin && !selectedOpening && (
-              <Button onClick={() => navigate('/openings/create')}>
+            {isAdmin && !selectedMate && (
+              <Button onClick={() => navigate('/famous-mates/create')}>
                 <Plus className="w-4 h-4 mr-2" />
-                Add New Opening
+                Add New Mate
               </Button>
             )}
           </div>
         </div>
 
-        {!selectedOpening ? (
-          /* Opening List */
+        {!selectedMate ? (
+          /* Mates List */
           <div className="space-y-4">
             <div className="grid gap-4">
-              {openings.map((opening) => {
-                // Determine if this specific opening is locked
-                const openingId = (opening._id || opening.id)?.toString() || '';
-                const hasGranularAccess = !isAdmin && contentAccess?.openingAccess?.allowedOpenings?.length;
-                const isOpeningLocked = hasGranularAccess 
-                  ? !contentAccess.openingAccess.allowedOpenings.map(String).includes(openingId)
+              {famousMates.map((mate) => {
+                // Determine if this specific mate is locked
+                const mateId = (mate._id || mate.id)?.toString() || '';
+                const hasGranularAccess = !isAdmin && contentAccess?.famousMatesAccess?.allowedMates?.length;
+                const isMateLocked = hasGranularAccess 
+                  ? !contentAccess.famousMatesAccess.allowedMates.map(String).includes(mateId)
                   : (!isAdmin && isContentLocked);
                 
                 return (
                 <button
-                  key={opening.id || opening._id}
-                  onClick={() => selectOpening(opening)}
+                  key={mate.id || mate._id}
+                  onClick={() => selectMate(mate)}
                   className="card-premium p-5 text-left group hover:border-primary/50 relative"
                 >
                   {/* Locked Badge - Top Right Corner */}
-                  {isOpeningLocked && (
+                  {isMateLocked && (
                     <div className="absolute top-3 right-3 z-10 flex items-center gap-1 px-2 py-1 bg-destructive/90 text-destructive-foreground rounded-md text-xs font-medium shadow-sm">
                       <Lock className="w-3 h-3" />
                       Locked
@@ -291,12 +283,12 @@ const Openings = () => {
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
                       <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">
-                        {opening.category}
+                        {mate.category}
                       </span>
                       <h3 className="font-serif text-xl font-semibold text-foreground mt-2 mb-1">
-                        {opening.name}
+                        {mate.name}
                       </h3>
-                      <p className="text-muted-foreground text-sm">{opening.description}</p>
+                      <p className="text-muted-foreground text-sm">{mate.description}</p>
                     </div>
                     <div className="flex items-center gap-2">
                       {isAdmin && (
@@ -305,14 +297,14 @@ const Openings = () => {
                           size="sm"
                           onClick={(e) => {
                             e.stopPropagation();
-                            navigate(`/openings/edit/${opening._id || opening.id}`);
+                            navigate(`/famous-mates/edit/${mate._id || mate.id}`);
                           }}
                           className="opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <Edit className="w-4 h-4" />
                         </Button>
                       )}
-                      <BookOpen className="w-6 h-6 text-muted-foreground group-hover:text-primary transition-colors" />
+                      <Crown className="w-6 h-6 text-muted-foreground group-hover:text-primary transition-colors" />
                     </div>
                   </div>
                 </button>
@@ -321,14 +313,14 @@ const Openings = () => {
             </div>
           </div>
         ) : (
-          /* Opening Study View */
+          /* Mate Study View */
           <div className="space-y-6">
             {/* Back Button */}
             <button
-              onClick={() => setSelectedOpening(null)}
+              onClick={() => setSelectedMate(null)}
               className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
             >
-              ← Back to openings
+              ← Back to famous mates
             </button>
 
             <div className="grid md:grid-cols-[1fr,320px] gap-6">
@@ -365,17 +357,17 @@ const Openings = () => {
                 </div>
               </div>
 
-              {/* Opening Info */}
+              {/* Mate Info */}
               <div className="space-y-4">
                 <div className="card-premium p-5">
                   <span className="text-xs font-medium text-primary bg-primary/10 px-2 py-1 rounded-full">
-                    {selectedOpening.category}
+                    {selectedMate.category}
                   </span>
                   <h2 className="font-serif text-2xl font-bold mt-3 mb-2">
-                    {selectedOpening.name}
+                    {selectedMate.name}
                   </h2>
                   <p className="text-muted-foreground text-sm">
-                    {selectedOpening.description}
+                    {selectedMate.description}
                   </p>
                 </div>
 
@@ -386,11 +378,11 @@ const Openings = () => {
                     <span className="text-muted-foreground text-sm md:text-base font-semibold"></span>
                     <span className="text-sm md:text-base font-semibold text-foreground">White</span>
                     <span className="text-sm md:text-base font-semibold text-foreground">Black</span>
-                    {Array.from({ length: Math.ceil(selectedOpening.moves.length / 2) }).map((_, i) => {
+                    {Array.from({ length: Math.ceil(selectedMate.moves.length / 2) }).map((_, i) => {
                       const whiteIndex = i * 2;
                       const blackIndex = i * 2 + 1;
-                      const whiteMove = selectedOpening.moves[whiteIndex];
-                      const blackMove = selectedOpening.moves[blackIndex];
+                      const whiteMove = selectedMate.moves[whiteIndex];
+                      const blackMove = selectedMate.moves[blackIndex];
 
                       return (
                         <>
@@ -436,10 +428,10 @@ const Openings = () => {
                 </div>
 
                 {/* Current Move Comment */}
-                {currentMoveIndex >= 0 && selectedOpening.moves[currentMoveIndex]?.comment && (
+                {currentMoveIndex >= 0 && selectedMate.moves[currentMoveIndex]?.comment && (
                   <div className="card-premium p-4 bg-primary/5 border-primary/20">
                     <p className="text-sm">
-                      💬 {selectedOpening.moves[currentMoveIndex].comment}
+                      💬 {selectedMate.moves[currentMoveIndex].comment}
                     </p>
                   </div>
                 )}
@@ -452,4 +444,4 @@ const Openings = () => {
   );
 };
 
-export default Openings;
+export default FamousMates;

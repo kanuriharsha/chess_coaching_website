@@ -42,7 +42,8 @@ import {
   Gamepad2,
   Play,
   Timer,
-  Wifi
+  Wifi,
+  Crown
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
@@ -62,6 +63,7 @@ interface Stats {
   activeStudents: number;
   totalPuzzles: number;
   totalOpenings: number;
+  totalFamousMates: number;
   totalBestGames: number;
 }
 
@@ -79,6 +81,15 @@ interface PuzzleData {
 }
 
 interface OpeningData {
+  _id?: string;
+  name: string;
+  description: string;
+  category: string;
+  moves: { san: string; comment?: string; evaluation?: string }[];
+  isEnabled: boolean;
+}
+
+interface FamousMateData {
   _id?: string;
   name: string;
   description: string;
@@ -106,6 +117,10 @@ interface ContentAccess {
   openingAccess: {
     enabled: boolean;
     allowedOpenings: string[];
+  };
+  famousMatesAccess: {
+    enabled: boolean;
+    allowedMates: string[];
   };
   bestGamesAccess: {
     enabled: boolean;
@@ -153,6 +168,7 @@ const PUZZLE_CATEGORIES = [
   { id: 'mate-in-1', name: 'Mate in 1', icon: '♔' },
   { id: 'mate-in-2', name: 'Mate in 2', icon: '♕' },
   { id: 'mate-in-3', name: 'Mate in 3', icon: '♖' },
+  { id: 'famous-mates', name: 'Famous Mates', icon: '♔' },
   { id: 'pins', name: 'Pins', icon: '♗' },
   { id: 'forks', name: 'Forks', icon: '♘' },
   { id: 'traps', name: 'Traps', icon: '♙' },
@@ -160,10 +176,11 @@ const PUZZLE_CATEGORIES = [
 
 const AdminDashboard = () => {
   const { user, token, getAllUsers, updateUser, deleteUser, register } = useAuth();
-  const [stats, setStats] = useState<Stats>({ totalStudents: 0, activeStudents: 0, totalPuzzles: 0, totalOpenings: 0, totalBestGames: 0 });
+  const [stats, setStats] = useState<Stats>({ totalStudents: 0, activeStudents: 0, totalPuzzles: 0, totalOpenings: 0, totalFamousMates: 0, totalBestGames: 0 });
   const [users, setUsers] = useState<User[]>([]);
   const [puzzles, setPuzzles] = useState<PuzzleData[]>([]);
   const [openings, setOpenings] = useState<OpeningData[]>([]);
+  const [famousMates, setFamousMates] = useState<FamousMateData[]>([]);
   const [bestGames, setBestGames] = useState<BestGameData[]>([]);
   const [activeTab, setActiveTab] = useState('users');
   const [isLoading, setIsLoading] = useState(true);
@@ -205,9 +222,9 @@ const AdminDashboard = () => {
     return byResult.filter(a => {
       if (activityCategory === 'all') return true;
       if (activityCategory === 'puzzles') return a.type?.startsWith?.('puzzle');
-      if (activityCategory === 'games') return a.type === 'game_viewed' || a.type === 'game_played';
+      if (activityCategory === 'games') return a.type === 'game_viewed';
       if (activityCategory === 'openings') return a.type === 'opening_viewed';
-      if (activityCategory === 'bestgames') return a.type === 'best_game_viewed' || (a.details && a.details.category === 'bestgames');
+      if (activityCategory === 'bestgames') return a.details?.category === 'bestgames';
       return true;
     });
   }, [userActivity, activityFilter, activityCategory]);
@@ -283,6 +300,7 @@ const AdminDashboard = () => {
       loadUsers(),
       loadPuzzles(),
       loadOpenings(),
+      loadFamousMates(),
       loadBestGames()
     ]);
     setIsLoading(false);
@@ -332,6 +350,20 @@ const AdminDashboard = () => {
       }
     } catch (error) {
       console.error('Load openings error:', error);
+    }
+  };
+
+  const loadFamousMates = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/famous-mates`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setFamousMates(data);
+      }
+    } catch (error) {
+      console.error('Load famous mates error:', error);
     }
   };
 
@@ -2608,21 +2640,111 @@ const AdminDashboard = () => {
                       <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
                         <BookOpen className="w-5 h-5" /> Opening Access
                       </h3>
-                      <div className="p-4 bg-secondary/50 rounded-lg">
-                        <div className="flex items-center justify-between mb-3">
-                          <span className="font-medium">Enable All Openings</span>
+                      <div className="p-4 bg-secondary/50 rounded-lg space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">Enable Openings</span>
                           <Switch
                             checked={userContentAccess.openingAccess?.enabled || false}
                             onCheckedChange={(checked) => setUserContentAccess({
                               ...userContentAccess,
-                              openingAccess: { ...userContentAccess.openingAccess, enabled: checked }
+                              openingAccess: { ...userContentAccess.openingAccess, enabled: checked, allowedOpenings: checked ? [] : [] }
                             })}
                           />
                         </div>
-                        <p className="text-sm text-muted-foreground">
-                          {userContentAccess.openingAccess?.enabled 
-                            ? '✓ All openings are accessible' 
-                            : '🔒 Openings are locked'}
+                        
+                        {userContentAccess.openingAccess?.enabled && openings.length > 0 && (
+                          <div className="space-y-2 max-h-60 overflow-y-auto border-t border-border pt-3">
+                            <p className="text-xs text-muted-foreground mb-2">Select which openings to unlock:</p>
+                            {openings.map((opening) => {
+                              const isAllowed = userContentAccess.openingAccess?.allowedOpenings?.includes(opening._id || '') || false;
+                              return (
+                                <label key={opening._id} className="flex items-center gap-2 p-2 rounded hover:bg-secondary/50 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={isAllowed}
+                                    onChange={(e) => {
+                                      const currentAllowed = userContentAccess.openingAccess?.allowedOpenings || [];
+                                      const newAllowed = e.target.checked
+                                        ? [...currentAllowed, opening._id!]
+                                        : currentAllowed.filter(id => id !== opening._id);
+                                      setUserContentAccess({
+                                        ...userContentAccess,
+                                        openingAccess: { ...userContentAccess.openingAccess, enabled: true, allowedOpenings: newAllowed }
+                                      });
+                                    }}
+                                    className="rounded border-gray-300"
+                                  />
+                                  <span className="text-sm flex-1">{opening.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        
+                        <p className="text-xs text-muted-foreground">
+                          {!userContentAccess.openingAccess?.enabled 
+                            ? '🔒 All openings are locked'
+                            : userContentAccess.openingAccess?.allowedOpenings?.length === 0
+                              ? '✓ All openings unlocked'
+                              : `✓ ${userContentAccess.openingAccess?.allowedOpenings?.length} opening(s) unlocked`
+                          }
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Famous Mates Access */}
+                    <div>
+                      <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
+                        <Crown className="w-5 h-5" /> Famous Mates Access
+                      </h3>
+                      <div className="p-4 bg-secondary/50 rounded-lg space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">Enable Famous Mates</span>
+                          <Switch
+                            checked={userContentAccess.famousMatesAccess?.enabled || false}
+                            onCheckedChange={(checked) => setUserContentAccess({
+                              ...userContentAccess,
+                              famousMatesAccess: { ...userContentAccess.famousMatesAccess, enabled: checked, allowedMates: checked ? [] : [] }
+                            })}
+                          />
+                        </div>
+                        
+                        {userContentAccess.famousMatesAccess?.enabled && famousMates.length > 0 && (
+                          <div className="space-y-2 max-h-60 overflow-y-auto border-t border-border pt-3">
+                            <p className="text-xs text-muted-foreground mb-2">Select which famous mates to unlock:</p>
+                            {famousMates.map((mate) => {
+                              const isAllowed = userContentAccess.famousMatesAccess?.allowedMates?.includes(mate._id || '') || false;
+                              return (
+                                <label key={mate._id} className="flex items-center gap-2 p-2 rounded hover:bg-secondary/50 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={isAllowed}
+                                    onChange={(e) => {
+                                      const currentAllowed = userContentAccess.famousMatesAccess?.allowedMates || [];
+                                      const newAllowed = e.target.checked
+                                        ? [...currentAllowed, mate._id!]
+                                        : currentAllowed.filter(id => id !== mate._id);
+                                      setUserContentAccess({
+                                        ...userContentAccess,
+                                        famousMatesAccess: { ...userContentAccess.famousMatesAccess, enabled: true, allowedMates: newAllowed }
+                                      });
+                                    }}
+                                    className="rounded border-gray-300"
+                                  />
+                                  <span className="text-sm flex-1">{mate.name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        
+                        <p className="text-xs text-muted-foreground">
+                          {!userContentAccess.famousMatesAccess?.enabled 
+                            ? '🔒 All famous mates are locked'
+                            : userContentAccess.famousMatesAccess?.allowedMates?.length === 0
+                              ? '✓ All famous mates unlocked'
+                              : `✓ ${userContentAccess.famousMatesAccess?.allowedMates?.length} mate(s) unlocked`
+                          }
                         </p>
                       </div>
                     </div>
@@ -2632,21 +2754,54 @@ const AdminDashboard = () => {
                       <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
                         <Trophy className="w-5 h-5" /> Best Games Access
                       </h3>
-                      <div className="p-4 bg-secondary/50 rounded-lg">
-                        <div className="flex items-center justify-between mb-3">
-                          <span className="font-medium">Enable All Best Games</span>
+                      <div className="p-4 bg-secondary/50 rounded-lg space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium">Enable Best Games</span>
                           <Switch
                             checked={userContentAccess.bestGamesAccess?.enabled || false}
                             onCheckedChange={(checked) => setUserContentAccess({
                               ...userContentAccess,
-                              bestGamesAccess: { ...userContentAccess.bestGamesAccess, enabled: checked }
+                              bestGamesAccess: { ...userContentAccess.bestGamesAccess, enabled: checked, allowedGames: checked ? [] : [] }
                             })}
                           />
                         </div>
-                        <p className="text-sm text-muted-foreground">
-                          {userContentAccess.bestGamesAccess?.enabled 
-                            ? '✓ All best games are accessible' 
-                            : '🔒 Best games are locked'}
+                        
+                        {userContentAccess.bestGamesAccess?.enabled && bestGames.length > 0 && (
+                          <div className="space-y-2 max-h-60 overflow-y-auto border-t border-border pt-3">
+                            <p className="text-xs text-muted-foreground mb-2">Select which best games to unlock:</p>
+                            {bestGames.map((game) => {
+                              const isAllowed = userContentAccess.bestGamesAccess?.allowedGames?.includes(game._id || '') || false;
+                              return (
+                                <label key={game._id} className="flex items-center gap-2 p-2 rounded hover:bg-secondary/50 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={isAllowed}
+                                    onChange={(e) => {
+                                      const currentAllowed = userContentAccess.bestGamesAccess?.allowedGames || [];
+                                      const newAllowed = e.target.checked
+                                        ? [...currentAllowed, game._id!]
+                                        : currentAllowed.filter(id => id !== game._id);
+                                      setUserContentAccess({
+                                        ...userContentAccess,
+                                        bestGamesAccess: { ...userContentAccess.bestGamesAccess, enabled: true, allowedGames: newAllowed }
+                                      });
+                                    }}
+                                    className="rounded border-gray-300"
+                                  />
+                                  <span className="text-sm flex-1">{game.title}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        
+                        <p className="text-xs text-muted-foreground">
+                          {!userContentAccess.bestGamesAccess?.enabled 
+                            ? '🔒 All best games are locked'
+                            : userContentAccess.bestGamesAccess?.allowedGames?.length === 0
+                              ? '✓ All best games unlocked'
+                              : `✓ ${userContentAccess.bestGamesAccess?.allowedGames?.length} game(s) unlocked`
+                          }
                         </p>
                       </div>
                     </div>
