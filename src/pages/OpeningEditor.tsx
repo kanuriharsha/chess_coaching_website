@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Chess, Square } from 'chess.js';
 import ChessBoard from '@/components/ChessBoard';
+import VisualBoardEditor from '@/components/VisualBoardEditor';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -38,6 +39,9 @@ const OpeningEditor = () => {
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [showPromotion, setShowPromotion] = useState(false);
   const [pendingPromotion, setPendingPromotion] = useState<null | { from: string; to: string; gameCopy: Chess }>(null);
+  const [customFen, setCustomFen] = useState('');
+  const [boardMode, setBoardMode] = useState<'standard' | 'visual-setup'>('standard');
+  const [setupFen, setSetupFen] = useState<string>('');
 
   useEffect(() => {
     if (isEditMode && id) {
@@ -69,8 +73,13 @@ const OpeningEditor = () => {
         setCategory(opening.category);
         setMoves(opening.moves || []);
         
+        // Load custom starting position if exists
+        if (opening.startFen) {
+          setSetupFen(opening.startFen);
+        }
+        
         // Replay moves on the board
-        const newGame = new Chess();
+        const newGame = new Chess(opening.startFen || undefined);
         opening.moves?.forEach((move: Move) => {
           newGame.move(move.san);
         });
@@ -87,7 +96,10 @@ const OpeningEditor = () => {
             setDescription(found.description);
             setCategory(found.category);
             setMoves(found.moves || []);
-            const newGame = new Chess();
+            if (found.startFen) {
+              setSetupFen(found.startFen);
+            }
+            const newGame = new Chess(found.startFen || undefined);
             found.moves?.forEach((m: any) => newGame.move(m.san || m));
             setGame(newGame);
             setCurrentMoveIndex(found.moves?.length - 1 || -1);
@@ -193,6 +205,23 @@ const OpeningEditor = () => {
     setSelectedSquare(null);
   };
 
+  const loadFEN = () => {
+    if (!customFen.trim()) {
+      toast.error('Please enter a FEN string');
+      return;
+    }
+    try {
+      const newGame = new Chess(customFen);
+      setGame(newGame);
+      setMoves([]);
+      setCurrentMoveIndex(-1);
+      setSelectedSquare(null);
+      toast.success('Position loaded from FEN');
+    } catch (error) {
+      toast.error('Invalid FEN string');
+    }
+  };
+
   const continueFromCurrent = () => {
     // User can continue adding moves from current position
     setSelectedSquare(null);
@@ -212,6 +241,7 @@ const OpeningEditor = () => {
       name: name.trim(),
       description: description.trim(),
       category,
+      startFen: setupFen || undefined, // Include custom starting position
       moves,
       isEnabled: true,
     };
@@ -266,18 +296,36 @@ const OpeningEditor = () => {
         <div className="grid md:grid-cols-[1fr,400px] gap-6">
           {/* Left: Board and Controls */}
           <div className="space-y-4">
-            <ChessBoard 
-              game={game} 
-              interactive={currentMoveIndex === moves.length - 1 || moves.length === 0}
-              onSquareClick={handleSquareClick}
-              selectedSquare={selectedSquare}
-            />
-            <PromotionDialog 
-              open={showPromotion} 
-              onOpenChange={setShowPromotion} 
-              onSelect={handlePromotionSelect}
-              color={(pendingPromotion && pendingPromotion.gameCopy.get(pendingPromotion.from)?.color) as 'w' | 'b' | undefined}
-            />
+            {boardMode === 'visual-setup' ? (
+              <VisualBoardEditor
+                onPositionSave={(fen, solution) => {
+                  setSetupFen(fen);
+                  const newGame = new Chess(fen);
+                  setGame(newGame);
+                  setMoves(solution.map(san => ({ san, comment: '', evaluation: undefined })));
+                  setBoardMode('standard');
+                  toast.success('Position loaded! Now recording moves.');
+                }}
+                initialFen={setupFen || undefined}
+                initialSolution={[]}
+                initialMode="setup"
+              />
+            ) : (
+              <>
+                <ChessBoard 
+                  game={game} 
+                  interactive={currentMoveIndex === moves.length - 1 || moves.length === 0}
+                  onSquareClick={handleSquareClick}
+                  selectedSquare={selectedSquare}
+                />
+                <PromotionDialog 
+                  open={showPromotion} 
+                  onOpenChange={setShowPromotion} 
+                  onSelect={handlePromotionSelect}
+                  color={(pendingPromotion && pendingPromotion.gameCopy.get(pendingPromotion.from as Square)?.color) as 'w' | 'b' | undefined}
+                />
+              </>
+            )}
 
             {/* Navigation Controls */}
             <div className="flex justify-center gap-2">
@@ -390,6 +438,34 @@ const OpeningEditor = () => {
                     <SelectItem value="Indian Defenses">Indian Defenses</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              {/* Board Setup Mode Toggle */}
+              <div className="space-y-2">
+                <Label>Position Setup</Label>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant={boardMode === 'standard' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setBoardMode('standard')}
+                    className="flex-1"
+                  >
+                    Standard Start
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={boardMode === 'visual-setup' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setBoardMode('visual-setup')}
+                    className="flex-1"
+                  >
+                    Visual Setup
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {boardMode === 'standard' ? 'Recording from standard position' : 'Use visual editor to set custom position'}
+                </p>
               </div>
             </div>
 

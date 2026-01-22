@@ -20,6 +20,7 @@ interface BestGame {
   category: 'brilliant' | 'best' | 'blunder';
   moves: string[];
   highlights: number[];
+  startFen?: string; // Optional custom starting position
   isEnabled?: boolean;
 }
 
@@ -177,14 +178,14 @@ const BestGames = () => {
     }
     setSelectedGame(bestGame);
     setCurrentMoveIndex(-1);
-    setGame(new Chess());
+    setGame(new Chess(bestGame.startFen || undefined));
     trackGameViewed(bestGame.title, bestGame.category);
   };
 
   const goToMove = (index: number) => {
     if (!selectedGame) return;
     
-    const newGame = new Chess();
+    const newGame = new Chess(selectedGame.startFen || undefined);
     for (let i = 0; i <= index && i < selectedGame.moves.length; i++) {
       newGame.move(selectedGame.moves[i]);
     }
@@ -200,7 +201,9 @@ const BestGames = () => {
   const prevMove = () => {
     if (currentMoveIndex < 0) return;
     if (currentMoveIndex === 0) {
-      setGame(new Chess());
+      if (selectedGame) {
+        setGame(new Chess(selectedGame.startFen || undefined));
+      }
       setCurrentMoveIndex(-1);
     } else {
       goToMove(currentMoveIndex - 1);
@@ -208,7 +211,9 @@ const BestGames = () => {
   };
 
   const goToStart = () => {
-    setGame(new Chess());
+    if (selectedGame) {
+      setGame(new Chess(selectedGame.startFen || undefined));
+    }
     setCurrentMoveIndex(-1);
   };
 

@@ -18,6 +18,7 @@ interface FamousMate {
   description: string;
   moves: { san: string; comment?: string; evaluation?: 'best' | 'brilliant' | 'good' | 'inaccuracy' }[];
   category: string;
+  startFen?: string; // Optional custom starting position
   isEnabled?: boolean;
 }
 
@@ -179,13 +180,13 @@ const FamousMates = () => {
     }
     setSelectedMate(mate);
     setCurrentMoveIndex(0);
-    setGame(new Chess());
+    setGame(new Chess(mate.startFen || undefined));
   };
 
   const goToMove = (index: number) => {
     if (!selectedMate) return;
     
-    const newGame = new Chess();
+    const newGame = new Chess(selectedMate.startFen || undefined);
     for (let i = 0; i <= index && i < selectedMate.moves.length; i++) {
       newGame.move(selectedMate.moves[i].san);
     }
@@ -201,7 +202,9 @@ const FamousMates = () => {
   const prevMove = () => {
     if (currentMoveIndex < 0) return;
     if (currentMoveIndex === 0) {
-      setGame(new Chess());
+      if (selectedMate) {
+        setGame(new Chess(selectedMate.startFen || undefined));
+      }
       setCurrentMoveIndex(-1);
     } else {
       goToMove(currentMoveIndex - 1);
@@ -209,7 +212,9 @@ const FamousMates = () => {
   };
 
   const goToStart = () => {
-    setGame(new Chess());
+    if (selectedMate) {
+      setGame(new Chess(selectedMate.startFen || undefined));
+    }
     setCurrentMoveIndex(-1);
   };
 

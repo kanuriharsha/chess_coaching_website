@@ -18,6 +18,7 @@ interface Opening {
   description: string;
   moves: { san: string; comment?: string; evaluation?: 'best' | 'brilliant' | 'good' | 'inaccuracy' }[];
   category: string;
+  startFen?: string; // Optional custom starting position
   isEnabled?: boolean;
 }
 
@@ -187,13 +188,13 @@ const Openings = () => {
     setSelectedOpening(opening);
     trackOpeningViewed(opening.name, opening.category);
     setCurrentMoveIndex(0);
-    setGame(new Chess());
+    setGame(new Chess(opening.startFen || undefined));
   };
 
   const goToMove = (index: number) => {
     if (!selectedOpening) return;
     
-    const newGame = new Chess();
+    const newGame = new Chess(selectedOpening.startFen || undefined);
     for (let i = 0; i <= index && i < selectedOpening.moves.length; i++) {
       newGame.move(selectedOpening.moves[i].san);
     }
@@ -209,7 +210,9 @@ const Openings = () => {
   const prevMove = () => {
     if (currentMoveIndex < 0) return;
     if (currentMoveIndex === 0) {
-      setGame(new Chess());
+      if (selectedOpening) {
+        setGame(new Chess(selectedOpening.startFen || undefined));
+      }
       setCurrentMoveIndex(-1);
     } else {
       goToMove(currentMoveIndex - 1);
@@ -217,7 +220,9 @@ const Openings = () => {
   };
 
   const goToStart = () => {
-    setGame(new Chess());
+    if (selectedOpening) {
+      setGame(new Chess(selectedOpening.startFen || undefined));
+    }
     setCurrentMoveIndex(-1);
   };
 

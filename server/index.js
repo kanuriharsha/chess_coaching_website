@@ -124,6 +124,7 @@ const openingSchema = new mongoose.Schema({
   name: { type: String, required: true },
   description: { type: String },
   category: { type: String, required: true },
+  startFen: { type: String }, // Optional: custom starting position
   moves: [{
     san: { type: String, required: true },
     comment: { type: String },
@@ -141,6 +142,7 @@ const famousMateSchema = new mongoose.Schema({
   name: { type: String, required: true },
   description: { type: String },
   category: { type: String, required: true, default: 'Famous Mates' },
+  startFen: { type: String }, // Optional: custom starting position
   moves: [{
     san: { type: String, required: true },
     comment: { type: String },
@@ -159,6 +161,7 @@ const bestGameSchema = new mongoose.Schema({
   players: { type: String, required: true },
   description: { type: String },
   category: { type: String, enum: ['brilliant', 'best', 'blunder'], default: 'best' },
+  startFen: { type: String }, // Optional: custom starting position
   moves: [{ type: String }],
   highlights: [{ type: Number }],
   isEnabled: { type: Boolean, default: true },
