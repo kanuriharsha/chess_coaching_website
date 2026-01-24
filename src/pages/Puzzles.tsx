@@ -235,6 +235,10 @@ const Puzzles = () => {
       const move = gameCopy.move({ from, to });
       if (!move) return false; // Invalid move
 
+      // ALWAYS PLAY THE MOVE FIRST - Update the board visually
+      setGame(gameCopy);
+      setLastMove({ from, to });
+
       // Increment attempts counter
       const newAttempts = attempts + 1;
       setAttempts(newAttempts);
@@ -247,9 +251,9 @@ const Puzzles = () => {
       const moveMatches = move.san === expectedMove || to === expectedMove || move.from + move.to === expectedMove;
 
       if (!moveMatches) {
-        // Wrong move - reject it
+        // Wrong move - show error and undo only this move
         playSound('illegal');
-        toast.error('Wrong move! Try again.', {
+        toast.error('Wrong move, try again', {
           description: 'Think carefully about the correct move.',
         });
         
@@ -263,12 +267,16 @@ const Puzzles = () => {
           currentPuzzleIndex + 1
         );
         
-        return false; // Don't update the board
+        // Undo only this wrong move after a brief delay to show it
+        setTimeout(() => {
+          setGame(new Chess(game.fen())); // Revert to previous position
+          setLastMove(null);
+        }, 300);
+        
+        return true; // Move was played, then undone
       }
 
       // Correct move!
-      setGame(gameCopy);
-      setLastMove({ from, to });
       setCurrentMoveIndex(currentMoveIndex + 1);
 
       // Check if puzzle is completely solved
@@ -352,6 +360,12 @@ const Puzzles = () => {
         return;
       }
 
+      // ALWAYS PLAY THE MOVE FIRST - Update the board visually
+      setGame(gameCopy);
+      setLastMove({ from, to });
+      setPendingPromotion(null);
+      setShowPromotion(false);
+
       const newAttempts = attempts + 1;
       setAttempts(newAttempts);
 
@@ -362,18 +376,21 @@ const Puzzles = () => {
       const moveMatches = mv.san === expectedMove || to === expectedMove || mv.from + mv.to === expectedMove;
 
       if (!moveMatches) {
-        // Wrong move
+        // Wrong move - show error and undo only this move
         playSound('illegal');
-        toast.error('Wrong move! Try again.');
+        toast.error('Wrong move, try again');
         trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryName, 'failed', newAttempts, currentPuzzleIndex + 1);
-        setPendingPromotion(null);
-        setShowPromotion(false);
+        
+        // Undo only this wrong move after a brief delay to show it
+        setTimeout(() => {
+          setGame(new Chess(game.fen())); // Revert to previous position
+          setLastMove(null);
+        }, 300);
+        
         return;
       }
 
       // Correct move!
-      setGame(gameCopy);
-      setLastMove({ from, to });
       setCurrentMoveIndex(currentMoveIndex + 1);
 
       // Check if puzzle is solved
