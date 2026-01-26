@@ -117,10 +117,6 @@ const FamousMates = () => {
     }
   };
 
-  useEffect(() => {
-    loadFamousMates();
-  }, []);
-
   const loadFamousMates = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/famous-mates`);
@@ -137,11 +133,13 @@ const FamousMates = () => {
 
   // Reorder famous mates when contentAccess becomes available - ALWAYS sort for non-admin users
   useEffect(() => {
-    if (!isAdmin && contentAccess?.famousMatesAccess?.enabled && famousMates.length > 0) {
-      const hasGranularAccess = contentAccess.famousMatesAccess.allowedMates?.length > 0;
+    if (!isAdmin && contentAccess && famousMates.length > 0) {
+      const isEnabled = contentAccess.famousMatesAccess?.enabled;
+      const hasGranularAccess = contentAccess.famousMatesAccess?.allowedMates?.length > 0;
       
-      if (hasGranularAccess && !sortedRef.current) {
-        // If there's a specific allowed list, put unlocked first, locked after
+      // If famous mates are enabled and there's granular access (specific mates unlocked)
+      if (isEnabled && hasGranularAccess && !sortedRef.current) {
+        // Put unlocked first, locked after
         const allowed = new Set(contentAccess.famousMatesAccess.allowedMates.map(String));
         const reordered = [...famousMates].sort((a, b) => {
           const aKey = (a._id || a.id)?.toString() || '';
@@ -153,9 +151,9 @@ const FamousMates = () => {
         setFamousMates(reordered);
         sortedRef.current = true;
       }
-      // If allowedMates is empty, all mates are unlocked, no need to reorder
+      // If allowedMates is empty array (all unlocked) or feature is disabled (all locked), no need to reorder
     }
-  }, [contentAccess, isAdmin, famousMates]);
+  }, [contentAccess, isAdmin, famousMates.length]);
 
   const selectMate = (mate: FamousMate) => {
     // Check if famous mates are globally locked

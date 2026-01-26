@@ -426,6 +426,7 @@ const AdminDashboard = () => {
         body: JSON.stringify({
           puzzleAccess: userContentAccess.puzzleAccess,
           openingAccess: userContentAccess.openingAccess,
+          famousMatesAccess: userContentAccess.famousMatesAccess,
           bestGamesAccess: userContentAccess.bestGamesAccess
         })
       });
@@ -441,7 +442,7 @@ const AdminDashboard = () => {
     }
   };
 
-  const handleBulkUpdateAccess = async (puzzleAccess: ContentAccess['puzzleAccess'], openingAccess: ContentAccess['openingAccess'], bestGamesAccess: ContentAccess['bestGamesAccess']) => {
+  const handleBulkUpdateAccess = async (puzzleAccess: ContentAccess['puzzleAccess'], openingAccess: ContentAccess['openingAccess'], famousMatesAccess: ContentAccess['famousMatesAccess'], bestGamesAccess: ContentAccess['bestGamesAccess']) => {
     try {
       const response = await fetch(`${API_BASE_URL}/content-access-bulk`, {
         method: 'PUT',
@@ -449,7 +450,7 @@ const AdminDashboard = () => {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ puzzleAccess, openingAccess, bestGamesAccess })
+        body: JSON.stringify({ puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess })
       });
 
       if (response.ok) {
@@ -2853,6 +2854,7 @@ const AdminDashboard = () => {
                             onClick={() => handleBulkUpdateAccess(
                               { [cat.id]: { enabled: true, limit: 0 } },
                               { enabled: false, allowedOpenings: [] },
+                              { enabled: false, allowedMates: [] },
                               { enabled: false, allowedGames: [] }
                             )}
                           >
@@ -2866,6 +2868,7 @@ const AdminDashboard = () => {
                             onClick={() => handleBulkUpdateAccess(
                               { [cat.id]: { enabled: true, limit: 5 } },
                               { enabled: false, allowedOpenings: [] },
+                              { enabled: false, allowedMates: [] },
                               { enabled: false, allowedGames: [] }
                             )}
                           >
@@ -2879,6 +2882,7 @@ const AdminDashboard = () => {
                             onClick={() => handleBulkUpdateAccess(
                               { [cat.id]: { enabled: false, limit: 0 } },
                               { enabled: false, allowedOpenings: [] },
+                              { enabled: false, allowedMates: [] },
                               { enabled: false, allowedGames: [] }
                             )}
                           >
@@ -2909,6 +2913,7 @@ const AdminDashboard = () => {
                         onClick={() => handleBulkUpdateAccess(
                           {},
                           { enabled: true, allowedOpenings: [] },
+                          { enabled: false, allowedMates: [] },
                           { enabled: false, allowedGames: [] }
                         )}
                       >
@@ -2920,6 +2925,7 @@ const AdminDashboard = () => {
                         onClick={() => handleBulkUpdateAccess(
                           {},
                           { enabled: false, allowedOpenings: [] },
+                          { enabled: false, allowedMates: [] },
                           { enabled: false, allowedGames: [] }
                         )}
                       >
@@ -2948,6 +2954,7 @@ const AdminDashboard = () => {
                         onClick={() => handleBulkUpdateAccess(
                           {},
                           { enabled: false, allowedOpenings: [] },
+                          { enabled: false, allowedMates: [] },
                           { enabled: true, allowedGames: [] }
                         )}
                       >
@@ -2959,6 +2966,48 @@ const AdminDashboard = () => {
                         onClick={() => handleBulkUpdateAccess(
                           {},
                           { enabled: false, allowedOpenings: [] },
+                          { enabled: false, allowedMates: [] },
+                          { enabled: false, allowedGames: [] }
+                        )}
+                      >
+                        <Lock className="w-4 h-4 mr-2 text-destructive" />
+                        Lock for All Students
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Famous Mates */}
+                <div>
+                  <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
+                    <Crown className="w-5 h-5 text-primary" /> Famous Mates
+                  </h3>
+                  <div className="p-5 bg-secondary/30 rounded-xl border border-border">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h4 className="font-semibold">All Famous Mates</h4>
+                        <p className="text-sm text-muted-foreground">{famousMates.length} famous mates available</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => handleBulkUpdateAccess(
+                          {},
+                          { enabled: false, allowedOpenings: [] },
+                          { enabled: true, allowedMates: [] },
+                          { enabled: false, allowedGames: [] }
+                        )}
+                      >
+                        <Unlock className="w-4 h-4 mr-2 text-success" />
+                        Unlock for All Students
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => handleBulkUpdateAccess(
+                          {},
+                          { enabled: false, allowedOpenings: [] },
+                          { enabled: false, allowedMates: [] },
                           { enabled: false, allowedGames: [] }
                         )}
                       >

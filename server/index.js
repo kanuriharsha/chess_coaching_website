@@ -1566,7 +1566,7 @@ app.put('/api/content-access/:userId', async (req, res) => {
     const requestingUser = await User.findById(decoded.id);
     if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
 
-    const { puzzleAccess, openingAccess, bestGamesAccess } = req.body;
+    const { puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess } = req.body;
     
     let access = await ContentAccess.findOne({ userId: req.params.userId });
     
@@ -1575,11 +1575,13 @@ app.put('/api/content-access/:userId', async (req, res) => {
         userId: req.params.userId,
         puzzleAccess: puzzleAccess || {},
         openingAccess: openingAccess || { enabled: false, allowedOpenings: [] },
+        famousMatesAccess: famousMatesAccess || { enabled: false, allowedMates: [] },
         bestGamesAccess: bestGamesAccess || { enabled: false, allowedGames: [] }
       });
     } else {
       if (puzzleAccess) access.puzzleAccess = puzzleAccess;
       if (openingAccess) access.openingAccess = openingAccess;
+      if (famousMatesAccess) access.famousMatesAccess = famousMatesAccess;
       if (bestGamesAccess) access.bestGamesAccess = bestGamesAccess;
       access.updatedAt = new Date();
       await access.save();
@@ -1602,7 +1604,7 @@ app.put('/api/content-access-bulk', async (req, res) => {
     const requestingUser = await User.findById(decoded.id);
     if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
 
-    const { puzzleAccess, openingAccess, bestGamesAccess, userIds } = req.body;
+    const { puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess, userIds } = req.body;
     
     // Get all students or specific users
     const targetUserIds = userIds || (await User.find({ role: 'student' }).select('_id')).map(u => u._id);
@@ -1615,11 +1617,13 @@ app.put('/api/content-access-bulk', async (req, res) => {
           userId,
           puzzleAccess: puzzleAccess || {},
           openingAccess: openingAccess || { enabled: false, allowedOpenings: [] },
+          famousMatesAccess: famousMatesAccess || { enabled: false, allowedMates: [] },
           bestGamesAccess: bestGamesAccess || { enabled: false, allowedGames: [] }
         });
       } else {
         if (puzzleAccess) access.puzzleAccess = puzzleAccess;
         if (openingAccess) access.openingAccess = openingAccess;
+        if (famousMatesAccess) access.famousMatesAccess = famousMatesAccess;
         if (bestGamesAccess) access.bestGamesAccess = bestGamesAccess;
         access.updatedAt = new Date();
         await access.save();
