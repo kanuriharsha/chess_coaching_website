@@ -107,6 +107,18 @@ const Puzzles = () => {
     }
   }, [isAdmin]);
 
+  // Reset puzzle state whenever current puzzle changes
+  useEffect(() => {
+    if (currentPuzzle) {
+      setGame(new Chess(currentPuzzle.fen));
+      setSolved(false);
+      setAttempts(0);
+      setLastMove(null);
+      setShowHint(false);
+      setCurrentMoveIndex(0); // Critical: Reset move index for new puzzle
+    }
+  }, [currentPuzzle?._id, currentPuzzleIndex]);
+
   const loadContentAccess = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/my-content-access`, {
@@ -248,7 +260,14 @@ const Puzzles = () => {
 
       // Check if this move matches the expected move in the solution
       const expectedMove = currentPuzzle.solution[currentMoveIndex];
-      const moveMatches = move.san === expectedMove || to === expectedMove || move.from + move.to === expectedMove;
+      // Trim whitespace and make case-insensitive comparison for robust validation
+      const expectedMoveTrimmed = expectedMove.trim().toLowerCase();
+      const moveSanLower = move.san.toLowerCase();
+      const fromTo = move.from + move.to;
+      const moveMatches = 
+        moveSanLower === expectedMoveTrimmed ||
+        to.toLowerCase() === expectedMoveTrimmed ||
+        fromTo.toLowerCase() === expectedMoveTrimmed;
 
       if (!moveMatches) {
         // Wrong move - show error and undo only this move
@@ -373,7 +392,14 @@ const Puzzles = () => {
 
       // Check if this move matches the expected move in the solution
       const expectedMove = currentPuzzle.solution[currentMoveIndex];
-      const moveMatches = mv.san === expectedMove || to === expectedMove || mv.from + mv.to === expectedMove;
+      // Trim whitespace and make case-insensitive comparison for robust validation
+      const expectedMoveTrimmed = expectedMove.trim().toLowerCase();
+      const moveSanLower = mv.san.toLowerCase();
+      const fromTo = mv.from + mv.to;
+      const moveMatches = 
+        moveSanLower === expectedMoveTrimmed ||
+        to.toLowerCase() === expectedMoveTrimmed ||
+        fromTo.toLowerCase() === expectedMoveTrimmed;
 
       if (!moveMatches) {
         // Wrong move - show error and undo only this move
