@@ -153,7 +153,7 @@ const BestGames = () => {
       }
       // If allowedGames is empty, all games are unlocked, no need to reorder
     }
-  }, [contentAccess, isAdmin, bestGames]);
+  }, [contentAccess, isAdmin, bestGames.length]);
 
   const selectGame = (bestGame: BestGame) => {
     // Check if best games are globally locked

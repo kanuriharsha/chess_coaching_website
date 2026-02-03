@@ -162,7 +162,7 @@ const Openings = () => {
       }
       // If allowedOpenings is empty, all openings are unlocked, no need to reorder
     }
-  }, [contentAccess, isAdmin, openings]);
+  }, [contentAccess, isAdmin, openings.length]);
 
   const selectOpening = (opening: Opening) => {
     // Check if openings are globally locked
