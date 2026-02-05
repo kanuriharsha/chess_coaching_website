@@ -45,6 +45,19 @@ const recommendedPuzzles = [
   { id: 4, title: 'Discovered Attack', category: 'Other', difficulty: 'Advanced', rating: 1400 },
 ];
 
+interface PuzzleProgress {
+  category: string;
+  totalPuzzles: number;
+  solvedPuzzles: number;
+  puzzleDetails: {
+    puzzleId: string;
+    puzzleName: string;
+    solved: boolean;
+    solvedAt?: string;
+    attempts: number;
+  }[];
+}
+
 const StudentDashboard: React.FC = () => {
   const { user, token } = useAuth();
   const { trackPageVisit } = useActivityTracker();
@@ -55,6 +68,8 @@ const StudentDashboard: React.FC = () => {
   const [weeklyGoal, setWeeklyGoal] = useState(50);
   const [weeklyProgress, setWeeklyProgress] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [puzzleProgress, setPuzzleProgress] = useState<PuzzleProgress[]>([]);
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
   // Track page visit
   useEffect(() => {
@@ -79,6 +94,7 @@ const StudentDashboard: React.FC = () => {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         const progress = progressRes.ok ? await progressRes.json() : [];
+        setPuzzleProgress(progress);
 
         // Fetch attendance for streaks
         const attendRes = await fetch(`${API_BASE_URL}/users/${user.id}/attendance`, {
@@ -182,6 +198,38 @@ const StudentDashboard: React.FC = () => {
 
     loadData();
   }, [user, token]);
+
+  // Calculate category accuracy from user activity
+  const categoryAccuracy = useMemo(() => {
+    const accuracyByCategory: { [key: string]: { correct: number; total: number; accuracy: number } } = {};
+    
+    // We'll fetch activity to calculate accuracy
+    // For now, calculate from puzzleProgress puzzleDetails
+    puzzleProgress.forEach(category => {
+      const attempted = category.puzzleDetails.filter(p => p.attempts > 0);
+      const correct = attempted.filter(p => p.solved);
+      accuracyByCategory[category.category] = {
+        correct: correct.length,
+        total: attempted.length,
+        accuracy: attempted.length > 0 ? Math.round((correct.length / attempted.length) * 100) : 0
+      };
+    });
+    
+    return accuracyByCategory;
+  }, [puzzleProgress]);
+
+  // Toggle category expansion
+  const toggleCategory = (category: string) => {
+    setExpandedCategories(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(category)) {
+        newSet.delete(category);
+      } else {
+        newSet.add(category);
+      }
+      return newSet;
+    });
+  };
 
   // Calculate stats derived for rendering
   const avgAccuracy = Math.round(weeklyData.reduce((acc, d) => acc + d.accuracy, 0) / (weeklyData.length || 1));
@@ -432,6 +480,108 @@ const StudentDashboard: React.FC = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Puzzle Progress by Category */}
+      {puzzleProgress.length > 0 && (
+        <Card className="card-premium">
+          <CardHeader>
+            <CardTitle className="text-lg font-serif flex items-center gap-2">
+              <Target className="w-5 h-5 text-primary" />
+              Puzzle Progress by Category
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {puzzleProgress.map((category, idx) => (
+                <div key={idx} className="border border-border rounded-lg overflow-hidden">
+                  {/* Category Header - Always Visible */}
+                  <div 
+                    className="p-4 bg-secondary/50 cursor-pointer hover:bg-secondary transition-colors"
+                    onClick={() => toggleCategory(category.category)}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="font-medium text-foreground">{category.category}</h4>
+                      <ChevronRight 
+                        className={`w-4 h-4 text-muted-foreground transition-transform ${
+                          expandedCategories.has(category.category) ? 'rotate-90' : ''
+                        }`}
+                      />
+                    </div>
+                    
+                    <div className="flex items-center justify-between text-sm mb-2">
+                      <span className="text-muted-foreground">Completion:</span>
+                      <span className={`font-medium ${
+                        category.solvedPuzzles === category.totalPuzzles && category.totalPuzzles > 0
+                          ? 'text-success'
+                          : 'text-foreground'
+                      }`}>
+                        {category.solvedPuzzles} / {category.totalPuzzles}
+                        {category.solvedPuzzles === category.totalPuzzles && category.totalPuzzles > 0 && ' ✓'}
+                      </span>
+                    </div>
+                    
+                    {/* Progress Bar */}
+                    <div className="w-full bg-secondary rounded-full h-2 mb-3">
+                      <div 
+                        className={`h-2 rounded-full transition-all ${
+                          category.solvedPuzzles === category.totalPuzzles && category.totalPuzzles > 0
+                            ? 'bg-success'
+                            : 'bg-primary'
+                        }`}
+                        style={{ width: `${(category.solvedPuzzles / Math.max(category.totalPuzzles, 1)) * 100}%` }}
+                      />
+                    </div>
+                    
+                    {/* Accuracy Display */}
+                    {categoryAccuracy[category.category] && categoryAccuracy[category.category].total > 0 && (
+                      <div className="p-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-blue-900 dark:text-blue-100 font-medium">Accuracy:</span>
+                          <span className={`font-bold ${
+                            categoryAccuracy[category.category].accuracy >= 80 ? 'text-success' :
+                            categoryAccuracy[category.category].accuracy >= 60 ? 'text-warning' :
+                            'text-destructive'
+                          }`}>
+                            {categoryAccuracy[category.category].accuracy}%
+                          </span>
+                        </div>
+                        <div className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+                          {categoryAccuracy[category.category].correct} correct / {categoryAccuracy[category.category].total} attempted
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Expanded Puzzle Details */}
+                  {expandedCategories.has(category.category) && (
+                    <div className="p-4 border-t border-border bg-card">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {category.puzzleDetails.map((puzzle, pidx) => (
+                          <div 
+                            key={pidx}
+                            className={`text-xs p-2 rounded flex items-center gap-2 ${
+                              puzzle.solved 
+                                ? 'bg-success/10 text-success border border-success/20' 
+                                : 'bg-secondary/50 text-muted-foreground'
+                            }`}
+                            title={puzzle.puzzleName}
+                          >
+                            {puzzle.solved ? '✓' : '○'}
+                            <span className="truncate">Puzzle {pidx + 1}</span>
+                            {puzzle.attempts > 0 && (
+                              <span className="ml-auto text-xs opacity-70">({puzzle.attempts})</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Daily Streak Calendar */}
       <Card className="card-premium">

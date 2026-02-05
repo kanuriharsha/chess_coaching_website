@@ -219,6 +219,9 @@ const AdminDashboard = () => {
   const [isEditingCommonFeeNote, setIsEditingCommonFeeNote] = useState(false);
   const [tempCommonFeeNote, setTempCommonFeeNote] = useState<string>('');
   
+  // Puzzle category expansion state
+  const [expandedPuzzleCategories, setExpandedPuzzleCategories] = useState<Set<string>>(new Set());
+  
   const [activityFilter, setActivityFilter] = useState<'all' | 'solved' | 'failed'>('all');
   const [activityCategory, setActivityCategory] = useState<'all' | 'puzzles' | 'games' | 'openings' | 'bestgames'>('all');
   const [isEditingUserProfile, setIsEditingUserProfile] = useState(false);
@@ -934,6 +937,19 @@ const AdminDashboard = () => {
     }
     setShowCommonFeeNote(!showCommonFeeNote);
     setIsEditingCommonFeeNote(false);
+  };
+
+  // Toggle puzzle category expansion
+  const togglePuzzleCategory = (category: string) => {
+    setExpandedPuzzleCategories(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(category)) {
+        newSet.delete(category);
+      } else {
+        newSet.add(category);
+      }
+      return newSet;
+    });
   };
 
   const getActivityIcon = (type: string) => {
@@ -1965,67 +1981,85 @@ const AdminDashboard = () => {
                     </div>
 
                     {userPuzzleProgress.map((category, idx) => (
-                      <div key={idx} className="border border-border rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <h4 className="font-medium text-foreground">{category.category}</h4>
-                          <span className={`text-sm font-medium ${
-                            category.solvedPuzzles === category.totalPuzzles && category.totalPuzzles > 0
-                              ? 'text-success'
-                              : 'text-muted-foreground'
-                          }`}>
-                            {category.solvedPuzzles} / {category.totalPuzzles} completed
-                            {category.solvedPuzzles === category.totalPuzzles && category.totalPuzzles > 0 && ' ✓'}
-                          </span>
-                        </div>
-                        <div className="w-full bg-secondary rounded-full h-2 mb-3">
-                          <div 
-                            className={`h-2 rounded-full transition-all ${
+                      <div key={idx} className="border border-border rounded-lg overflow-hidden">
+                        {/* Category Header - Always Visible (Clickable) */}
+                        <div 
+                          className="p-4 bg-secondary/50 cursor-pointer hover:bg-secondary transition-colors"
+                          onClick={() => togglePuzzleCategory(category.category)}
+                        >
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="font-medium text-foreground flex items-center gap-2">
+                              {category.category}
+                              <ChevronRight 
+                                className={`w-4 h-4 text-muted-foreground transition-transform ${
+                                  expandedPuzzleCategories.has(category.category) ? 'rotate-90' : ''
+                                }`}
+                              />
+                            </h4>
+                            <span className={`text-sm font-medium ${
                               category.solvedPuzzles === category.totalPuzzles && category.totalPuzzles > 0
-                                ? 'bg-success'
-                                : 'bg-primary'
-                            }`}
-                            style={{ width: `${(category.solvedPuzzles / Math.max(category.totalPuzzles, 1)) * 100}%` }}
-                          />
+                                ? 'text-success'
+                                : 'text-muted-foreground'
+                            }`}>
+                              {category.solvedPuzzles} / {category.totalPuzzles} completed
+                              {category.solvedPuzzles === category.totalPuzzles && category.totalPuzzles > 0 && ' ✓'}
+                            </span>
+                          </div>
+                          <div className="w-full bg-secondary rounded-full h-2 mb-3">
+                            <div 
+                              className={`h-2 rounded-full transition-all ${
+                                category.solvedPuzzles === category.totalPuzzles && category.totalPuzzles > 0
+                                  ? 'bg-success'
+                                  : 'bg-primary'
+                              }`}
+                              style={{ width: `${(category.solvedPuzzles / Math.max(category.totalPuzzles, 1)) * 100}%` }}
+                            />
+                          </div>
+                          
+                          {/* Accuracy Display - Always Visible */}
+                          {categoryAccuracy[category.category] && categoryAccuracy[category.category].total > 0 && (
+                            <div className="p-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded">
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="text-blue-900 dark:text-blue-100 font-medium">Accuracy:</span>
+                                <span className={`font-bold ${
+                                  categoryAccuracy[category.category].accuracy >= 80 ? 'text-success' :
+                                  categoryAccuracy[category.category].accuracy >= 60 ? 'text-warning' :
+                                  'text-destructive'
+                                }`}>
+                                  {categoryAccuracy[category.category].accuracy}%
+                                </span>
+                              </div>
+                              <div className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+                                {categoryAccuracy[category.category].correct} correct / {categoryAccuracy[category.category].total} attempted
+                              </div>
+                            </div>
+                          )}
                         </div>
                         
-                        {/* Accuracy Display */}
-                        {categoryAccuracy[category.category] && categoryAccuracy[category.category].total > 0 && (
-                          <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded">
-                            <div className="flex items-center justify-between text-sm">
-                              <span className="text-blue-900 dark:text-blue-100 font-medium">Accuracy:</span>
-                              <span className={`font-bold ${
-                                categoryAccuracy[category.category].accuracy >= 80 ? 'text-success' :
-                                categoryAccuracy[category.category].accuracy >= 60 ? 'text-warning' :
-                                'text-destructive'
-                              }`}>
-                                {categoryAccuracy[category.category].accuracy}%
-                              </span>
-                            </div>
-                            <div className="text-xs text-blue-700 dark:text-blue-300 mt-1">
-                              {categoryAccuracy[category.category].correct} correct / {categoryAccuracy[category.category].total} attempted
+                        {/* Expanded Puzzle Details - Hidden by Default */}
+                        {expandedPuzzleCategories.has(category.category) && (
+                          <div className="p-4 border-t border-border bg-card">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                              {category.puzzleDetails.map((puzzle, pidx) => (
+                                <div 
+                                  key={pidx}
+                                  className={`text-xs p-2 rounded flex items-center gap-2 ${
+                                    puzzle.solved 
+                                      ? 'bg-success/10 text-success border border-success/20' 
+                                      : 'bg-secondary/50 text-muted-foreground'
+                                  }`}
+                                  title={puzzle.puzzleName}
+                                >
+                                  {puzzle.solved ? <Check className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                                  <span className="truncate">Puzzle {pidx + 1}</span>
+                                  {puzzle.attempts > 0 && (
+                                    <span className="text-[10px] opacity-70">({puzzle.attempts} try)</span>
+                                  )}
+                                </div>
+                              ))}
                             </div>
                           </div>
                         )}
-                        
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                          {category.puzzleDetails.map((puzzle, pidx) => (
-                            <div 
-                              key={pidx}
-                              className={`text-xs p-2 rounded flex items-center gap-2 ${
-                                puzzle.solved 
-                                  ? 'bg-success/10 text-success border border-success/20' 
-                                  : 'bg-secondary/50 text-muted-foreground'
-                              }`}
-                              title={puzzle.puzzleName}
-                            >
-                              {puzzle.solved ? <Check className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                              <span className="truncate">Puzzle {pidx + 1}</span>
-                              {puzzle.attempts > 0 && (
-                                <span className="text-[10px] opacity-70">({puzzle.attempts} try)</span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
                       </div>
                     ))}
                   </div>
