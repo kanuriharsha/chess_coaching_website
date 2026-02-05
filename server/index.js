@@ -93,6 +93,8 @@ const userSchema = new mongoose.Schema({
     month: { type: Number, required: true }, // 1-12
     year: { type: Number, required: true },
     paid: { type: Boolean, default: false },
+    secretNote: { type: String, default: '' }, // Admin-only secret note
+    secretVisible: { type: Boolean, default: false }, // Whether secret note is visible to admin
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now }
   }],
@@ -724,7 +726,7 @@ app.post('/api/users/:id/fees', async (req, res) => {
   }
 });
 
-// Update a fee record (toggle paid or modify) (admin only)
+// Update a fee record (toggle paid, update secret note, or toggle visibility) (admin only)
 app.put('/api/users/:id/fees/:feeId', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
@@ -734,7 +736,7 @@ app.put('/api/users/:id/fees/:feeId', async (req, res) => {
     const requestingUser = await User.findById(decoded.id);
     if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
 
-    const { paid } = req.body;
+    const { paid, secretNote, secretVisible } = req.body;
 
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
@@ -742,7 +744,11 @@ app.put('/api/users/:id/fees/:feeId', async (req, res) => {
     const fee = user.fees.id(req.params.feeId);
     if (!fee) return res.status(404).json({ message: 'Fee record not found' });
 
+    // Update fields if provided
     if (typeof paid === 'boolean') fee.paid = paid;
+    if (typeof secretNote === 'string') fee.secretNote = secretNote;
+    if (typeof secretVisible === 'boolean') fee.secretVisible = secretVisible;
+    
     fee.updatedAt = new Date();
     user.updatedAt = new Date();
     await user.save();

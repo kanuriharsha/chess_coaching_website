@@ -36,6 +36,7 @@ interface PuzzleData {
   icon: string;
   isEnabled: boolean;
   isLocked?: boolean; // For user access control
+  originalIndex?: number; // Original 1-based index in the category (for tracking)
 }
 
 interface ContentAccess {
@@ -181,6 +182,12 @@ const Puzzles = () => {
       if (response.ok) {
         let puzzles: PuzzleData[] = await response.json();
         
+        // Add original index (1-based) before any filtering/sorting
+        puzzles = puzzles.map((puzzle, index) => ({
+          ...puzzle,
+          originalIndex: index + 1 // Store 1-based original position
+        }));
+        
         // Apply access limit or range for non-admin users
         const limit = getAccessLimit(category);
         const rangeCfg = contentAccess?.puzzleAccess?.[category];
@@ -255,8 +262,8 @@ const Puzzles = () => {
       const newAttempts = attempts + 1;
       setAttempts(newAttempts);
 
-      // Get category name for tracking
-      const categoryName = puzzleCategories.find(c => c.id === selectedCategory)?.name || selectedCategory || '';
+      // Get category id for tracking (use ID not display name for backend matching)
+      const categoryId = selectedCategory || '';
 
       // Check if this move matches the expected move in the solution
       const expectedMove = currentPuzzle.solution[currentMoveIndex];
@@ -276,14 +283,14 @@ const Puzzles = () => {
           description: 'Think carefully about the correct move.',
         });
         
-        // Track failed attempt
+        // Track failed attempt - use originalIndex for correct puzzle number
         trackPuzzleAttempt(
           currentPuzzle._id,
           currentPuzzle.name,
-          categoryName,
+          categoryId,
           'failed',
           newAttempts,
-          currentPuzzleIndex + 1
+          currentPuzzle.originalIndex || currentPuzzleIndex + 1
         );
         
         // Undo only this wrong move after a brief delay to show it
@@ -310,10 +317,10 @@ const Puzzles = () => {
         trackPuzzleAttempt(
           currentPuzzle._id,
           currentPuzzle.name,
-          categoryName,
+          categoryId,
           'passed',
           newAttempts,
-          currentPuzzleIndex + 1
+          currentPuzzle.originalIndex || currentPuzzleIndex + 1
         );
       } else {
         // There are more moves - automatically play the opponent's next move
@@ -343,10 +350,10 @@ const Puzzles = () => {
                   trackPuzzleAttempt(
                     currentPuzzle._id,
                     currentPuzzle.name,
-                    categoryName,
+                    categoryId,
                     'passed',
                     newAttempts,
-                    currentPuzzleIndex + 1
+                    currentPuzzle.originalIndex || currentPuzzleIndex + 1
                   );
                 }
               }
@@ -388,7 +395,7 @@ const Puzzles = () => {
       const newAttempts = attempts + 1;
       setAttempts(newAttempts);
 
-      const categoryName = puzzleCategories.find(c => c.id === selectedCategory)?.name || '';
+      const categoryId = selectedCategory || '';
 
       // Check if this move matches the expected move in the solution
       const expectedMove = currentPuzzle.solution[currentMoveIndex];
@@ -405,7 +412,7 @@ const Puzzles = () => {
         // Wrong move - show error and undo only this move
         playSound('illegal');
         toast.error('Wrong move, try again');
-        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryName, 'failed', newAttempts, currentPuzzleIndex + 1);
+        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
         
         // Undo only this wrong move after a brief delay to show it
         setTimeout(() => {
@@ -424,7 +431,7 @@ const Puzzles = () => {
         setSolved(true);
         playSound('checkmate');
         toast.success('Checkmate! Brilliant move! ♔');
-        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryName, 'passed', newAttempts, currentPuzzleIndex + 1);
+        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
       } else {
         // Auto-play opponent's next move
         playSound('move');
@@ -445,7 +452,7 @@ const Puzzles = () => {
                   setSolved(true);
                   playSound('checkmate');
                   toast.success('Checkmate! Brilliant move! ♔');
-                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryName, 'passed', newAttempts, currentPuzzleIndex + 1);
+                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }
             } catch (err) {

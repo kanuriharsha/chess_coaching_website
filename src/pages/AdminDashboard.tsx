@@ -23,6 +23,7 @@ import {
   Unlock,
   Settings,
   Eye,
+  EyeOff,
   Calendar,
   CalendarDays,
   Check,
@@ -205,6 +206,19 @@ const AdminDashboard = () => {
   const [userActivity, setUserActivity] = useState<UserActivity[]>([]);
   const [userFees, setUserFees] = useState<any[]>([]);
   const [isLoadingFees, setIsLoadingFees] = useState(false);
+  
+  // Store all users' fees for quick lookup
+  const [allUsersFees, setAllUsersFees] = useState<{ [userId: string]: any[] }>({});
+  
+  // Fee secret note editing state
+  const [editingSecretNote, setEditingSecretNote] = useState<{ [feeId: string]: string }>({});
+  
+  // Common fee note (shared for all fees of this user)
+  const [commonFeeNote, setCommonFeeNote] = useState<string>('');
+  const [showCommonFeeNote, setShowCommonFeeNote] = useState(false);
+  const [isEditingCommonFeeNote, setIsEditingCommonFeeNote] = useState(false);
+  const [tempCommonFeeNote, setTempCommonFeeNote] = useState<string>('');
+  
   const [activityFilter, setActivityFilter] = useState<'all' | 'solved' | 'failed'>('all');
   const [activityCategory, setActivityCategory] = useState<'all' | 'puzzles' | 'games' | 'openings' | 'bestgames'>('all');
   const [isEditingUserProfile, setIsEditingUserProfile] = useState(false);
@@ -241,6 +255,38 @@ const AdminDashboard = () => {
     if (hours > 0) return `${hours}h ${minutes}m`;
     return `${minutes}m`;
   };
+
+  // Calculate accuracy per category from activity data
+  const categoryAccuracy = useMemo(() => {
+    const accuracyByCategory: { [key: string]: { correct: number; total: number; accuracy: number } } = {};
+    
+    // Filter puzzle activities
+    const puzzleActivities = userActivity.filter(a => 
+      a.type === 'puzzle_solved' || a.type === 'puzzle_failed'
+    );
+    
+    // Group by category
+    puzzleActivities.forEach(activity => {
+      const category = activity.details?.category || 'unknown';
+      if (!accuracyByCategory[category]) {
+        accuracyByCategory[category] = { correct: 0, total: 0, accuracy: 0 };
+      }
+      
+      accuracyByCategory[category].total++;
+      if (activity.type === 'puzzle_solved') {
+        accuracyByCategory[category].correct++;
+      }
+    });
+    
+    // Calculate accuracy percentage
+    Object.keys(accuracyByCategory).forEach(category => {
+      const data = accuracyByCategory[category];
+      data.accuracy = data.total > 0 ? Math.round((data.correct / data.total) * 100) : 0;
+    });
+    
+    return accuracyByCategory;
+  }, [userActivity]);
+
   const [editUserProfile, setEditUserProfile] = useState<Partial<StudentProfile>>({});
   const [editUserUsername, setEditUserUsername] = useState('');
   const [editUserEmail, setEditUserEmail] = useState('');
@@ -323,6 +369,101 @@ const AdminDashboard = () => {
   const loadUsers = async () => {
     const data = await getAllUsers();
     setUsers(data);
+    // Load fees for all students
+    await loadAllUsersFees(data);
+  };
+
+  // Load fees for all students
+  const loadAllUsersFees = async (userList: User[]) => {
+    const feesMap: { [userId: string]: any[] } = {};
+    const studentUsers = userList.filter(u => u.role === 'student');
+    
+    await Promise.all(
+      studentUsers.map(async (u) => {
+        try {
+          const response = await fetch(`${API_BASE_URL}/users/${u.id}/fees`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (response.ok) {
+            const data = await response.json();
+            feesMap[u.id] = data || [];
+          }
+        } catch (error) {
+          console.error(`Error loading fees for user ${u.id}:`, error);
+          feesMap[u.id] = [];
+        }
+      })
+    );
+    
+    setAllUsersFees(feesMap);
+  };
+
+  // Check if user has any unpaid fees
+  const hasUnpaidFees = (userId: string): boolean => {
+    const fees = allUsersFees[userId];
+    if (!fees || fees.length === 0) return false;
+    return fees.some(fee => !fee.paid);
+  };
+
+  // Check if user has incomplete puzzles in the assigned range for a category
+  // Check if user has incomplete puzzles in the assigned range for a category
+  const hasIncompletePuzzlesInRange = (categoryId: string): boolean => {
+    if (!userContentAccess?.puzzleAccess?.[categoryId]?.enabled) return false;
+    
+    const access = userContentAccess.puzzleAccess[categoryId];
+    const rangeStart = access.rangeStart;
+    const rangeEnd = access.rangeEnd;
+    
+    // If no range is set, return false (not incomplete)
+    if (!rangeStart || !rangeEnd) return false;
+    
+    // Find the category progress
+    const categoryProgress = userPuzzleProgress.find(p => p.category === categoryId);
+    if (!categoryProgress || !categoryProgress.puzzleDetails) return false;
+    
+    // Check if all puzzles in the range are solved
+    // puzzleDetails is 0-indexed, so puzzle #1 is at index 0
+    for (let i = rangeStart; i <= rangeEnd; i++) {
+      const puzzleIndex = i - 1; // Convert puzzle number to array index
+      const puzzle = categoryProgress.puzzleDetails[puzzleIndex];
+      if (!puzzle || !puzzle.solved) {
+        return true; // Found an incomplete puzzle
+      }
+    }
+    
+    return false; // All puzzles in range are completed
+  };
+
+  // Get list of incomplete puzzles in the assigned range for a category
+  const getIncompletePuzzles = (categoryId: string): { number: number; name: string }[] => {
+    if (!userContentAccess?.puzzleAccess?.[categoryId]?.enabled) return [];
+    
+    const access = userContentAccess.puzzleAccess[categoryId];
+    const rangeStart = access.rangeStart;
+    const rangeEnd = access.rangeEnd;
+    
+    if (!rangeStart || !rangeEnd) return [];
+    
+    const categoryProgress = userPuzzleProgress.find(p => p.category === categoryId);
+    if (!categoryProgress || !categoryProgress.puzzleDetails) {
+      return [];
+    }
+    
+    const incomplete: { number: number; name: string }[] = [];
+    
+    // puzzleDetails is 0-indexed, so puzzle #1 is at index 0
+    for (let i = rangeStart; i <= rangeEnd; i++) {
+      const puzzleIndex = i - 1; // Convert puzzle number to array index
+      const puzzle = categoryProgress.puzzleDetails[puzzleIndex];
+      if (!puzzle || !puzzle.solved) {
+        incomplete.push({
+          number: i,
+          name: puzzle?.puzzleName || `Puzzle ${i}`
+        });
+      }
+    }
+    
+    return incomplete;
   };
 
   const loadPuzzles = async () => {
@@ -409,7 +550,10 @@ const AdminDashboard = () => {
 
   const handleOpenAccessModal = async (u: User) => {
     setSelectedUserForAccess(u);
-    await loadUserContentAccess(u.id);
+    await Promise.all([
+      loadUserContentAccess(u.id),
+      loadUserPuzzleProgress(u.id)
+    ]);
     setShowAccessModal(true);
   };
 
@@ -561,8 +705,16 @@ const AdminDashboard = () => {
   useEffect(() => {
     if (selectedUserForDetail) {
       loadUserFees(selectedUserForDetail.id);
+      // Load common fee note from localStorage
+      const savedCommonNote = localStorage.getItem(`commonFeeNote_${selectedUserForDetail.id}`);
+      setCommonFeeNote(savedCommonNote || '');
+      setShowCommonFeeNote(false);
+      setIsEditingCommonFeeNote(false);
     } else {
       setUserFees([]);
+      setCommonFeeNote('');
+      setShowCommonFeeNote(false);
+      setIsEditingCommonFeeNote(false);
     }
   }, [selectedUserForDetail]);
 
@@ -654,6 +806,134 @@ const AdminDashboard = () => {
     } catch (error) {
       toast.error('Failed to update profile');
     }
+  };
+
+  // Fee secret note functions
+  const toggleFeeSecretVisibility = async (feeId: string, currentVisible: boolean) => {
+    if (!selectedUserForDetail) return;
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${selectedUserForDetail.id}/fees/${feeId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ secretVisible: !currentVisible })
+      });
+
+      if (response.ok) {
+        const updatedFee = await response.json();
+        const updatedFees = userFees.map(f => f._id === feeId ? updatedFee.fee || updatedFee : f);
+        setUserFees(updatedFees);
+        
+        if (selectedUserForDetail?.id) {
+          setAllUsersFees(prev => ({
+            ...prev,
+            [selectedUserForDetail.id]: updatedFees
+          }));
+        }
+      } else {
+        toast.error('Failed to update secret visibility');
+      }
+    } catch (error) {
+      console.error('Toggle secret visibility error:', error);
+      toast.error('Failed to update secret visibility');
+    }
+  };
+
+  const updateFeeSecretNote = async (feeId: string, secretNote: string) => {
+    if (!selectedUserForDetail) return;
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${selectedUserForDetail.id}/fees/${feeId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ secretNote })
+      });
+
+      if (response.ok) {
+        const updatedFee = await response.json();
+        const updatedFees = userFees.map(f => f._id === feeId ? { ...f, ...updatedFee.fee } : f);
+        setUserFees(updatedFees);
+        
+        if (selectedUserForDetail?.id) {
+          setAllUsersFees(prev => ({
+            ...prev,
+            [selectedUserForDetail.id]: updatedFees
+          }));
+        }
+        
+        // Remove from editing state
+        setEditingSecretNote(prev => {
+          const newState = { ...prev };
+          delete newState[feeId];
+          return newState;
+        });
+        
+        toast.success('Secret note updated');
+      } else {
+        toast.error('Failed to update secret note');
+      }
+    } catch (error) {
+      console.error('Update secret note error:', error);
+      toast.error('Failed to update secret note');
+    }
+  };
+
+  const toggleSecretNoteVisibility = async (feeId: string, secretVisible: boolean) => {
+    if (!selectedUserForDetail) return;
+    
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${selectedUserForDetail.id}/fees/${feeId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ secretVisible })
+      });
+
+      if (response.ok) {
+        const updatedFee = await response.json();
+        const updatedFees = userFees.map(f => f._id === feeId ? { ...f, ...updatedFee.fee } : f);
+        setUserFees(updatedFees);
+        
+        if (selectedUserForDetail?.id) {
+          setAllUsersFees(prev => ({
+            ...prev,
+            [selectedUserForDetail.id]: updatedFees
+          }));
+        }
+      }
+    } catch (error) {
+      console.error('Error toggling secret note visibility:', error);
+    }
+  };
+
+  // Common fee note handlers
+  const handleSaveCommonFeeNote = () => {
+    if (!selectedUserForDetail) return;
+    localStorage.setItem(`commonFeeNote_${selectedUserForDetail.id}`, tempCommonFeeNote);
+    setCommonFeeNote(tempCommonFeeNote);
+    setIsEditingCommonFeeNote(false);
+    toast.success('Common note saved');
+  };
+
+  const handleCancelCommonFeeNote = () => {
+    setTempCommonFeeNote(commonFeeNote);
+    setIsEditingCommonFeeNote(false);
+  };
+
+  const handleToggleCommonFeeNote = () => {
+    if (!showCommonFeeNote) {
+      setTempCommonFeeNote(commonFeeNote);
+    }
+    setShowCommonFeeNote(!showCommonFeeNote);
+    setIsEditingCommonFeeNote(false);
   };
 
   const getActivityIcon = (type: string) => {
@@ -1139,7 +1419,23 @@ const AdminDashboard = () => {
               {/* Fees */}
               <div className="card-premium p-3 md:p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-medium text-foreground text-sm md:text-base">Fees</h3>
+                  <div className="flex items-center gap-2">
+                    
+                    <h3 className="font-medium text-foreground text-sm md:text-base">Fees</h3>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleToggleCommonFeeNote}
+                      className="p-1 h-6 w-6"
+                      title="Common secret note for all fees"
+                    >
+                      {showCommonFeeNote ? (
+                        <Eye className="w-4 h-4 text-blue-600" />
+                      ) : (
+                        <EyeOff className="w-4 h-4 text-gray-400" />
+                      )}
+                    </Button>
+                  </div>
                   <Button size="sm" onClick={async () => {
                     // add current month fee
                     if (!selectedUserForDetail) return;
@@ -1159,6 +1455,13 @@ const AdminDashboard = () => {
                       if (res.ok) {
                         const data = await res.json();
                         setUserFees(data.fees || data);
+                        // Update allUsersFees state
+                        if (selectedUserForDetail?.id) {
+                          setAllUsersFees(prev => ({
+                            ...prev,
+                            [selectedUserForDetail.id]: data.fees || data
+                          }));
+                        }
                         toast.success('Fee record added');
                       } else {
                         toast.error('Failed to add fee record');
@@ -1173,6 +1476,64 @@ const AdminDashboard = () => {
                     <Plus className="w-4 h-4 mr-2" />Add
                   </Button>
                 </div>
+                
+                {/* Common Secret Note Section */}
+                {showCommonFeeNote && (
+                  <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                    {isEditingCommonFeeNote ? (
+                      <div className="space-y-2">
+                        <Label className="text-xs font-medium text-blue-900 dark:text-blue-100">Common Secret Note (for all fees)</Label>
+                        <Textarea
+                          className="w-full text-xs resize-none"
+                          rows={2}
+                          placeholder="Add a common secret note for this student's fees..."
+                          value={tempCommonFeeNote}
+                          onChange={(e) => setTempCommonFeeNote(e.target.value)}
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="default"
+                            className="h-7 px-3 text-xs"
+                            onClick={handleSaveCommonFeeNote}
+                          >
+                            <Save className="w-3 h-3 mr-1" />
+                            Save
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 px-3 text-xs"
+                            onClick={handleCancelCommonFeeNote}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1">
+                          <Label className="text-xs font-medium text-blue-900 dark:text-blue-100 mb-1 block">Common Secret Note</Label>
+                          <p className="text-xs text-blue-800 dark:text-blue-200">
+                            {commonFeeNote || <span className="italic text-blue-600 dark:text-blue-400">No common note yet</span>}
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 w-7 p-0 shrink-0"
+                          onClick={() => {
+                            setTempCommonFeeNote(commonFeeNote);
+                            setIsEditingCommonFeeNote(true);
+                          }}
+                        >
+                          <Edit className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
                 <div className="space-y-2 max-h-[260px] overflow-y-auto">
                   {userFees.length === 0 ? (
                     <p className="text-sm text-muted-foreground">No fee records yet.</p>
@@ -1180,62 +1541,149 @@ const AdminDashboard = () => {
                     userFees.map((f) => {
                       const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
                       const label = `${monthNames[(f.month || 1)-1]} ${f.year}`;
+                      const isEditingNote = editingSecretNote[f._id] !== undefined;
                       return (
-                        <div key={f._id} className={`flex items-center justify-between p-2 rounded-lg ${f.paid ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-                          <div>
-                            <div className="text-sm font-medium">{label}</div>
-                            <div className="text-xs text-muted-foreground">{f.paid ? 'Paid' : 'Not paid'}</div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Switch checked={!!f.paid} onCheckedChange={async (val) => {
-                              try {
-                                const res = await fetch(`${API_BASE_URL}/users/${selectedUserForDetail?.id}/fees/${f._id}`, {
-                                  method: 'PUT',
-                                  headers: {
-                                    'Content-Type': 'application/json',
-                                    'Authorization': `Bearer ${token}`
-                                  },
-                                  body: JSON.stringify({ paid: !!val })
-                                });
-                                if (res.ok) {
-                                  const json = await res.json();
-                                  // update local state
-                                  setUserFees(prev => prev.map(p => p._id === f._id ? json.fee || json : p));
-                                } else {
+                        <div key={f._id} className={`p-3 rounded-lg border ${f.paid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                          <div className="flex items-center justify-between mb-2">
+                            <div>
+                              <div className="text-sm font-medium">{label}</div>
+                              <div className="text-xs text-muted-foreground">{f.paid ? 'Paid' : 'Not paid'}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => toggleSecretNoteVisibility(f._id, !f.secretVisible)}
+                                className="h-6 w-6 p-0"
+                                title={f.secretVisible ? 'Hide secret note' : 'Show secret note'}
+                              >
+                                {f.secretVisible ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3 text-muted-foreground" />}
+                              </Button>
+                              <Switch checked={!!f.paid} onCheckedChange={async (val) => {
+                                try {
+                                  const res = await fetch(`${API_BASE_URL}/users/${selectedUserForDetail?.id}/fees/${f._id}`, {
+                                    method: 'PUT',
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                      'Authorization': `Bearer ${token}`
+                                    },
+                                    body: JSON.stringify({ paid: !!val })
+                                  });
+                                  if (res.ok) {
+                                    const json = await res.json();
+                                    // update local state
+                                    const updatedFees = userFees.map(p => p._id === f._id ? json.fee || json : p);
+                                    setUserFees(updatedFees);
+                                    // Update allUsersFees state
+                                    if (selectedUserForDetail?.id) {
+                                      setAllUsersFees(prev => ({
+                                        ...prev,
+                                        [selectedUserForDetail.id]: updatedFees
+                                      }));
+                                    }
+                                  } else {
+                                    toast.error('Failed to update fee');
+                                  }
+                                } catch (err) {
+                                  console.error(err);
                                   toast.error('Failed to update fee');
                                 }
-                              } catch (err) {
-                                console.error(err);
-                                toast.error('Failed to update fee');
-                              }
-                            }} />
-                            <Button variant="ghost" size="sm" onClick={async () => {
-                              if (!confirm('Delete this fee record?')) return;
-                              try {
-                                const res = await fetch(`${API_BASE_URL}/users/${selectedUserForDetail?.id}/fees/${f._id}`, {
-                                  method: 'DELETE',
-                                  headers: {
-                                    'Authorization': `Bearer ${token}`,
-                                    'Content-Type': 'application/json'
+                              }} />
+                              <Button variant="ghost" size="sm" onClick={async () => {
+                                if (!confirm('Delete this fee record?')) return;
+                                try {
+                                  const res = await fetch(`${API_BASE_URL}/users/${selectedUserForDetail?.id}/fees/${f._id}`, {
+                                    method: 'DELETE',
+                                    headers: {
+                                      'Authorization': `Bearer ${token}`,
+                                      'Content-Type': 'application/json'
+                                    }
+                                  });
+                                  if (res.ok) {
+                                    const data = await res.json();
+                                    setUserFees(data.fees || data);
+                                    // Update allUsersFees state
+                                    if (selectedUserForDetail?.id) {
+                                      setAllUsersFees(prev => ({
+                                        ...prev,
+                                        [selectedUserForDetail.id]: data.fees || data
+                                      }));
+                                    }
+                                    toast.success('Fee record deleted');
+                                  } else {
+                                    const text = await res.text();
+                                    console.error('Delete fee failed', res.status, text);
+                                    toast.error(`Failed to delete fee: ${text || res.status}`);
                                   }
-                                });
-                                if (res.ok) {
-                                  const data = await res.json();
-                                  setUserFees(data.fees || data);
-                                  toast.success('Fee record deleted');
-                                } else {
-                                  const text = await res.text();
-                                  console.error('Delete fee failed', res.status, text);
-                                  toast.error(`Failed to delete fee: ${text || res.status}`);
+                                } catch (err) {
+                                  console.error(err);
+                                  toast.error('Failed to delete fee');
                                 }
-                              } catch (err) {
-                                console.error(err);
-                                toast.error('Failed to delete fee');
-                              }
-                            }}>
-                              <Trash2 className="w-4 h-4 text-muted-foreground" />
-                            </Button>
+                              }}>
+                                <Trash2 className="w-3 h-3 text-muted-foreground" />
+                              </Button>
+                            </div>
                           </div>
+                          
+                          {/* Secret Note Section */}
+                          {f.secretVisible && (
+                            <div className="mt-2 pt-2 border-t border-gray-200">
+                              {isEditingNote ? (
+                                <div className="space-y-2">
+                                  <textarea
+                                    className="w-full text-xs p-2 border rounded resize-none"
+                                    rows={2}
+                                    placeholder="Add secret note..."
+                                    value={editingSecretNote[f._id] || ''}
+                                    onChange={(e) => setEditingSecretNote(prev => ({
+                                      ...prev,
+                                      [f._id]: e.target.value
+                                    }))}
+                                  />
+                                  <div className="flex gap-1">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-6 px-2 text-xs"
+                                      onClick={() => updateFeeSecretNote(f._id, editingSecretNote[f._id] || '')}
+                                    >
+                                      <Save className="w-3 h-3 mr-1" />
+                                      Save
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-6 px-2 text-xs"
+                                      onClick={() => setEditingSecretNote(prev => {
+                                        const newState = { ...prev };
+                                        delete newState[f._id];
+                                        return newState;
+                                      })}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="text-xs text-gray-600 flex-1">
+                                    {f.secretNote || <span className="italic text-gray-400">No secret note</span>}
+                                  </div>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 w-6 p-0 shrink-0"
+                                    onClick={() => setEditingSecretNote(prev => ({
+                                      ...prev,
+                                      [f._id]: f.secretNote || ''
+                                    }))}
+                                  >
+                                    <Edit className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })
@@ -1539,6 +1987,26 @@ const AdminDashboard = () => {
                             style={{ width: `${(category.solvedPuzzles / Math.max(category.totalPuzzles, 1)) * 100}%` }}
                           />
                         </div>
+                        
+                        {/* Accuracy Display */}
+                        {categoryAccuracy[category.category] && categoryAccuracy[category.category].total > 0 && (
+                          <div className="mb-3 p-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 rounded">
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="text-blue-900 dark:text-blue-100 font-medium">Accuracy:</span>
+                              <span className={`font-bold ${
+                                categoryAccuracy[category.category].accuracy >= 80 ? 'text-success' :
+                                categoryAccuracy[category.category].accuracy >= 60 ? 'text-warning' :
+                                'text-destructive'
+                              }`}>
+                                {categoryAccuracy[category.category].accuracy}%
+                              </span>
+                            </div>
+                            <div className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+                              {categoryAccuracy[category.category].correct} correct / {categoryAccuracy[category.category].total} attempted
+                            </div>
+                          </div>
+                        )}
+                        
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                           {category.puzzleDetails.map((puzzle, pidx) => (
                             <div 
@@ -2167,10 +2635,15 @@ const AdminDashboard = () => {
                   <tbody>
                     {users.map((u) => {
                       const todayAttendance = getTodayAttendance(u);
+                      const hasUnpaid = hasUnpaidFees(u.id);
                       return (
                         <tr 
                           key={u.id} 
-                          className="border-b border-border last:border-0 hover:bg-secondary/30 cursor-pointer transition-colors"
+                          className={`border-b last:border-0 cursor-pointer transition-colors ${
+                            hasUnpaid 
+                              ? 'bg-red-100/80 hover:bg-red-100' 
+                              : 'border-border hover:bg-secondary/30'
+                          }`}
                           onClick={() => handleViewUserDetail(u)}
                         >
                           <td className="py-4">
@@ -2555,9 +3028,25 @@ const AdminDashboard = () => {
             <Dialog open={showAccessModal} onOpenChange={setShowAccessModal}>
               <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
-                  <DialogTitle className="flex items-center gap-2">
-                    <Settings className="w-5 h-5" />
-                    Content Access for {selectedUserForAccess?.username}
+                  <DialogTitle className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Settings className="w-5 h-5" />
+                      Content Access for {selectedUserForAccess?.username}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        if (selectedUserForAccess) {
+                          await loadUserPuzzleProgress(selectedUserForAccess.id);
+                          toast.success('Puzzle progress refreshed');
+                        }
+                      }}
+                      className="flex items-center gap-2"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Refresh
+                    </Button>
                   </DialogTitle>
                 </DialogHeader>
                 
@@ -2569,8 +3058,15 @@ const AdminDashboard = () => {
                         <Puzzle className="w-5 h-5" /> Puzzle Access
                       </h3>
                       <div className="grid grid-cols-2 gap-4">
-                        {PUZZLE_CATEGORIES.map((cat) => (
-                          <div key={cat.id} className="p-4 bg-secondary/50 rounded-lg">
+                        {PUZZLE_CATEGORIES.map((cat) => {
+                          const hasIncomplete = hasIncompletePuzzlesInRange(cat.id);
+                          const incompletePuzzles = getIncompletePuzzles(cat.id);
+                          return (
+                          <div key={cat.id} className={`p-4 rounded-lg transition-colors ${
+                            hasIncomplete 
+                              ? 'bg-red-100 border-2 border-red-400' 
+                              : 'bg-secondary/50'
+                          }`}>
                             <div className="flex items-center justify-between mb-3">
                               <div className="flex items-center gap-2">
                                 <span className="text-xl">{cat.icon}</span>
@@ -2622,17 +3118,36 @@ const AdminDashboard = () => {
                                 />
                               </div>
                             </div>
-                            <p className="text-xs text-muted-foreground mt-2">
+                            <div className="text-xs mt-2">
                               {userContentAccess.puzzleAccess?.[cat.id]?.enabled 
                                 ? userContentAccess.puzzleAccess?.[cat.id]?.rangeStart && userContentAccess.puzzleAccess?.[cat.id]?.rangeEnd
-                                  ? `✓ Puzzles ${userContentAccess.puzzleAccess?.[cat.id]?.rangeStart}-${userContentAccess.puzzleAccess?.[cat.id]?.rangeEnd} unlocked`
+                                  ? (
+                                    <>
+                                      <p className="text-muted-foreground mb-1">
+                                        ✓ Puzzles {userContentAccess.puzzleAccess?.[cat.id]?.rangeStart}-{userContentAccess.puzzleAccess?.[cat.id]?.rangeEnd} unlocked
+                                      </p>
+                                      {incompletePuzzles.length > 0 && (
+                                        <div className="mt-2 p-2 bg-red-50 border border-red-300 rounded">
+                                          <p className="font-semibold text-red-700 mb-1">Not Completed:</p>
+                                          <ul className="space-y-0.5">
+                                            {incompletePuzzles.map((puzzle) => (
+                                              <li key={puzzle.number} className="text-red-600">
+                                                Puzzle #{puzzle.number} ({puzzle.name})
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      )}
+                                    </>
+                                  )
                                   : userContentAccess.puzzleAccess?.[cat.id]?.limit === 0 
-                                    ? '✓ All puzzles unlocked' 
-                                    : `✓ First ${userContentAccess.puzzleAccess?.[cat.id]?.limit} puzzles unlocked`
-                                : '🔒 Category locked'}
-                            </p>
+                                    ? <p className="text-muted-foreground">✓ All puzzles unlocked</p>
+                                    : <p className="text-muted-foreground">✓ First {userContentAccess.puzzleAccess?.[cat.id]?.limit} puzzles unlocked</p>
+                                : <p className="text-muted-foreground">🔒 Category locked</p>}
+                            </div>
                           </div>
-                        ))}
+                        );
+                        })}
                       </div>
                     </div>
 
