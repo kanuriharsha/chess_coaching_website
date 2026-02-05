@@ -60,6 +60,10 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
   const [showPuzzleList, setShowPuzzleList] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   
+  // Filter states
+  const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  
   const [newPuzzle, setNewPuzzle] = useState<PuzzleData>({
     name: '',
     category: '',
@@ -187,6 +191,22 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
     }
   };
 
+  // Filter puzzles based on search query and category filter
+  const filteredPuzzles = React.useMemo(() => {
+    return puzzles.filter(puzzle => {
+      // Category filter
+      const matchesCategory = categoryFilter === 'all' || puzzle.category === categoryFilter;
+      
+      // Search filter (case-insensitive, prefix and partial matching)
+      // Search in both puzzle name and solution moves
+      const matchesSearch = searchQuery === '' || 
+        puzzle.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        puzzle.solution.join(' ').toLowerCase().includes(searchQuery.toLowerCase());
+      
+      return matchesCategory && matchesSearch;
+    });
+  }, [puzzles, searchQuery, categoryFilter]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -200,21 +220,107 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
           onClick={() => setShowPuzzleList(!showPuzzleList)}
         >
           {showPuzzleList ? <EyeOff className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
-          {showPuzzleList ? 'Create New' : 'View Puzzles'} ({puzzles.length})
+          {showPuzzleList ? 'Create New' : `View Puzzles (${puzzles.length})`}
         </Button>
       </div>
 
       {showPuzzleList ? (
         // Puzzle List View
         <div className="space-y-4">
-          {puzzles.length === 0 ? (
+          {/* Search and Filter Section */}
+          <Card>
+            <CardContent className="p-4">
+              <div className="space-y-4">
+                {/* Search Input */}
+                <div>
+                  <Label htmlFor="search" className="text-sm font-medium mb-2 block">Search Puzzles</Label>
+                  <Input
+                    id="search"
+                    type="text"
+                    placeholder="Search by puzzle title..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full"
+                  />
+                </div>
+                
+                {/* Category Filter Buttons */}
+                <div>
+                  <Label className="text-sm font-medium mb-2 block">Filter by Category</Label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant={categoryFilter === 'all' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCategoryFilter('all')}
+                    >
+                      All ({puzzles.length})
+                    </Button>
+                    <Button
+                      variant={categoryFilter === 'mate-in-1' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCategoryFilter('mate-in-1')}
+                    >
+                      Mate in 1 ({puzzles.filter(p => p.category === 'mate-in-1').length})
+                    </Button>
+                    <Button
+                      variant={categoryFilter === 'mate-in-2' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCategoryFilter('mate-in-2')}
+                    >
+                      Mate in 2 ({puzzles.filter(p => p.category === 'mate-in-2').length})
+                    </Button>
+                    <Button
+                      variant={categoryFilter === 'mate-in-3' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCategoryFilter('mate-in-3')}
+                    >
+                      Mate in 3 ({puzzles.filter(p => p.category === 'mate-in-3').length})
+                    </Button>
+                    <Button
+                      variant={categoryFilter === 'pins' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCategoryFilter('pins')}
+                    >
+                      Pins ({puzzles.filter(p => p.category === 'pins').length})
+                    </Button>
+                    <Button
+                      variant={categoryFilter === 'forks' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCategoryFilter('forks')}
+                    >
+                      Forks ({puzzles.filter(p => p.category === 'forks').length})
+                    </Button>
+                    <Button
+                      variant={categoryFilter === 'traps' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setCategoryFilter('traps')}
+                    >
+                      Traps ({puzzles.filter(p => p.category === 'traps').length})
+                    </Button>
+                  </div>
+                </div>
+                
+                {/* Results count */}
+                {(searchQuery || categoryFilter !== 'all') && (
+                  <div className="text-sm text-muted-foreground">
+                    Showing {filteredPuzzles.length} of {puzzles.length} puzzles
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+          
+          {/* Puzzle List */}
+          {filteredPuzzles.length === 0 ? (
             <Card>
               <CardContent className="py-8 text-center text-muted-foreground">
-                No puzzles created yet. Create your first puzzle!
+                {puzzles.length === 0 
+                  ? 'No puzzles created yet. Create your first puzzle!'
+                  : 'No puzzles match your search criteria.'}
               </CardContent>
             </Card>
           ) : (
-            puzzles.map(puzzle => (
+            filteredPuzzles.map(puzzle => (
               <Card key={puzzle._id}>
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-4">
