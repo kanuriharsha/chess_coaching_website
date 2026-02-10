@@ -223,7 +223,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
               setTimeout(() => {
                 setMode('solution');
                 setSolutionMoves([]); // Reset solution moves for the new position
-              }, 1000);
+              }, 500);
             }
           }
         } catch (e) {
@@ -295,7 +295,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
           setTimeout(() => {
             setMode('solution');
             setSolutionMoves([]);
-          }, 1000);
+          }, 500);
         } else {
           // Recording solution move
           setSolutionMoves(prev => [...prev, mv.san]);
@@ -432,7 +432,20 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
     return board;
   };
 
-  const displayBoard = getCurrentBoard();
+  // Determine board orientation - flip if black to move (in all modes)
+  const shouldFlipBoard = turn === 'b';
+
+  // Get display board with proper orientation
+  const getOrientedBoard = (): (PieceType | null)[][] => {
+    const currentBoard = getCurrentBoard();
+    if (shouldFlipBoard) {
+      // Flip the board for black's perspective
+      return currentBoard.map(row => [...row].reverse()).reverse();
+    }
+    return currentBoard;
+  };
+
+  const displayBoard = getOrientedBoard();
 
   return (
     <div className="space-y-4">
@@ -464,8 +477,11 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
               {displayBoard.map((row, rank) => (
                 <div key={rank} className="flex">
                   {row.map((piece, file) => {
-                    const isLight = (rank + file) % 2 === 0;
-                    const square = `${FILES[file]}${RANKS[rank]}`;
+                    // Calculate actual board position based on orientation
+                    const actualRank = shouldFlipBoard ? 7 - rank : rank;
+                    const actualFile = shouldFlipBoard ? 7 - file : file;
+                    const isLight = (actualRank + actualFile) % 2 === 0;
+                    const square = `${FILES[actualFile]}${RANKS[actualRank]}`;
                     const isSelected = selectedSquare === square;
                     
                     // Chess.com colors
@@ -477,7 +493,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                     return (
                       <button
                         key={`${rank}-${file}`}
-                        onClick={() => handleSquareClick(rank, file)}
+                        onClick={() => handleSquareClick(actualRank, actualFile)}
                         className="w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center relative transition-all hover:brightness-110"
                         style={{ backgroundColor: bgColor }}
                       >
@@ -499,20 +515,20 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                           <span className="absolute w-8 h-8 rounded-full border-2 border-red-500/80" style={{ boxSizing: 'border-box' }} />
                         )}
                         {/* Coordinate labels */}
-                        {file === 0 && (
+                        {actualFile === 0 && (
                           <span 
                             className="absolute top-0.5 left-0.5 text-[10px] font-bold"
                             style={{ color: isLight ? DARK_SQUARE : LIGHT_SQUARE }}
                           >
-                            {RANKS[rank]}
+                            {RANKS[actualRank]}
                           </span>
                         )}
-                        {rank === 7 && (
+                        {actualRank === 7 && (
                           <span 
                             className="absolute bottom-0 right-0.5 text-[10px] font-bold"
                             style={{ color: isLight ? DARK_SQUARE : LIGHT_SQUARE }}
                           >
-                            {FILES[file]}
+                            {FILES[actualFile]}
                           </span>
                         )}
                       </button>

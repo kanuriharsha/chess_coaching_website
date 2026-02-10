@@ -8,6 +8,7 @@ import { Trophy, Star, AlertTriangle, ChevronLeft, ChevronRight, SkipBack, SkipF
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
+import { useChessSound } from '@/hooks/useChessSound';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -82,6 +83,7 @@ const BestGames = () => {
   const [contentAccess, setContentAccess] = useState<ContentAccess | null>(null);
   const [isContentLocked, setIsContentLocked] = useState(false);
   const { trackPageVisit, trackGameViewed } = useActivityTracker();
+  const { playSound } = useChessSound();
   const sortedRef = useRef(false);
 
   const isAdmin = user?.role === 'admin';
@@ -195,6 +197,7 @@ const BestGames = () => {
 
   const nextMove = () => {
     if (!selectedGame || currentMoveIndex >= selectedGame.moves.length - 1) return;
+    playSound('move');
     goToMove(currentMoveIndex + 1);
   };
 

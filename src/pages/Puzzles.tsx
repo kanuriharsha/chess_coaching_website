@@ -86,6 +86,7 @@ const Puzzles = () => {
   const { playSound } = useChessSound();
   const [currentMoveIndex, setCurrentMoveIndex] = useState(0); // Track which move in the solution we're on
   const [preloadedMoveExecuted, setPreloadedMoveExecuted] = useState(false); // Track if preloaded move has been executed
+  const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white'); // Fixed orientation per puzzle
 
   const isAdmin = user?.role === 'admin';
   const currentPuzzle = categoryPuzzles[currentPuzzleIndex];
@@ -110,10 +111,52 @@ const Puzzles = () => {
     }
   }, [isAdmin]);
 
+  // Execute preloaded move for current puzzle
+  const executePreloadedMove = useCallback(() => {
+    if (!currentPuzzle || !currentPuzzle.preloadedMove || !currentPuzzle.preloadedMove.trim()) {
+      return;
+    }
+
+    console.log('Puzzle has preloaded move:', currentPuzzle.preloadedMove);
+    const timer = setTimeout(() => {
+      // The preloaded move is made by the OPPOSITE color of who's solving
+      // If puzzle is "White to move", preloaded move is Black's move
+      // So we need to flip the turn to execute it
+      const fenParts = currentPuzzle.fen.split(' ');
+      const currentTurn = fenParts[1]; // 'w' or 'b'
+      const preloadedTurn = currentTurn === 'w' ? 'b' : 'w';
+      fenParts[1] = preloadedTurn;
+      const flippedFen = fenParts.join(' ');
+      
+      const gameCopy = new Chess(flippedFen);
+      try {
+        const move = gameCopy.move(currentPuzzle.preloadedMove!.trim());
+        if (move) {
+          console.log('Preloaded move executed successfully:', move.san);
+          setGame(gameCopy);
+          setLastMove({ from: move.from as Square, to: move.to as Square });
+          setCurrentMoveIndex(0); // Keep at 0 - solution array doesn't include preloaded move
+          setPreloadedMoveExecuted(true);
+          playSound('move');
+          toast.info(`Opponent played: ${move.san}`, {
+            description: 'Now it\'s your turn!',
+          });
+        } else {
+          console.error('Invalid preloaded move:', currentPuzzle.preloadedMove);
+        }
+      } catch (error) {
+        console.error('Error executing preloaded move:', error);
+      }
+    }, 500); // 0.5 second delay
+    
+    return timer;
+  }, [currentPuzzle, playSound]);
+
   // Reset puzzle state whenever current puzzle changes
   useEffect(() => {
     if (currentPuzzle) {
-      setGame(new Chess(currentPuzzle.fen));
+      const initialGame = new Chess(currentPuzzle.fen);
+      setGame(initialGame);
       setSolved(false);
       setAttempts(0);
       setLastMove(null);
@@ -121,44 +164,20 @@ const Puzzles = () => {
       setCurrentMoveIndex(0); // Critical: Reset move index for new puzzle
       setPreloadedMoveExecuted(false); // Reset preloaded move flag
       
+      // Set board orientation based on initial position - this stays fixed for entire puzzle
+      // Student plays from the perspective of the side that needs to move initially
+      setBoardOrientation(initialGame.turn() === 'w' ? 'white' : 'black');
+      
       // Execute preloaded move if specified
-      if (currentPuzzle.preloadedMove && currentPuzzle.preloadedMove.trim()) {
-        console.log('Puzzle has preloaded move:', currentPuzzle.preloadedMove);
-        const timer = setTimeout(() => {
-          // The preloaded move is made by the OPPOSITE color of who's solving
-          // If puzzle is "White to move", preloaded move is Black's move
-          // So we need to flip the turn to execute it
-          const fenParts = currentPuzzle.fen.split(' ');
-          const currentTurn = fenParts[1]; // 'w' or 'b'
-          const preloadedTurn = currentTurn === 'w' ? 'b' : 'w';
-          fenParts[1] = preloadedTurn;
-          const flippedFen = fenParts.join(' ');
-          
-          const gameCopy = new Chess(flippedFen);
-          try {
-            const move = gameCopy.move(currentPuzzle.preloadedMove!.trim());
-            if (move) {
-              console.log('Preloaded move executed successfully:', move.san);
-              setGame(gameCopy);
-              setLastMove({ from: move.from as Square, to: move.to as Square });
-              setCurrentMoveIndex(0); // Keep at 0 - solution array doesn't include preloaded move
-              setPreloadedMoveExecuted(true);
-              playSound('move');
-              toast.info(`Opponent played: ${move.san}`, {
-                description: 'Now it\'s your turn!',
-              });
-            } else {
-              console.error('Invalid preloaded move:', currentPuzzle.preloadedMove);
-            }
-          } catch (error) {
-            console.error('Error executing preloaded move:', error);
-          }
-        }, 1500); // 1.5 second delay
-        
-        return () => clearTimeout(timer); // Cleanup timer on unmount or puzzle change
-      }
+      const timer = executePreloadedMove();
+      
+      return () => {
+        if (timer) {
+          clearTimeout(timer);
+        }
+      };
     }
-  }, [currentPuzzle?._id, currentPuzzleIndex, playSound]);
+  }, [currentPuzzle?._id, currentPuzzleIndex, executePreloadedMove]);
 
   const loadContentAccess = async () => {
     try {
@@ -518,6 +537,10 @@ const Puzzles = () => {
     setLastMove(null);
     setShowHint(false);
     setCurrentMoveIndex(0); // Reset move index
+    setPreloadedMoveExecuted(false); // Reset preloaded move flag
+    
+    // Execute preloaded move again on reattempt
+    executePreloadedMove();
   };
 
   const nextPuzzle = () => {
@@ -740,6 +763,7 @@ const Puzzles = () => {
                   <ChessBoard
                     game={game}
                     onMove={handleMove}
+                    orientation={boardOrientation}
                     interactive={!solved && !currentPuzzle?.isLocked}
                     lastMove={lastMove}
                   />
@@ -790,7 +814,9 @@ const Puzzles = () => {
                           <PuzzleIcon className="w-4 h-4 text-primary" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-semibold text-foreground">White to move</p>
+                          <p className="text-sm font-semibold text-foreground">
+                            {game.turn() === 'w' ? 'White' : 'Black'} to move
+                          </p>
                           <p className="text-xs text-muted-foreground">Find the best move</p>
                         </div>
                       </>

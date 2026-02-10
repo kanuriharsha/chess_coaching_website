@@ -8,6 +8,7 @@ import { ChevronLeft, ChevronRight, SkipBack, SkipForward, BookOpen, Lock, Plus,
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
+import { useChessSound } from '@/hooks/useChessSound';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -95,6 +96,7 @@ const Openings = () => {
   const [contentAccess, setContentAccess] = useState<ContentAccess | null>(null);
   const [isContentLocked, setIsContentLocked] = useState(false);
   const { trackPageVisit, trackOpeningViewed } = useActivityTracker();
+  const { playSound } = useChessSound();
   const sortedRef = useRef(false); // Track if we've sorted the data
 
   const isAdmin = user?.role === 'admin';
@@ -204,6 +206,7 @@ const Openings = () => {
 
   const nextMove = () => {
     if (!selectedOpening || currentMoveIndex >= selectedOpening.moves.length - 1) return;
+    playSound('move');
     goToMove(currentMoveIndex + 1);
   };
 
