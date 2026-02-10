@@ -7,7 +7,7 @@ import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { toast } from 'sonner';
-import { Trash2, Save, Eye, EyeOff, Edit3 } from 'lucide-react';
+import { Trash2, Save, Eye, EyeOff, Edit3, GripVertical, ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -60,6 +60,10 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
   const [puzzles, setPuzzles] = useState<PuzzleData[]>([]);
   const [showPuzzleList, setShowPuzzleList] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isRearrangeMode, setIsRearrangeMode] = useState(false);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [tempReorderedPuzzles, setTempReorderedPuzzles] = useState<PuzzleData[]>([]);
   
   // Filter states
   const [searchQuery, setSearchQuery] = useState('');
@@ -194,6 +198,81 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
     }
   };
 
+  // Get active color from FEN (whose turn it is)
+  const getActiveColorFromFEN = (fen: string): 'white' | 'black' => {
+    if (!fen) return 'white';
+    const parts = fen.split(' ');
+    return parts[1] === 'b' ? 'black' : 'white';
+  };
+
+  // Initialize temp reordered puzzles when entering rearrange mode or category changes
+  React.useEffect(() => {
+    if (isRearrangeMode) {
+      setTempReorderedPuzzles([...filteredPuzzles]);
+    } else {
+      setTempReorderedPuzzles([]);
+    }
+  }, [isRearrangeMode, categoryFilter]);
+
+  // Handle drag start
+  const handleDragStart = (index: number) => {
+    setDraggedIndex(index);
+  };
+
+  // Handle drag over
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === index) return;
+    
+    setDragOverIndex(index);
+    
+    const newPuzzles = [...(tempReorderedPuzzles.length > 0 ? tempReorderedPuzzles : filteredPuzzles)];
+    const draggedPuzzle = newPuzzles[draggedIndex];
+    newPuzzles.splice(draggedIndex, 1);
+    newPuzzles.splice(index, 0, draggedPuzzle);
+    
+    setTempReorderedPuzzles(newPuzzles);
+    setDraggedIndex(index);
+  };
+
+  // Handle drag end
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
+
+  // Save the new puzzle order to backend
+  const saveRearrangedOrder = async () => {
+    try {
+      const puzzlesToSave = tempReorderedPuzzles.length > 0 ? tempReorderedPuzzles : filteredPuzzles;
+      const puzzleOrders = puzzlesToSave.map((puzzle, index) => ({
+        id: puzzle._id,
+        order: index
+      }));
+
+      const response = await fetch(`${API_BASE_URL}/puzzles/reorder`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ puzzleOrders })
+      });
+
+      if (response.ok) {
+        toast.success('Puzzle order saved successfully!');
+        setIsRearrangeMode(false);
+        setTempReorderedPuzzles([]);
+        loadPuzzles();
+      } else {
+        toast.error('Failed to save puzzle order');
+      }
+    } catch (error) {
+      console.error('Save order error:', error);
+      toast.error('Failed to save puzzle order');
+    }
+  };
+
   // Filter puzzles based on search query and category filter
   const filteredPuzzles = React.useMemo(() => {
     return puzzles.filter(puzzle => {
@@ -218,18 +297,157 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
           <h2 className="font-serif text-2xl font-bold text-foreground">Create Puzzles</h2>
           <p className="text-muted-foreground">Visually create chess puzzles by placing pieces and recording solutions</p>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => setShowPuzzleList(!showPuzzleList)}
-        >
-          {showPuzzleList ? <EyeOff className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
-          {showPuzzleList ? 'Create New' : `View Puzzles (${puzzles.length})`}
-        </Button>
+        <div className="flex gap-2">
+          {showPuzzleList && !isRearrangeMode && (
+            <Button
+              variant="secondary"
+              onClick={() => setIsRearrangeMode(true)}
+            >
+              <GripVertical className="w-4 h-4 mr-2" />
+              Rearrange Puzzles
+            </Button>
+          )}
+          {!isRearrangeMode && (
+            <Button
+              variant="outline"
+              onClick={() => setShowPuzzleList(!showPuzzleList)}
+            >
+              {showPuzzleList ? <EyeOff className="w-4 h-4 mr-2" /> : <Eye className="w-4 h-4 mr-2" />}
+              {showPuzzleList ? 'Create New' : `View Puzzles (${puzzles.length})`}
+            </Button>
+          )}
+        </div>
       </div>
 
       {showPuzzleList ? (
-        // Puzzle List View
+        // Puzzle List View or Rearrange Mode
         <div className="space-y-4">
+          {isRearrangeMode ? (
+            // Rearrange Mode - Draggable Bubbles
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-semibold">Rearrange Puzzles</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Drag and drop puzzles to reorder them. 
+                    <span className="ml-2 inline-block px-2 py-0.5 bg-white border-2 border-gray-800 text-gray-800 text-xs rounded-full">White to play</span>
+                    <span className="ml-2 inline-block px-2 py-0.5 bg-gray-800 text-white text-xs rounded-full">Black to play</span>
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setIsRearrangeMode(false);
+                      setTempReorderedPuzzles([]);
+                      setDraggedIndex(null);
+                      setDragOverIndex(null);
+                      loadPuzzles(); // Reset to saved order
+                    }}
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-2" />
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="default"
+                    onClick={saveRearrangedOrder}
+                  >
+                    <Save className="w-4 h-4 mr-2" />
+                    Save Order
+                  </Button>
+                </div>
+              </div>
+
+              {/* Filter section for rearrange mode */}
+              <Card>
+                <CardContent className="p-4">
+                  <div className="space-y-4">
+                    {/* Category Filter Buttons */}
+                    <div>
+                      <Label className="text-sm font-medium mb-2 block">Filter by Category</Label>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant={categoryFilter === 'all' ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setCategoryFilter('all')}
+                        >
+                          All ({puzzles.length})
+                        </Button>
+                        {PUZZLE_CATEGORIES.map(cat => {
+                          const count = puzzles.filter(p => p.category === cat.id).length;
+                          return (
+                            <Button
+                              key={cat.id}
+                              variant={categoryFilter === cat.id ? 'default' : 'outline'}
+                              size="sm"
+                              onClick={() => setCategoryFilter(cat.id)}
+                            >
+                              {cat.name} ({count})
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Draggable puzzle bubbles */}
+              <div className="flex flex-wrap gap-3 p-4 bg-muted/30 rounded-lg min-h-[200px]">
+                {(tempReorderedPuzzles.length > 0 ? tempReorderedPuzzles : filteredPuzzles).length === 0 ? (
+                  <div className="w-full text-center py-8 text-muted-foreground">
+                    No puzzles in this category
+                  </div>
+                ) : (
+                  (tempReorderedPuzzles.length > 0 ? tempReorderedPuzzles : filteredPuzzles).map((puzzle, index) => {
+                    const activeColor = getActiveColorFromFEN(puzzle.fen);
+                    const isWhiteToPlay = activeColor === 'white';
+                    const isDragging = draggedIndex === index;
+                    
+                    return (
+                      <div
+                        key={puzzle._id}
+                        draggable
+                        onDragStart={() => handleDragStart(index)}
+                        onDragOver={(e) => handleDragOver(e, index)}
+                        onDragEnd={handleDragEnd}
+                        className={`
+                          px-4 py-2.5 rounded-full cursor-move
+                          flex items-center gap-2
+                          transition-all duration-300 ease-in-out
+                          hover:scale-105 hover:shadow-lg
+                          ${isDragging ? 'opacity-40 scale-90 shadow-2xl' : 'opacity-100'}
+                          ${isWhiteToPlay 
+                            ? 'bg-white border-2 border-gray-800 text-gray-800' 
+                            : 'bg-gray-800 text-white border-2 border-gray-800'
+                          }
+                        `}
+                        style={{
+                          transform: isDragging ? 'rotate(2deg)' : 'rotate(0deg)'
+                        }}
+                        title={`${puzzle.name} - ${isWhiteToPlay ? 'White' : 'Black'} to play`}
+                      >
+                        <GripVertical className="w-4 h-4 opacity-50" />
+                        <span className="text-lg">{puzzle.icon}</span>
+                        <span className="font-medium text-sm">{puzzle.name}</span>
+                        <span className={`
+                          text-xs px-2 py-0.5 rounded
+                          ${isWhiteToPlay 
+                            ? 'bg-gray-100 text-gray-700' 
+                            : 'bg-gray-700 text-gray-100'
+                          }
+                        `}>
+                          {PUZZLE_CATEGORIES.find(c => c.id === puzzle.category)?.name || puzzle.category}
+                        </span>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </>
+          ) : (
+            // Normal List View
+            <>
           {/* Search and Filter Section */}
           <Card>
             <CardContent className="p-4">
@@ -378,6 +596,8 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                 </CardContent>
               </Card>
             ))
+          )}
+            </>
           )}
         </div>
       ) : (

@@ -866,7 +866,7 @@ const Puzzles = () => {
                       onClick={solved ? nextPuzzle : resetPuzzle}
                       className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-sm font-medium"
                     >
-                      <RotateCcw className="w-4 h-4" />
+                      {solved ? <ArrowRight className="w-5 h-5 stroke-[3]" /> : <RotateCcw className="w-4 h-4" />}
                       {solved ? 'Next Puzzle' : 'Reset'}
                     </button>
                     

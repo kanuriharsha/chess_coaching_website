@@ -116,6 +116,7 @@ const puzzleSchema = new mongoose.Schema({
   icon: { type: String, default: '♔' },
   isEnabled: { type: Boolean, default: true },
   preloadedMove: { type: String }, // Optional move to execute automatically before student plays
+  order: { type: Number, default: 0 }, // Order for manual arrangement
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
@@ -1158,7 +1159,7 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
 // Get all puzzles
 app.get('/api/puzzles', async (req, res) => {
   try {
-    const puzzles = await Puzzle.find().sort({ createdAt: -1 });
+    const puzzles = await Puzzle.find().sort({ order: 1, createdAt: -1 });
     res.json(puzzles);
   } catch (error) {
     console.error('Get puzzles error:', error);
@@ -1169,7 +1170,7 @@ app.get('/api/puzzles', async (req, res) => {
 // Get puzzles by category
 app.get('/api/puzzles/category/:category', async (req, res) => {
   try {
-    const puzzles = await Puzzle.find({ category: req.params.category, isEnabled: true });
+    const puzzles = await Puzzle.find({ category: req.params.category, isEnabled: true }).sort({ order: 1, createdAt: -1 });
     res.json(puzzles);
   } catch (error) {
     console.error('Get puzzles by category error:', error);
@@ -1231,6 +1232,31 @@ app.delete('/api/puzzles/:id', async (req, res) => {
     res.json({ success: true, message: 'Puzzle deleted' });
   } catch (error) {
     console.error('Delete puzzle error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Reorder puzzles (admin only)
+app.post('/api/puzzles/reorder', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ message: 'No token provided' });
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const requestingUser = await User.findById(decoded.id);
+    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+
+    const { puzzleOrders } = req.body; // Array of { id, order }
+    
+    // Update each puzzle's order
+    const updatePromises = puzzleOrders.map(({ id, order }) =>
+      Puzzle.findByIdAndUpdate(id, { order, updatedAt: new Date() })
+    );
+    
+    await Promise.all(updatePromises);
+    res.json({ success: true, message: 'Puzzle order updated' });
+  } catch (error) {
+    console.error('Reorder puzzles error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
