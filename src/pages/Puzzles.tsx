@@ -37,6 +37,7 @@ interface PuzzleData {
   isEnabled: boolean;
   isLocked?: boolean; // For user access control
   originalIndex?: number; // Original 1-based index in the category (for tracking)
+  preloadedMove?: string; // Optional move to execute automatically before student plays
 }
 
 interface ContentAccess {
@@ -84,6 +85,7 @@ const Puzzles = () => {
   const [contentAccess, setContentAccess] = useState<ContentAccess | null>(null);
   const { playSound } = useChessSound();
   const [currentMoveIndex, setCurrentMoveIndex] = useState(0); // Track which move in the solution we're on
+  const [preloadedMoveExecuted, setPreloadedMoveExecuted] = useState(false); // Track if preloaded move has been executed
 
   const isAdmin = user?.role === 'admin';
   const currentPuzzle = categoryPuzzles[currentPuzzleIndex];
@@ -117,8 +119,46 @@ const Puzzles = () => {
       setLastMove(null);
       setShowHint(false);
       setCurrentMoveIndex(0); // Critical: Reset move index for new puzzle
+      setPreloadedMoveExecuted(false); // Reset preloaded move flag
+      
+      // Execute preloaded move if specified
+      if (currentPuzzle.preloadedMove && currentPuzzle.preloadedMove.trim()) {
+        console.log('Puzzle has preloaded move:', currentPuzzle.preloadedMove);
+        const timer = setTimeout(() => {
+          // The preloaded move is made by the OPPOSITE color of who's solving
+          // If puzzle is "White to move", preloaded move is Black's move
+          // So we need to flip the turn to execute it
+          const fenParts = currentPuzzle.fen.split(' ');
+          const currentTurn = fenParts[1]; // 'w' or 'b'
+          const preloadedTurn = currentTurn === 'w' ? 'b' : 'w';
+          fenParts[1] = preloadedTurn;
+          const flippedFen = fenParts.join(' ');
+          
+          const gameCopy = new Chess(flippedFen);
+          try {
+            const move = gameCopy.move(currentPuzzle.preloadedMove!.trim());
+            if (move) {
+              console.log('Preloaded move executed successfully:', move.san);
+              setGame(gameCopy);
+              setLastMove({ from: move.from as Square, to: move.to as Square });
+              setCurrentMoveIndex(0); // Keep at 0 - solution array doesn't include preloaded move
+              setPreloadedMoveExecuted(true);
+              playSound('move');
+              toast.info(`Opponent played: ${move.san}`, {
+                description: 'Now it\'s your turn!',
+              });
+            } else {
+              console.error('Invalid preloaded move:', currentPuzzle.preloadedMove);
+            }
+          } catch (error) {
+            console.error('Error executing preloaded move:', error);
+          }
+        }, 1500); // 1.5 second delay
+        
+        return () => clearTimeout(timer); // Cleanup timer on unmount or puzzle change
+      }
     }
-  }, [currentPuzzle?._id, currentPuzzleIndex]);
+  }, [currentPuzzle?._id, currentPuzzleIndex, playSound]);
 
   const loadContentAccess = async () => {
     try {
@@ -714,6 +754,21 @@ const Puzzles = () => {
 
               {/* Side Panel - Controls */}
               <div className="flex flex-col gap-3">
+                {/* Preloaded Move Info - Show if puzzle has preloaded move and it hasn't been executed yet */}
+                {currentPuzzle?.preloadedMove && !preloadedMoveExecuted && (
+                  <div className="card-premium p-3 bg-blue-50 border border-blue-200">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center animate-pulse">
+                        <span className="text-white text-xs font-bold">⏱</span>
+                      </div>
+                      <div className="text-xs">
+                        <p className="font-semibold text-blue-900">Opponent is thinking...</p>
+                        <p className="text-blue-700">Watch the position carefully</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
                 {/* Status Card */}
                 <div className="card-premium p-3">
                   <div className="flex items-center gap-2 mb-3">

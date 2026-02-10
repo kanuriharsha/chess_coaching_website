@@ -115,6 +115,7 @@ const puzzleSchema = new mongoose.Schema({
   difficulty: { type: String, enum: ['easy', 'medium', 'hard'], default: 'medium' },
   icon: { type: String, default: '♔' },
   isEnabled: { type: Boolean, default: true },
+  preloadedMove: { type: String }, // Optional move to execute automatically before student plays
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });

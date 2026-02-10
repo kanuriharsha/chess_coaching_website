@@ -23,6 +23,7 @@ interface PuzzleData {
   difficulty: 'easy' | 'medium' | 'hard';
   icon: string;
   isEnabled: boolean;
+  preloadedMove?: string; // Optional move to execute automatically before student plays
 }
 
 const PUZZLE_CATEGORIES = [
@@ -73,7 +74,8 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
     hint: '',
     difficulty: 'medium',
     icon: '♔',
-    isEnabled: true
+    isEnabled: true,
+    preloadedMove: ''
   });
 
   // Load puzzles from API
@@ -159,7 +161,8 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
           hint: '',
           difficulty: 'medium',
           icon: '♔',
-          isEnabled: true
+          isEnabled: true,
+          preloadedMove: ''
         });
         loadPuzzles();
       } else {
@@ -342,6 +345,11 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                         <p className="text-sm text-muted-foreground mt-2">
                           Solution: {puzzle.solution.join(' → ')}
                         </p>
+                        {puzzle.preloadedMove && (
+                          <p className="text-sm text-muted-foreground">
+                            <span className="font-medium text-blue-600">Preloaded Move:</span> {puzzle.preloadedMove}
+                          </p>
+                        )}
                         {puzzle.hint && (
                           <p className="text-sm text-muted-foreground">Hint: {puzzle.hint}</p>
                         )}
@@ -387,14 +395,18 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
               <VisualBoardEditor
                 initialFen={newPuzzle.fen}
                 initialSolution={newPuzzle.solution}
+                initialPreloadedMove={newPuzzle.preloadedMove}
                 initialMode={newPuzzle.solution && newPuzzle.solution.length > 0 ? 'solution' : 'setup'}
-                onPositionSave={(fen, solution) => {
-                  setNewPuzzle({ ...newPuzzle, fen, solution });
+                onPositionSave={(fen, solution, preloadedMove) => {
+                  setNewPuzzle({ ...newPuzzle, fen, solution, preloadedMove: preloadedMove || '' });
                 }}
               />
               {newPuzzle.fen && (
                 <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm">
                   <strong className="text-green-700">✓ Position & Solution saved!</strong><br/>
+                  {newPuzzle.preloadedMove && (
+                    <span className="text-blue-600">Preloaded move: <span className="font-medium">{newPuzzle.preloadedMove}</span><br/></span>
+                  )}
                   <span className="text-green-600">Solution moves: <span className="font-medium">{newPuzzle.solution.join(' → ') || 'None'}</span></span>
                 </div>
               )}

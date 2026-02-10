@@ -3,14 +3,17 @@ import { Chess, Square } from 'chess.js';
 import { getPossibleSquares, isCapture, isPromotionMove } from '@/lib/chess';
 import PromotionDialog from './PromotionDialog';
 import { Button } from './ui/button';
+import { Switch } from './ui/switch';
+import { Label } from './ui/label';
 import { RotateCcw, Trash2, Play, Save, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface VisualBoardEditorProps {
-  onPositionSave: (fen: string, solution: string[]) => void;
+  onPositionSave: (fen: string, solution: string[], preloadedMove?: string) => void;
   initialFen?: string;
   initialSolution?: string[];
   initialMode?: 'setup' | 'solution';
+  initialPreloadedMove?: string;
 }
 
 type PieceType = 'K' | 'Q' | 'R' | 'B' | 'N' | 'P' | 'k' | 'q' | 'r' | 'b' | 'n' | 'p';
@@ -43,7 +46,7 @@ const DARK_SQUARE = '#779556';
 const SELECTED_LIGHT = '#f7f769';
 const SELECTED_DARK = '#bbcc44';
 
-const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, initialFen, initialSolution, initialMode }) => {
+const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, initialFen, initialSolution, initialMode, initialPreloadedMove }) => {
   // Board state: 8x8 array of pieces (null = empty)
   const [board, setBoard] = useState<(PieceType | null)[][]>(() => {
     const emptyBoard: (PieceType | null)[][] = Array(8).fill(null).map(() => Array(8).fill(null));
@@ -61,7 +64,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
   const [enPassantTarget, setEnPassantTarget] = useState<string>('-');
   
   // Solution recording state
-  const [mode, setMode] = useState<'setup' | 'solution'>('setup');
+  const [mode, setMode] = useState<'setup' | 'preloadedMove' | 'solution'>('setup');
   const [setupFen, setSetupFen] = useState<string>('');
   const [solutionGame, setSolutionGame] = useState<Chess | null>(null);
   const [solutionMoves, setSolutionMoves] = useState<string[]>([]);
@@ -69,6 +72,11 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
   const [possibleTargets, setPossibleTargets] = useState<string[]>([]);
   const [showPromotionDialog, setShowPromotionDialog] = useState(false);
   const [pendingPromotion, setPendingPromotion] = useState<null | { from: string; to: string; gameCopy: Chess }>(null);
+  
+  // Preloaded move state
+  const [enablePreloadedMove, setEnablePreloadedMove] = useState(false);
+  const [preloadedMove, setPreloadedMove] = useState<string>('');
+  const [preloadedMoveFen, setPreloadedMoveFen] = useState<string>(''); // FEN after preloaded move
 
   // Load initial FEN and solution if provided (for editing existing puzzles)
   React.useEffect(() => {
@@ -103,6 +111,12 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
 
         setSetupFen(initialFen);
 
+        // Check if initial preloaded move is provided
+        if (initialPreloadedMove && initialPreloadedMove.trim()) {
+          setEnablePreloadedMove(true);
+          setPreloadedMove(initialPreloadedMove);
+        }
+
         // If an initial solution is provided, apply it
         if (initialSolution && initialSolution.length > 0) {
           const g = new Chess(initialFen);
@@ -123,7 +137,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
         // ignore invalid fen
       }
     }
-  }, [initialFen, initialSolution, initialMode]);
+  }, [initialFen, initialSolution, initialMode, initialPreloadedMove]);
 
   // Convert board array to FEN
   const boardToFen = useCallback((): string => {
@@ -184,6 +198,47 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
         }
         setBoard(newBoard);
       }
+    } else if (mode === 'preloadedMove' && solutionGame) {
+      // Handle preloaded move - only ONE move allowed
+      const square = `${FILES[file]}${RANKS[rank]}` as Square;
+      
+      if (selectedSquare) {
+        // Try to make the preloaded move
+        try {
+          const gameCopy = new Chess(solutionGame.fen());
+          const moveVerbose = gameCopy.moves({ square: selectedSquare as Square, verbose: true }).find(m => m.to === square);
+          if (moveVerbose && moveVerbose.promotion) {
+            setPendingPromotion({ from: selectedSquare as string, to: square, gameCopy });
+            setShowPromotionDialog(true);
+          } else {
+            const move = solutionGame.move({ from: selectedSquare as Square, to: square });
+            if (move) {
+              setPreloadedMove(move.san);
+              setPreloadedMoveFen(solutionGame.fen());
+              setSolutionGame(new Chess(solutionGame.fen()));
+              toast.success(`Preloaded move recorded: ${move.san}`, {
+                description: 'Now proceeding to solution recording...'
+              });
+              // Automatically advance to solution mode after recording preloaded move
+              setTimeout(() => {
+                setMode('solution');
+                setSolutionMoves([]); // Reset solution moves for the new position
+              }, 1000);
+            }
+          }
+        } catch (e) {
+          toast.error('Invalid move');
+        }
+        setSelectedSquare(null);
+        setPossibleTargets([]);
+      } else {
+        // Select square if it has a piece of current turn
+        const piece = solutionGame.get(square);
+        if (piece && piece.color === solutionGame.turn()) {
+          setSelectedSquare(square);
+          setPossibleTargets(getPossibleSquares(solutionGame, square));
+        }
+      }
     } else if (mode === 'solution' && solutionGame) {
       // Handle move in solution mode
       const square = `${FILES[file]}${RANKS[rank]}` as Square;
@@ -229,9 +284,24 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
     try {
       const mv = gameCopy.move({ from: from as Square, to: to as Square, promotion: piece });
       if (mv) {
-        setSolutionMoves(prev => [...prev, mv.san]);
-        setSolutionGame(new Chess(gameCopy.fen()));
-        toast.success(`Move recorded: ${mv.san}`);
+        if (mode === 'preloadedMove') {
+          // Recording preloaded move with promotion
+          setPreloadedMove(mv.san);
+          setPreloadedMoveFen(gameCopy.fen());
+          setSolutionGame(new Chess(gameCopy.fen()));
+          toast.success(`Preloaded move recorded: ${mv.san}`, {
+            description: 'Now proceeding to solution recording...'
+          });
+          setTimeout(() => {
+            setMode('solution');
+            setSolutionMoves([]);
+          }, 1000);
+        } else {
+          // Recording solution move
+          setSolutionMoves(prev => [...prev, mv.san]);
+          setSolutionGame(new Chess(gameCopy.fen()));
+          toast.success(`Move recorded: ${mv.san}`);
+        }
       }
     } catch (err) {
       toast.error('Invalid promotion move');
@@ -248,6 +318,9 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
     setSolutionGame(null);
     setSetupFen('');
     setSelectedSquare(null);
+    setEnablePreloadedMove(false);
+    setPreloadedMove('');
+    setPreloadedMoveFen('');
   };
 
   // Set up starting position
@@ -265,17 +338,42 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
     setBoard(starting);
   };
 
-  // Start recording solution
+  // Start recording solution (or preloaded move if enabled)
   const startRecordingSolution = () => {
     const fen = boardToFen();
     try {
       const game = new Chess(fen);
       setSetupFen(fen);
-      setSolutionGame(game);
-      setSolutionMoves([]);
-      setMode('solution');
-      setSelectedSquare(null);
-      toast.success('Position saved! Now make the correct move(s) to record the solution.');
+      
+      if (enablePreloadedMove) {
+        // Go to preloaded move mode first
+        // The preloaded move should be made by the OPPOSITE color of who's solving
+        // If puzzle is "White to move", preloaded move is Black's move
+        // So we need to flip the turn temporarily
+        const preloadedTurn = turn === 'w' ? 'b' : 'w';
+        
+        // Create FEN with flipped turn for preloaded move
+        const fenParts = fen.split(' ');
+        fenParts[1] = preloadedTurn;
+        const preloadedFen = fenParts.join(' ');
+        
+        const preloadedGame = new Chess(preloadedFen);
+        setSolutionGame(preloadedGame);
+        setMode('preloadedMove');
+        setSelectedSquare(null);
+        toast.info(`Make the opponent's move (${preloadedTurn === 'w' ? 'White' : 'Black'} to move)`, {
+          description: 'This move will execute automatically for students'
+        });
+      } else {
+        // Go directly to solution mode (no preloaded move)
+        setSolutionGame(game);
+        setSolutionMoves([]);
+        setMode('solution');
+        setSelectedSquare(null);
+        setPreloadedMove('');
+        setPreloadedMoveFen('');
+        toast.success('Position saved! Now make the correct move(s) to record the solution.');
+      }
     } catch (e) {
       toast.error('Invalid position. Make sure both kings are on the board.');
     }
@@ -298,6 +396,8 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
     setSolutionGame(null);
     setSelectedSquare(null);
     setPossibleTargets([]);
+    setPreloadedMove('');
+    setPreloadedMoveFen('');
   };
 
   // Save puzzle
@@ -306,13 +406,14 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
       toast.error('Please record at least one solution move');
       return;
     }
-    onPositionSave(setupFen, solutionMoves);
+    // Pass preloaded move (if any) to the callback
+    onPositionSave(setupFen, solutionMoves, preloadedMove || undefined);
     toast.success('Puzzle position and solution saved!');
   };
 
   // Get current board for display (either setup board or solution game board)
   const getCurrentBoard = (): (PieceType | null)[][] => {
-    if (mode === 'solution' && solutionGame) {
+    if ((mode === 'solution' || mode === 'preloadedMove') && solutionGame) {
       const gameBoard: (PieceType | null)[][] = Array(8).fill(null).map(() => Array(8).fill(null));
       for (let rank = 0; rank < 8; rank++) {
         for (let file = 0; file < 8; file++) {
@@ -340,11 +441,13 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
         <div className={`px-3 py-1 rounded-full text-sm font-medium ${
           mode === 'setup' 
             ? 'bg-primary/20 text-primary' 
+            : mode === 'preloadedMove'
+            ? 'bg-blue-100 text-blue-700'
             : 'bg-green-100 text-green-700'
         }`}>
-          {mode === 'setup' ? '1. Setup Position' : '2. Record Solution'}
+          {mode === 'setup' ? '1. Setup Position' : mode === 'preloadedMove' ? '2. Preloaded Move' : `${enablePreloadedMove ? '3' : '2'}. Record Solution`}
         </div>
-        {mode === 'solution' && (
+        {(mode === 'solution' || mode === 'preloadedMove') && (
           <Button variant="outline" size="sm" onClick={backToSetup}>
             ← Back to Setup
           </Button>
@@ -386,13 +489,13 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                             draggable={false}
                           />
                         )}
-                        {/* Move indicator dot (solution mode) */}
-                        {mode === 'solution' && possibleTargets.includes(square) && !piece && (
+                        {/* Move indicator dot (solution and preloaded move modes) */}
+                        {(mode === 'solution' || mode === 'preloadedMove') && possibleTargets.includes(square) && !piece && (
                           <span className="absolute w-3 h-3 rounded-full bg-black/70" style={{ opacity: 0.9 }} />
                         )}
 
                         {/* Capture indicator ring */}
-                        {mode === 'solution' && possibleTargets.includes(square) && piece && selectedSquare && solutionGame && isCapture(solutionGame, selectedSquare as Square, square as Square) && (
+                        {(mode === 'solution' || mode === 'preloadedMove') && possibleTargets.includes(square) && piece && selectedSquare && solutionGame && isCapture(solutionGame, selectedSquare as Square, square as Square) && (
                           <span className="absolute w-8 h-8 rounded-full border-2 border-red-500/80" style={{ boxSizing: 'border-box' }} />
                         )}
                         {/* Coordinate labels */}
@@ -486,30 +589,64 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
           )}
         </div>
 
-        {/* Right side: Solution moves panel - only in solution mode */}
-        {mode === 'solution' && (
+        {/* Right side: Solution moves panel - show in solution or preloaded move modes */}
+        {(mode === 'solution' || mode === 'preloadedMove') && (
           <div className="w-full lg:w-48 space-y-2">
-            <div className="text-sm font-medium text-gray-700">Solution Moves</div>
-            <div className="p-3 bg-gray-50 rounded-lg border min-h-[150px]">
-              {solutionMoves.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  Click on a piece, then click where to move it.
-                </p>
-              ) : (
-                <div className="space-y-1">
-                  {solutionMoves.map((move, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm bg-white px-2 py-1 rounded">
-                      <span className="text-gray-400 font-medium">{i + 1}.</span>
-                      <span className="font-semibold text-gray-800">{move}</span>
+            {mode === 'preloadedMove' ? (
+              <>
+                <div className="text-sm font-medium text-blue-700">Preloaded Move</div>
+                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg min-h-[150px]">
+                  {!preloadedMove ? (
+                    <p className="text-sm text-blue-600">
+                      Make the opponent's move on the board. This will execute automatically for students.
+                    </p>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-sm bg-white px-2 py-1 rounded border-2 border-blue-500">
+                        <span className="text-blue-500 font-bold">➤</span>
+                        <span className="font-semibold text-gray-800">{preloadedMove}</span>
+                      </div>
+                      <p className="text-xs text-blue-600 mt-2">
+                        ✓ Proceeding to solution recording...
+                      </p>
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
-            </div>
-            {solutionMoves.length > 0 && (
-              <Button variant="outline" size="sm" onClick={undoSolutionMove} className="w-full">
-                <RotateCcw className="w-4 h-4 mr-1" /> Undo Last Move
-              </Button>
+              </>
+            ) : (
+              <>
+                <div className="text-sm font-medium text-gray-700">Solution Moves</div>
+                <div className="p-3 bg-gray-50 rounded-lg border min-h-[150px]">
+                  {preloadedMove && (
+                    <div className="mb-2 pb-2 border-b border-gray-200">
+                      <div className="text-xs text-gray-500 mb-1">Preloaded:</div>
+                      <div className="flex items-center gap-2 text-sm bg-blue-50 px-2 py-1 rounded">
+                        <span className="text-blue-500 font-bold">0.</span>
+                        <span className="font-semibold text-blue-700">{preloadedMove}</span>
+                      </div>
+                    </div>
+                  )}
+                  {solutionMoves.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Click on a piece, then click where to move it.
+                    </p>
+                  ) : (
+                    <div className="space-y-1">
+                      {solutionMoves.map((move, i) => (
+                        <div key={i} className="flex items-center gap-2 text-sm bg-white px-2 py-1 rounded">
+                          <span className="text-gray-400 font-medium">{i + 1}.</span>
+                          <span className="font-semibold text-gray-800">{move}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {solutionMoves.length > 0 && (
+                  <Button variant="outline" size="sm" onClick={undoSolutionMove} className="w-full">
+                    <RotateCcw className="w-4 h-4 mr-1" /> Undo Last Move
+                  </Button>
+                )}
+              </>
             )}
           </div>
         )}
@@ -530,6 +667,19 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                 <option value="b">Black to move</option>
               </select>
             </div>
+            
+            {/* Preloaded Move Toggle */}
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg">
+              <Switch 
+                id="preloaded-move"
+                checked={enablePreloadedMove}
+                onCheckedChange={setEnablePreloadedMove}
+              />
+              <Label htmlFor="preloaded-move" className="text-sm text-blue-700 cursor-pointer">
+                Enable Preloaded Move
+              </Label>
+            </div>
+            
             <div className="flex items-center gap-3">
               <div className="text-sm text-gray-600">Castling:</div>
               <label className="text-sm">
@@ -553,8 +703,15 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
               </select>
             </div>
             <Button onClick={startRecordingSolution} className="ml-auto">
-              <ArrowRight className="w-4 h-4 mr-1" /> Next: Record Solution
+              <ArrowRight className="w-4 h-4 mr-1" /> 
+              {enablePreloadedMove ? 'Next: Record Preloaded Move' : 'Next: Record Solution'}
             </Button>
+          </>
+        ) : mode === 'preloadedMove' ? (
+          <>
+            <div className="text-sm text-blue-700 font-medium">
+              Make the opponent's move that will execute automatically
+            </div>
           </>
         ) : (
           <>
