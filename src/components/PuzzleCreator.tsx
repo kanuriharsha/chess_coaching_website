@@ -64,6 +64,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [tempReorderedPuzzles, setTempReorderedPuzzles] = useState<PuzzleData[]>([]);
+  const [selectedPuzzleIndex, setSelectedPuzzleIndex] = useState<number | null>(null);
   
   // Filter states
   const [searchQuery, setSearchQuery] = useState('');
@@ -205,15 +206,6 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
     return parts[1] === 'b' ? 'black' : 'white';
   };
 
-  // Initialize temp reordered puzzles when entering rearrange mode or category changes
-  React.useEffect(() => {
-    if (isRearrangeMode) {
-      setTempReorderedPuzzles([...filteredPuzzles]);
-    } else {
-      setTempReorderedPuzzles([]);
-    }
-  }, [isRearrangeMode, categoryFilter]);
-
   // Handle drag start
   const handleDragStart = (index: number) => {
     setDraggedIndex(index);
@@ -289,6 +281,73 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
     });
   }, [puzzles, searchQuery, categoryFilter]);
 
+  // Initialize temp reordered puzzles when entering rearrange mode or category changes
+  React.useEffect(() => {
+    if (isRearrangeMode) {
+      setTempReorderedPuzzles([...filteredPuzzles]);
+      setSelectedPuzzleIndex(null);
+    } else {
+      setTempReorderedPuzzles([]);
+      setSelectedPuzzleIndex(null);
+    }
+  }, [isRearrangeMode, categoryFilter, filteredPuzzles]);
+
+  // Keyboard navigation handler
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (!isRearrangeMode || selectedPuzzleIndex === null) return;
+    
+    const currentPuzzles = tempReorderedPuzzles.length > 0 ? tempReorderedPuzzles : filteredPuzzles;
+    const maxIndex = currentPuzzles.length - 1;
+    
+    if (e.key === 'ArrowLeft' && selectedPuzzleIndex > 0) {
+      e.preventDefault();
+      // Swap with previous puzzle
+      const newPuzzles = [...currentPuzzles];
+      [newPuzzles[selectedPuzzleIndex], newPuzzles[selectedPuzzleIndex - 1]] = 
+        [newPuzzles[selectedPuzzleIndex - 1], newPuzzles[selectedPuzzleIndex]];
+      setTempReorderedPuzzles(newPuzzles);
+      setSelectedPuzzleIndex(selectedPuzzleIndex - 1);
+      toast.info('Moved left');
+    } else if (e.key === 'ArrowRight' && selectedPuzzleIndex < maxIndex) {
+      e.preventDefault();
+      // Swap with next puzzle
+      const newPuzzles = [...currentPuzzles];
+      [newPuzzles[selectedPuzzleIndex], newPuzzles[selectedPuzzleIndex + 1]] = 
+        [newPuzzles[selectedPuzzleIndex + 1], newPuzzles[selectedPuzzleIndex]];
+      setTempReorderedPuzzles(newPuzzles);
+      setSelectedPuzzleIndex(selectedPuzzleIndex + 1);
+      toast.info('Moved right');
+    } else if (e.key === 'ArrowUp' && selectedPuzzleIndex > 0) {
+      e.preventDefault();
+      // Move up by 4 positions (simulating a row)
+      const targetIndex = Math.max(0, selectedPuzzleIndex - 4);
+      const newPuzzles = [...currentPuzzles];
+      const [puzzle] = newPuzzles.splice(selectedPuzzleIndex, 1);
+      newPuzzles.splice(targetIndex, 0, puzzle);
+      setTempReorderedPuzzles(newPuzzles);
+      setSelectedPuzzleIndex(targetIndex);
+      toast.info('Moved up');
+    } else if (e.key === 'ArrowDown' && selectedPuzzleIndex < maxIndex) {
+      e.preventDefault();
+      // Move down by 4 positions (simulating a row)
+      const targetIndex = Math.min(maxIndex, selectedPuzzleIndex + 4);
+      const newPuzzles = [...currentPuzzles];
+      const [puzzle] = newPuzzles.splice(selectedPuzzleIndex, 1);
+      newPuzzles.splice(targetIndex, 0, puzzle);
+      setTempReorderedPuzzles(newPuzzles);
+      setSelectedPuzzleIndex(targetIndex);
+      toast.info('Moved down');
+    }
+  }, [isRearrangeMode, selectedPuzzleIndex, tempReorderedPuzzles, filteredPuzzles]);
+
+  // Add/remove keyboard event listener
+  React.useEffect(() => {
+    if (isRearrangeMode) {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [isRearrangeMode, handleKeyDown]);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -329,7 +388,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                 <div>
                   <h3 className="text-xl font-semibold">Rearrange Puzzles</h3>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Drag and drop puzzles to reorder them. 
+                    Drag and drop puzzles or click to select and use arrow keys (←→ swap adjacent, ↑↓ jump rows). 
                     <span className="ml-2 inline-block px-2 py-0.5 bg-white border-2 border-gray-800 text-gray-800 text-xs rounded-full">White to play</span>
                     <span className="ml-2 inline-block px-2 py-0.5 bg-gray-800 text-white text-xs rounded-full">Black to play</span>
                   </p>
@@ -342,6 +401,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                       setTempReorderedPuzzles([]);
                       setDraggedIndex(null);
                       setDragOverIndex(null);
+                      setSelectedPuzzleIndex(null);
                       loadPuzzles(); // Reset to saved order
                     }}
                   >
@@ -411,12 +471,14 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                         onDragStart={() => handleDragStart(index)}
                         onDragOver={(e) => handleDragOver(e, index)}
                         onDragEnd={handleDragEnd}
+                        onClick={() => setSelectedPuzzleIndex(index)}
                         className={`
                           px-4 py-2.5 rounded-full cursor-move
                           flex items-center gap-2
                           transition-all duration-300 ease-in-out
                           hover:scale-105 hover:shadow-lg
                           ${isDragging ? 'opacity-40 scale-90 shadow-2xl' : 'opacity-100'}
+                          ${selectedPuzzleIndex === index ? 'ring-4 ring-blue-500 ring-offset-2 scale-105' : ''}
                           ${isWhiteToPlay 
                             ? 'bg-white border-2 border-gray-800 text-gray-800' 
                             : 'bg-gray-800 text-white border-2 border-gray-800'
@@ -425,7 +487,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                         style={{
                           transform: isDragging ? 'rotate(2deg)' : 'rotate(0deg)'
                         }}
-                        title={`${puzzle.name} - ${isWhiteToPlay ? 'White' : 'Black'} to play`}
+                        title={`${puzzle.name} - ${isWhiteToPlay ? 'White' : 'Black'} to play - Click to select, use arrow keys to move`}
                       >
                         <GripVertical className="w-4 h-4 opacity-50" />
                         <span className="text-lg">{puzzle.icon}</span>
