@@ -300,6 +300,10 @@ const AdminDashboard = () => {
   const [userContentAccess, setUserContentAccess] = useState<ContentAccess | null>(null);
   const [showAccessModal, setShowAccessModal] = useState(false);
   const [puzzleCounts, setPuzzleCounts] = useState<{ [key: string]: number }>({});
+  // Bulk selective access UI state
+  const [bulkSelectionType, setBulkSelectionType] = useState<'openings' | 'famousMates' | 'bestGames'>('openings');
+  const [selectedContentItemId, setSelectedContentItemId] = useState<string | null>(null);
+  const [selectedStudentsForBulk, setSelectedStudentsForBulk] = useState<{ [userId: string]: boolean }>({});
 
   // Attendance states
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
@@ -536,6 +540,61 @@ const AdminDashboard = () => {
     setPuzzleCounts(counts);
   }, [puzzles]);
 
+  // When an item is selected for selective bulk changes, prefill which students already have it
+  useEffect(() => {
+    const loadPrefill = async () => {
+      if (!selectedContentItemId) {
+        setSelectedStudentsForBulk({});
+        return;
+      }
+
+      const studentList = users.filter(u => u.role === 'student');
+      const map: { [id: string]: boolean } = {};
+
+      await Promise.all(studentList.map(async (stu) => {
+        try {
+          const resp = await fetch(`${API_BASE_URL}/content-access/${stu.id}`, { headers: { 'Authorization': `Bearer ${token}` } });
+          if (!resp.ok) return;
+          const access: ContentAccess = await resp.json();
+
+          if (bulkSelectionType === 'openings') {
+            const list = access.openingAccess?.allowedOpenings || [];
+            if (list.length === 0 && access.openingAccess?.enabled) {
+              // all unlocked -> mark true
+              map[stu.id] = true;
+            } else {
+              map[stu.id] = list.includes(selectedContentItemId!);
+            }
+          }
+
+          if (bulkSelectionType === 'famousMates') {
+            const list = access.famousMatesAccess?.allowedMates || [];
+            if (list.length === 0 && access.famousMatesAccess?.enabled) {
+              map[stu.id] = true;
+            } else {
+              map[stu.id] = list.includes(selectedContentItemId!);
+            }
+          }
+
+          if (bulkSelectionType === 'bestGames') {
+            const list = access.bestGamesAccess?.allowedGames || [];
+            if (list.length === 0 && access.bestGamesAccess?.enabled) {
+              map[stu.id] = true;
+            } else {
+              map[stu.id] = list.includes(selectedContentItemId!);
+            }
+          }
+        } catch (err) {
+          // ignore
+        }
+      }));
+
+      setSelectedStudentsForBulk(map);
+    };
+
+    loadPrefill();
+  }, [selectedContentItemId, bulkSelectionType, users]);
+
   // Content Access functions
   const loadUserContentAccess = async (userId: string) => {
     try {
@@ -589,19 +648,28 @@ const AdminDashboard = () => {
     }
   };
 
-  const handleBulkUpdateAccess = async (puzzleAccess: ContentAccess['puzzleAccess'], openingAccess: ContentAccess['openingAccess'], famousMatesAccess: ContentAccess['famousMatesAccess'], bestGamesAccess: ContentAccess['bestGamesAccess']) => {
+  const handleBulkUpdateAccess = async (
+    puzzleAccess: ContentAccess['puzzleAccess'],
+    openingAccess: ContentAccess['openingAccess'],
+    famousMatesAccess: ContentAccess['famousMatesAccess'],
+    bestGamesAccess: ContentAccess['bestGamesAccess'],
+    userIds?: string[]
+  ) => {
     try {
+      const body: any = { puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess };
+      if (userIds && userIds.length > 0) body.userIds = userIds;
+
       const response = await fetch(`${API_BASE_URL}/content-access-bulk`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess })
+        body: JSON.stringify(body)
       });
 
       if (response.ok) {
-        toast.success('Content access updated for all students');
+        toast.success(userIds && userIds.length > 0 ? `Content access updated for ${userIds.length} users` : 'Content access updated for all students');
       } else {
         toast.error('Failed to update content access');
       }
@@ -3565,6 +3633,188 @@ const AdminDashboard = () => {
                       </Button>
                     </div>
                   </div>
+                </div>
+              </div>
+              {/* Selective Access */}
+              <div className="mt-6 p-5 bg-secondary/20 rounded-xl border border-border">
+                <h3 className="font-semibold text-lg mb-3">Selective Access Assignment</h3>
+                <p className="text-sm text-muted-foreground mb-3">Choose a content type and an item, then select students to grant access.</p>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                  <div>
+                    <Label>Content Type</Label>
+                    <Select value={bulkSelectionType} onValueChange={(val: any) => { setBulkSelectionType(val); setSelectedContentItemId(null); }}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="openings">Openings</SelectItem>
+                        <SelectItem value="famousMates">Famous Mates</SelectItem>
+                        <SelectItem value="bestGames">Best Games</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <Label>Select Item</Label>
+                    <Select value={selectedContentItemId || ''} onValueChange={(val: any) => setSelectedContentItemId(val || null)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {bulkSelectionType === 'openings' && openings.map(o => (
+                          <SelectItem key={o._id} value={o._id}>{o.name}</SelectItem>
+                        ))}
+                        {bulkSelectionType === 'famousMates' && famousMates.map(f => (
+                          <SelectItem key={f._id} value={f._id}>{f.name}</SelectItem>
+                        ))}
+                        {bulkSelectionType === 'bestGames' && bestGames.map(b => (
+                          <SelectItem key={b._id} value={b._id}>{b.title}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="mb-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <Label>Students</Label>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => {
+                        const all: { [id: string]: boolean } = {};
+                        users.filter(u => u.role === 'student').forEach(u => { all[u.id] = true; });
+                        setSelectedStudentsForBulk(all);
+                      }}>Select All</Button>
+                      <Button size="sm" variant="outline" onClick={() => setSelectedStudentsForBulk({})}>Clear</Button>
+                    </div>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto border rounded p-2">
+                    {users.filter(u => u.role === 'student').map(u => (
+                      <label key={u.id} className="flex items-center gap-2 p-2 hover:bg-secondary/50 rounded">
+                        <input type="checkbox" checked={!!selectedStudentsForBulk[u.id]} onChange={(e) => setSelectedStudentsForBulk({ ...selectedStudentsForBulk, [u.id]: e.target.checked })} />
+                        <div className="flex-1">
+                          <div className="font-medium">{u.username}</div>
+                          <div className="text-xs text-muted-foreground">{u.profile?.fullName || 'No name'}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex gap-3">
+                  <Button onClick={async () => {
+                    if (!selectedContentItemId) {
+                      toast.error('Please select an item');
+                      return;
+                    }
+
+                    const studentList = users.filter(u => u.role === 'student');
+                    if (studentList.length === 0) {
+                      toast.error('No students found');
+                      return;
+                    }
+
+                    toast.loading('Updating access...');
+
+                    const results = await Promise.allSettled(studentList.map(async (stu) => {
+                      try {
+                        const resp = await fetch(`${API_BASE_URL}/content-access/${stu.id}`, {
+                          headers: { 'Authorization': `Bearer ${token}` }
+                        });
+                        if (!resp.ok) throw new Error('Failed to load access');
+                        const access: ContentAccess = await resp.json();
+
+                        // compute new access per user
+                        if (bulkSelectionType === 'openings') {
+                          let openingAccess = access.openingAccess || { enabled: false, allowedOpenings: [] };
+                          const currentlyHas = openingAccess.allowedOpenings?.includes(selectedContentItemId!);
+                          const shouldHave = !!selectedStudentsForBulk[stu.id];
+
+                          if (shouldHave && !currentlyHas) {
+                            // add
+                            const newAllowed = Array.from(new Set([...(openingAccess.allowedOpenings || []), selectedContentItemId!]));
+                            openingAccess = { enabled: true, allowedOpenings: newAllowed };
+                          } else if (!shouldHave && currentlyHas) {
+                            // remove
+                            // if allowedOpenings empty means "all unlocked" — convert to explicit list then remove
+                            let currentList = openingAccess.allowedOpenings || [];
+                            if (openingAccess.enabled && currentList.length === 0) {
+                              currentList = openings.map(o => o._id!).filter(Boolean) as string[];
+                            }
+                            const newAllowed = currentList.filter(id => id !== selectedContentItemId);
+                            openingAccess = { enabled: newAllowed.length === 0 ? false : true, allowedOpenings: newAllowed };
+                          }
+
+                          await fetch(`${API_BASE_URL}/content-access/${stu.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                            body: JSON.stringify({ openingAccess })
+                          });
+                        }
+
+                        if (bulkSelectionType === 'famousMates') {
+                          let famousMatesAccess = access.famousMatesAccess || { enabled: false, allowedMates: [] };
+                          const currentlyHas = famousMatesAccess.allowedMates?.includes(selectedContentItemId!);
+                          const shouldHave = !!selectedStudentsForBulk[stu.id];
+
+                          if (shouldHave && !currentlyHas) {
+                            const newAllowed = Array.from(new Set([...(famousMatesAccess.allowedMates || []), selectedContentItemId!]));
+                            famousMatesAccess = { enabled: true, allowedMates: newAllowed };
+                          } else if (!shouldHave && currentlyHas) {
+                            let currentList = famousMatesAccess.allowedMates || [];
+                            if (famousMatesAccess.enabled && currentList.length === 0) {
+                              currentList = famousMates.map(f => f._id!).filter(Boolean) as string[];
+                            }
+                            const newAllowed = currentList.filter(id => id !== selectedContentItemId);
+                            famousMatesAccess = { enabled: newAllowed.length === 0 ? false : true, allowedMates: newAllowed };
+                          }
+
+                          await fetch(`${API_BASE_URL}/content-access/${stu.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                            body: JSON.stringify({ famousMatesAccess })
+                          });
+                        }
+
+                        if (bulkSelectionType === 'bestGames') {
+                          let bestGamesAccess = access.bestGamesAccess || { enabled: false, allowedGames: [] };
+                          const currentlyHas = bestGamesAccess.allowedGames?.includes(selectedContentItemId!);
+                          const shouldHave = !!selectedStudentsForBulk[stu.id];
+
+                          if (shouldHave && !currentlyHas) {
+                            const newAllowed = Array.from(new Set([...(bestGamesAccess.allowedGames || []), selectedContentItemId!]));
+                            bestGamesAccess = { enabled: true, allowedGames: newAllowed };
+                          } else if (!shouldHave && currentlyHas) {
+                            let currentList = bestGamesAccess.allowedGames || [];
+                            if (bestGamesAccess.enabled && currentList.length === 0) {
+                              currentList = bestGames.map(b => b._id!).filter(Boolean) as string[];
+                            }
+                            const newAllowed = currentList.filter(id => id !== selectedContentItemId);
+                            bestGamesAccess = { enabled: newAllowed.length === 0 ? false : true, allowedGames: newAllowed };
+                          }
+
+                          await fetch(`${API_BASE_URL}/content-access/${stu.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                            body: JSON.stringify({ bestGamesAccess })
+                          });
+                        }
+
+                        return { ok: true, userId: stu.id };
+                      } catch (err) {
+                        return { ok: false, userId: stu.id };
+                      }
+                    }));
+
+                    const succeeded = results.filter(r => (r as any).status === 'fulfilled' && (r as any).value.ok).length;
+                    toast.dismiss();
+                    toast.success(`Updated access for ${succeeded}/${studentList.length} students`);
+                    // refresh users/content if needed
+                    await Promise.all([loadUsers(), loadStats()]);
+                  }}>
+                    <Save className="w-4 h-4 mr-2" /> Save Selected
+                  </Button>
+                  <Button variant="outline" onClick={() => { setSelectedContentItemId(null); setSelectedStudentsForBulk({}); }}>Cancel</Button>
                 </div>
               </div>
             </div>
