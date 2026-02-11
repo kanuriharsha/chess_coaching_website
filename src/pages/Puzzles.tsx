@@ -74,7 +74,34 @@ const Puzzles = () => {
   const navigate = useNavigate();
   const { trackPageVisit, trackPuzzleAttempt } = useActivityTracker();
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [puzzleCategories, setPuzzleCategories] = useState<PuzzleCategory[]>(defaultCategories);
+  // Initialize custom categories from localStorage synchronously to avoid UI flicker
+  const [customCategories, setCustomCategories] = useState<Array<{id: string, name: string, description?: string, icon?: string}>>(() => {
+    try {
+      const saved = localStorage.getItem('customPuzzleCategories');
+      return saved ? JSON.parse(saved) : [];
+    } catch (err) {
+      return [];
+    }
+  });
+
+  const [puzzleCategories, setPuzzleCategories] = useState<PuzzleCategory[]>(() => {
+    try {
+      const saved = localStorage.getItem('customPuzzleCategories');
+      const customs = saved ? JSON.parse(saved) : [];
+      const customCards = (customs || []).map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        description: c.description || 'Custom puzzle category',
+        count: 0,
+        unlocked: false,
+        accessLimit: 0,
+        icon: c.icon || '🎯'
+      }));
+      return [...defaultCategories, ...customCards];
+    } catch (err) {
+      return defaultCategories;
+    }
+  });
   const [categoryPuzzles, setCategoryPuzzles] = useState<PuzzleData[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState(0);
   const [game, setGame] = useState(new Chess());
@@ -106,10 +133,23 @@ const Puzzles = () => {
 
   useEffect(() => {
     loadPuzzles();
+    loadCustomCategories();
     if (!isAdmin) {
       loadContentAccess();
     }
   }, [isAdmin]);
+
+  // Load custom categories from localStorage
+  const loadCustomCategories = () => {
+    try {
+      const saved = localStorage.getItem('customPuzzleCategories');
+      if (saved) {
+        setCustomCategories(JSON.parse(saved));
+      }
+    } catch (error) {
+      console.error('Failed to load custom categories');
+    }
+  };
 
   // Execute preloaded move for current puzzle
   const executePreloadedMove = useCallback(() => {
@@ -201,7 +241,7 @@ const Puzzles = () => {
       if (response.ok) {
         const puzzles: PuzzleData[] = await response.json();
         
-        // Count puzzles per category
+        // Count puzzles per category (including custom ones)
         const categoryCounts: { [key: string]: number } = {};
         puzzles.forEach(p => {
           if (p.isEnabled) {
@@ -209,12 +249,29 @@ const Puzzles = () => {
           }
         });
 
-        // Update categories with counts (access will be applied in render)
-        setPuzzleCategories(defaultCategories.map(cat => ({
+        // Load custom categories from localStorage and include them
+        const saved = localStorage.getItem('customPuzzleCategories');
+        const customs = saved ? JSON.parse(saved) : [];
+
+        // Create custom category cards (include all saved customs, count may be 0)
+        const customCategoryCards = customs.map((cat: {id: string, name: string, description?: string, icon?: string}) => ({
+          id: cat.id,
+          name: cat.name,
+          description: cat.description || 'Custom puzzle category',
+          count: categoryCounts[cat.id] || 0,
+          unlocked: (categoryCounts[cat.id] || 0) > 0,
+          accessLimit: 0,
+          icon: cat.icon || '🎯'
+        }));
+
+        // Update default categories with counts
+        const updatedDefault = defaultCategories.map(cat => ({
           ...cat,
           count: categoryCounts[cat.id] || 0,
           unlocked: (categoryCounts[cat.id] || 0) > 0
-        })));
+        }));
+
+        setPuzzleCategories([...updatedDefault, ...customCategoryCards]);
       }
     } catch (error) {
       console.error('Load puzzles error:', error);

@@ -7,8 +7,9 @@ import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { toast } from 'sonner';
-import { Trash2, Save, Eye, EyeOff, Edit3, GripVertical, ArrowLeft } from 'lucide-react';
+import { Trash2, Save, Eye, EyeOff, Edit3, GripVertical, ArrowLeft, Plus, X } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from './ui/dialog';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -38,6 +39,8 @@ const PUZZLE_CATEGORIES = [
   { id: 'other', name: 'Other Tactics' },
 ];
 
+const DEFAULT_PUZZLE_CATEGORIES = [...PUZZLE_CATEGORIES];
+
 const DIFFICULTY_LEVELS = [
   { id: 'easy', name: 'Easy' },
   { id: 'medium', name: 'Medium' },
@@ -65,6 +68,13 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [tempReorderedPuzzles, setTempReorderedPuzzles] = useState<PuzzleData[]>([]);
   const [selectedPuzzleIndex, setSelectedPuzzleIndex] = useState<number | null>(null);
+  
+  // Custom categories
+  const [customCategories, setCustomCategories] = useState<Array<{id: string, name: string, description?: string, icon?: string}>>([]);
+  const [showAddCategoryDialog, setShowAddCategoryDialog] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryDescription, setNewCategoryDescription] = useState('');
+  const [newCategoryIcon, setNewCategoryIcon] = useState('🎯');
   
   // Filter states
   const [searchQuery, setSearchQuery] = useState('');
@@ -101,7 +111,76 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
   // Load puzzles on mount
   React.useEffect(() => {
     loadPuzzles();
+    loadCustomCategories();
   }, [loadPuzzles]);
+
+  // Load custom categories from localStorage
+  const loadCustomCategories = () => {
+    try {
+      const saved = localStorage.getItem('customPuzzleCategories');
+      if (saved) {
+        setCustomCategories(JSON.parse(saved));
+      }
+    } catch (error) {
+      console.error('Failed to load custom categories');
+    }
+  };
+
+  // Save custom categories to localStorage
+  const saveCustomCategories = (categories: Array<{id: string, name: string}>) => {
+    try {
+      localStorage.setItem('customPuzzleCategories', JSON.stringify(categories));
+      setCustomCategories(categories);
+    } catch (error) {
+      console.error('Failed to save custom categories');
+    }
+  };
+
+  // Add new custom category
+  const handleAddCategory = () => {
+    if (!newCategoryName.trim()) {
+      toast.error('Please enter a category name');
+      return;
+    }
+    
+    const categoryId = newCategoryName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const allCategories = [...DEFAULT_PUZZLE_CATEGORIES, ...customCategories];
+    
+    if (allCategories.some(cat => cat.id === categoryId)) {
+      toast.error('This category already exists');
+      return;
+    }
+    
+    const newCategory = {
+      id: categoryId,
+      name: newCategoryName.trim(),
+      description: newCategoryDescription.trim() || 'Custom puzzle category',
+      icon: newCategoryIcon || '🎯'
+    };
+    const updatedCategories = [...customCategories, newCategory];
+    saveCustomCategories(updatedCategories);
+    toast.success(`Category "${newCategory.name}" added!`);
+    setNewCategoryName('');
+    setNewCategoryDescription('');
+    setNewCategoryIcon('🎯');
+    setShowAddCategoryDialog(false);
+  };
+
+  // Delete custom category
+  const handleDeleteCategory = (categoryId: string) => {
+    const categoryPuzzles = puzzles.filter(p => p.category === categoryId);
+    if (categoryPuzzles.length > 0) {
+      toast.error(`Cannot delete category with ${categoryPuzzles.length} puzzle(s)`);
+      return;
+    }
+    
+    const updatedCategories = customCategories.filter(cat => cat.id !== categoryId);
+    saveCustomCategories(updatedCategories);
+    toast.success('Category deleted');
+  };
+
+  // Get all categories (default + custom)
+  const allCategories = [...DEFAULT_PUZZLE_CATEGORIES, ...customCategories];
 
   // If PuzzleManager forwarded an editPuzzleId, load that puzzle when puzzles are available
   useEffect(() => {
@@ -357,6 +436,89 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
           <p className="text-muted-foreground">Visually create chess puzzles by placing pieces and recording solutions</p>
         </div>
         <div className="flex gap-2">
+          <Dialog open={showAddCategoryDialog} onOpenChange={setShowAddCategoryDialog}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Plus className="w-4 h-4 mr-2" />
+                Add Category
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add New Puzzle Category</DialogTitle>
+                <DialogDescription>
+                  Create a custom category for organizing your puzzles (e.g., "Mate in 1 - Advanced")
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="category-name">Category Name</Label>
+                  <Input
+                    id="category-name"
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    placeholder="e.g., Mate in 2 - Advanced"
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddCategory()}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="category-desc">Description (optional)</Label>
+                  <Input
+                    id="category-desc"
+                    value={newCategoryDescription}
+                    onChange={(e) => setNewCategoryDescription(e.target.value)}
+                    placeholder="Short description displayed on the category card"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="category-icon">Icon</Label>
+                  <Select value={newCategoryIcon} onValueChange={(val) => setNewCategoryIcon(val)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {/* Offer piece icons and a target icon */}
+                      {PIECE_ICONS.map(p => (
+                        <SelectItem key={p.icon} value={p.icon}>{p.icon} {p.name}</SelectItem>
+                      ))}
+                      <SelectItem value={'🎯'}>🎯 Custom</SelectItem>
+                      <SelectItem value={'📌'}>📌 Pin</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {customCategories.length > 0 && (
+                  <div className="space-y-2">
+                    <Label>Custom Categories</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {customCategories.map(cat => (
+                        <div key={cat.id} className="inline-flex items-center gap-2 px-3 py-1 bg-secondary rounded-lg text-sm">
+                          <span className="text-lg">{cat.icon || '🎯'}</span>
+                          <div className="flex items-center gap-2">
+                            <span>{cat.name}</span>
+                            {cat.description && <span className="text-xs text-muted-foreground">— {cat.description}</span>}
+                          </div>
+                          <button
+                            onClick={() => handleDeleteCategory(cat.id)}
+                            className="ml-2 text-destructive hover:text-destructive/80"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setShowAddCategoryDialog(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleAddCategory}>
+                  Add Category
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           {showPuzzleList && !isRearrangeMode && (
             <Button
               variant="secondary"
@@ -433,7 +595,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                         >
                           All ({puzzles.length})
                         </Button>
-                        {PUZZLE_CATEGORIES.map(cat => {
+                        {allCategories.map(cat => {
                           const count = puzzles.filter(p => p.category === cat.id).length;
                           return (
                             <Button
@@ -499,7 +661,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                             : 'bg-gray-700 text-gray-100'
                           }
                         `}>
-                          {PUZZLE_CATEGORIES.find(c => c.id === puzzle.category)?.name || puzzle.category}
+                          {allCategories.find(c => c.id === puzzle.category)?.name || puzzle.category}
                         </span>
                       </div>
                     );
@@ -538,48 +700,19 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                     >
                       All ({puzzles.length})
                     </Button>
-                    <Button
-                      variant={categoryFilter === 'mate-in-1' ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setCategoryFilter('mate-in-1')}
-                    >
-                      Mate in 1 ({puzzles.filter(p => p.category === 'mate-in-1').length})
-                    </Button>
-                    <Button
-                      variant={categoryFilter === 'mate-in-2' ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setCategoryFilter('mate-in-2')}
-                    >
-                      Mate in 2 ({puzzles.filter(p => p.category === 'mate-in-2').length})
-                    </Button>
-                    <Button
-                      variant={categoryFilter === 'mate-in-3' ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setCategoryFilter('mate-in-3')}
-                    >
-                      Mate in 3 ({puzzles.filter(p => p.category === 'mate-in-3').length})
-                    </Button>
-                    <Button
-                      variant={categoryFilter === 'pins' ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setCategoryFilter('pins')}
-                    >
-                      Pins ({puzzles.filter(p => p.category === 'pins').length})
-                    </Button>
-                    <Button
-                      variant={categoryFilter === 'forks' ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setCategoryFilter('forks')}
-                    >
-                      Forks ({puzzles.filter(p => p.category === 'forks').length})
-                    </Button>
-                    <Button
-                      variant={categoryFilter === 'traps' ? 'default' : 'outline'}
-                      size="sm"
-                      onClick={() => setCategoryFilter('traps')}
-                    >
-                      Traps ({puzzles.filter(p => p.category === 'traps').length})
-                    </Button>
+                    {allCategories.map(cat => {
+                      const count = puzzles.filter(p => p.category === cat.id).length;
+                      return (
+                        <Button
+                          key={cat.id}
+                          variant={categoryFilter === cat.id ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setCategoryFilter(cat.id)}
+                        >
+                          {cat.name} ({count})
+                        </Button>
+                      );
+                    })}
                   </div>
                 </div>
                 
@@ -613,7 +746,9 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                         <h3 className="font-semibold text-foreground">{puzzle.name}</h3>
                         <div className="flex gap-2 mt-1 flex-wrap">
                           <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs rounded">
-                            {PUZZLE_CATEGORIES.find(c => c.id === puzzle.category)?.name || puzzle.category}
+                            {PUZZLE_CATEGORIES.find(c => c.id === puzzle.category)?.name || 
+                             customCategories.find(c => c.id === puzzle.category)?.name || 
+                             puzzle.category}
                           </span>
                           <span className="px-2 py-0.5 bg-secondary text-secondary-foreground text-xs rounded">
                             {puzzle.difficulty}
@@ -687,7 +822,21 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                 <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm">
                   <strong className="text-green-700">✓ Position & Solution saved!</strong><br/>
                   {newPuzzle.preloadedMove && (
-                    <span className="text-blue-600">Preloaded move: <span className="font-medium">{newPuzzle.preloadedMove}</span><br/></span>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-blue-600">Preloaded move: <span className="font-medium">{newPuzzle.preloadedMove}</span></span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setNewPuzzle({ ...newPuzzle, preloadedMove: '' });
+                          toast.success('Preloaded move cleared');
+                        }}
+                        className="h-6 px-2 text-xs text-destructive hover:text-destructive"
+                      >
+                        <X className="w-3 h-3 mr-1" />
+                        Clear
+                      </Button>
+                    </div>
                   )}
                   <span className="text-green-600">Solution moves: <span className="font-medium">{newPuzzle.solution.join(' → ') || 'None'}</span></span>
                 </div>
@@ -721,7 +870,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
                     <SelectContent>
-                      {PUZZLE_CATEGORIES.map(cat => (
+                      {allCategories.map(cat => (
                         <SelectItem key={cat.id} value={cat.id}>
                           {cat.name}
                         </SelectItem>
