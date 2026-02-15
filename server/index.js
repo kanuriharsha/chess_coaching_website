@@ -1159,7 +1159,7 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
 // Get all puzzles
 app.get('/api/puzzles', async (req, res) => {
   try {
-    const puzzles = await Puzzle.find().sort({ order: 1, createdAt: -1 });
+    const puzzles = await Puzzle.find().sort({ order: 1, createdAt: 1 });
     res.json(puzzles);
   } catch (error) {
     console.error('Get puzzles error:', error);
@@ -1170,7 +1170,7 @@ app.get('/api/puzzles', async (req, res) => {
 // Get puzzles by category
 app.get('/api/puzzles/category/:category', async (req, res) => {
   try {
-    const puzzles = await Puzzle.find({ category: req.params.category, isEnabled: true }).sort({ order: 1, createdAt: -1 });
+    const puzzles = await Puzzle.find({ category: req.params.category, isEnabled: true }).sort({ order: 1, createdAt: 1 });
     res.json(puzzles);
   } catch (error) {
     console.error('Get puzzles by category error:', error);
@@ -1188,7 +1188,19 @@ app.post('/api/puzzles', async (req, res) => {
     const requestingUser = await User.findById(decoded.id);
     if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
 
-    const puzzle = await Puzzle.create(req.body);
+    // Find the maximum order value in this category
+    const maxOrderPuzzle = await Puzzle.findOne({ category: req.body.category })
+      .sort({ order: -1 })
+      .select('order');
+    
+    const newOrder = maxOrderPuzzle ? (maxOrderPuzzle.order + 1) : 1;
+    
+    // Create puzzle with the new order value
+    const puzzle = await Puzzle.create({
+      ...req.body,
+      order: newOrder
+    });
+    
     res.status(201).json({ success: true, puzzle });
   } catch (error) {
     console.error('Create puzzle error:', error);
@@ -2351,9 +2363,62 @@ async function initializeDefaultUsers() {
   }
 }
 
+// One-time migration to fix puzzle order values
+async function migratePuzzleOrders() {
+  try {
+    // Get all puzzles grouped by category
+    const allPuzzles = await Puzzle.find().sort({ createdAt: 1 });
+    
+    // Group puzzles by category
+    const puzzlesByCategory = {};
+    allPuzzles.forEach(puzzle => {
+      if (!puzzlesByCategory[puzzle.category]) {
+        puzzlesByCategory[puzzle.category] = [];
+      }
+      puzzlesByCategory[puzzle.category].push(puzzle);
+    });
+    
+    let totalUpdated = 0;
+    
+    // For each category, reassign sequential order values
+    for (const category in puzzlesByCategory) {
+      const categoryPuzzles = puzzlesByCategory[category];
+      
+      // Sort by existing order (ascending) then by createdAt
+      categoryPuzzles.sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order;
+        return new Date(a.createdAt) - new Date(b.createdAt);
+      });
+      
+      // Reassign sequential order values starting from 1
+      for (let i = 0; i < categoryPuzzles.length; i++) {
+        const puzzle = categoryPuzzles[i];
+        const newOrder = i + 1;
+        
+        if (puzzle.order !== newOrder) {
+          await Puzzle.findByIdAndUpdate(puzzle._id, { 
+            order: newOrder,
+            updatedAt: new Date()
+          });
+          totalUpdated++;
+        }
+      }
+    }
+    
+    if (totalUpdated > 0) {
+      console.log(`✅ Migration completed: Updated order for ${totalUpdated} puzzles across ${Object.keys(puzzlesByCategory).length} categories`);
+    } else {
+      console.log('✅ Migration check: All puzzle orders are already correct');
+    }
+  } catch (err) {
+    console.error('Error during puzzle order migration:', err);
+  }
+}
+
 // Start server
 httpServer.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🔌 Socket.IO enabled for real-time games`);
   await initializeDefaultUsers();
+  await migratePuzzleOrders();
 });
