@@ -677,7 +677,13 @@ const Puzzles = () => {
               </div>
             ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            {puzzleCategories.map((category) => {
+            {[...puzzleCategories].sort((a, b) => {
+              if (isAdmin) return 0; // admins: preserve original order
+              const aLocked = !hasAccessToCategory(a.id) || (a.count === 0);
+              const bLocked = !hasAccessToCategory(b.id) || (b.count === 0);
+              if (aLocked === bLocked) return 0;
+              return aLocked ? 1 : -1; // unlocked first
+            }).map((category) => {
               const isAccessLocked = !isAdmin && !hasAccessToCategory(category.id);
               const isEmptyLocked = category.count === 0 && !isAdmin;
               const isLocked = isAccessLocked || isEmptyLocked;
