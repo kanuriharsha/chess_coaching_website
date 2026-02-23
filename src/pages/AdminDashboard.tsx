@@ -79,6 +79,7 @@ interface PuzzleData {
   difficulty: 'easy' | 'medium' | 'hard';
   icon: string;
   isEnabled: boolean;
+  successMessage?: string;
 }
 
 interface OpeningData {
@@ -185,6 +186,9 @@ const AdminDashboard = () => {
   const [bestGames, setBestGames] = useState<BestGameData[]>([]);
   const [activeTab, setActiveTab] = useState('users');
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Custom puzzle categories from localStorage
+  const [customCategories, setCustomCategories] = useState<Array<{id: string, name: string, description?: string, icon?: string}>>([]);
 
   // Live Game States
   const {
@@ -331,7 +335,7 @@ const AdminDashboard = () => {
   // Form states
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'student' as 'admin' | 'student' });
   const [newPuzzle, setNewPuzzle] = useState<PuzzleData>({
-    name: '', category: 'mate-in-1', description: '', fen: '', solution: [], hint: '', difficulty: 'medium', icon: '♔', isEnabled: true
+    name: '', category: 'mate-in-1', description: '', fen: '', solution: [], hint: '', difficulty: 'medium', icon: '♔', isEnabled: true, successMessage: 'Checkmate! Brilliant move!'
   });
   const [newOpening, setNewOpening] = useState<OpeningData>({
     name: '', description: '', category: 'Open Games', moves: [], isEnabled: true
@@ -339,6 +343,33 @@ const AdminDashboard = () => {
   const [newBestGame, setNewBestGame] = useState<BestGameData>({
     title: '', players: '', description: '', category: 'best', moves: [], highlights: [], isEnabled: true
   });
+
+  // Load custom categories from API (server-side – consistent across all browsers)
+  useEffect(() => {
+    loadCustomCategoriesFromAPI();
+  }, []);
+
+  const loadCustomCategoriesFromAPI = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/puzzle-categories`);
+      if (response.ok) {
+        const data = await response.json();
+        setCustomCategories(data.map((c: any) => ({ id: c.categoryId, name: c.name, description: c.description, icon: c.icon })));
+      }
+    } catch (error) {
+      console.error('Failed to load custom categories:', error);
+    }
+  };
+
+  // Combine default and custom categories
+  const allPuzzleCategories = useMemo(() => {
+    const customCats = customCategories.map(cat => ({
+      id: cat.id,
+      name: cat.name,
+      icon: cat.icon || '🎯'
+    }));
+    return [...PUZZLE_CATEGORIES, ...customCats];
+  }, [customCategories]);
 
   useEffect(() => {
     if (user?.role === 'admin') {
@@ -354,7 +385,8 @@ const AdminDashboard = () => {
       loadPuzzles(),
       loadOpenings(),
       loadFamousMates(),
-      loadBestGames()
+      loadBestGames(),
+      loadCustomCategoriesFromAPI()
     ]);
     setIsLoading(false);
   };
@@ -1198,7 +1230,7 @@ const AdminDashboard = () => {
       if (response.ok) {
         toast.success('Puzzle added successfully');
         setShowAddPuzzle(false);
-        setNewPuzzle({ name: '', category: 'mate-in-1', description: '', fen: '', solution: [], hint: '', difficulty: 'medium', icon: '♔', isEnabled: true });
+        setNewPuzzle({ name: '', category: 'mate-in-1', description: '', fen: '', solution: [], hint: '', difficulty: 'medium', icon: '♔', isEnabled: true, successMessage: 'Checkmate! Brilliant move!' });
         loadPuzzles();
         loadStats();
       } else {
@@ -3160,7 +3192,7 @@ const AdminDashboard = () => {
                         <Puzzle className="w-5 h-5" /> Puzzle Access
                       </h3>
                       <div className="grid grid-cols-2 gap-4">
-                        {PUZZLE_CATEGORIES.map((cat) => {
+                        {allPuzzleCategories.map((cat) => {
                           const hasIncomplete = hasIncompletePuzzlesInRange(cat.id);
                           const incompletePuzzles = getIncompletePuzzles(cat.id);
                           return (
@@ -3450,7 +3482,7 @@ const AdminDashboard = () => {
                     <Puzzle className="w-5 h-5 text-primary" /> Puzzle Categories
                   </h3>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {PUZZLE_CATEGORIES.map((cat) => (
+                    {allPuzzleCategories.map((cat) => (
                       <div key={cat.id} className="p-5 bg-secondary/30 rounded-xl border border-border">
                         <div className="flex items-center gap-3 mb-4">
                           <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">

@@ -38,6 +38,7 @@ interface PuzzleData {
   isLocked?: boolean; // For user access control
   originalIndex?: number; // Original 1-based index in the category (for tracking)
   preloadedMove?: string; // Optional move to execute automatically before student plays
+  successMessage?: string; // Custom success message when puzzle is solved (default: "Checkmate! Brilliant move!")
 }
 
 interface ContentAccess {
@@ -74,34 +75,9 @@ const Puzzles = () => {
   const navigate = useNavigate();
   const { trackPageVisit, trackPuzzleAttempt } = useActivityTracker();
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  // Initialize custom categories from localStorage synchronously to avoid UI flicker
-  const [customCategories, setCustomCategories] = useState<Array<{id: string, name: string, description?: string, icon?: string}>>(() => {
-    try {
-      const saved = localStorage.getItem('customPuzzleCategories');
-      return saved ? JSON.parse(saved) : [];
-    } catch (err) {
-      return [];
-    }
-  });
+  const [customCategories, setCustomCategories] = useState<Array<{id: string, name: string, description?: string, icon?: string}>>([]);
 
-  const [puzzleCategories, setPuzzleCategories] = useState<PuzzleCategory[]>(() => {
-    try {
-      const saved = localStorage.getItem('customPuzzleCategories');
-      const customs = saved ? JSON.parse(saved) : [];
-      const customCards = (customs || []).map((c: any) => ({
-        id: c.id,
-        name: c.name,
-        description: c.description || 'Custom puzzle category',
-        count: 0,
-        unlocked: false,
-        accessLimit: 0,
-        icon: c.icon || '🎯'
-      }));
-      return [...defaultCategories, ...customCards];
-    } catch (err) {
-      return defaultCategories;
-    }
-  });
+  const [puzzleCategories, setPuzzleCategories] = useState<PuzzleCategory[]>(defaultCategories);
   const [categoryPuzzles, setCategoryPuzzles] = useState<PuzzleData[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState(0);
   const [game, setGame] = useState(new Chess());
@@ -132,23 +108,31 @@ const Puzzles = () => {
   }, [selectedCategory]);
 
   useEffect(() => {
-    loadPuzzles();
-    loadCustomCategories();
-    if (!isAdmin) {
-      loadContentAccess();
-    }
+    // Load puzzle categories from server first, then load puzzles with those categories
+    const init = async () => {
+      const cats = await loadCustomCategories();
+      await loadPuzzles(cats);
+      if (!isAdmin) {
+        loadContentAccess();
+      }
+    };
+    init();
   }, [isAdmin]);
 
-  // Load custom categories from localStorage
-  const loadCustomCategories = () => {
+  // Load custom categories from API (server-side – consistent for all users)
+  const loadCustomCategories = async (): Promise<Array<{id: string, name: string, description?: string, icon?: string}>> => {
     try {
-      const saved = localStorage.getItem('customPuzzleCategories');
-      if (saved) {
-        setCustomCategories(JSON.parse(saved));
+      const response = await fetch(`${API_BASE_URL}/puzzle-categories`);
+      if (response.ok) {
+        const data = await response.json();
+        const cats = data.map((c: any) => ({ id: c.categoryId, name: c.name, description: c.description, icon: c.icon }));
+        setCustomCategories(cats);
+        return cats;
       }
     } catch (error) {
       console.error('Failed to load custom categories');
     }
+    return [];
   };
 
   // Execute preloaded move for current puzzle
@@ -235,7 +219,7 @@ const Puzzles = () => {
     }
   };
 
-  const loadPuzzles = async () => {
+  const loadPuzzles = async (cats: Array<{id: string, name: string, description?: string, icon?: string}> = []) => {
     try {
       const response = await fetch(`${API_BASE_URL}/puzzles`);
       if (response.ok) {
@@ -249,12 +233,8 @@ const Puzzles = () => {
           }
         });
 
-        // Load custom categories from localStorage and include them
-        const saved = localStorage.getItem('customPuzzleCategories');
-        const customs = saved ? JSON.parse(saved) : [];
-
-        // Create custom category cards (include all saved customs, count may be 0)
-        const customCategoryCards = customs.map((cat: {id: string, name: string, description?: string, icon?: string}) => ({
+        // Build custom category cards from the server-fetched list
+        const customCategoryCards = cats.map((cat) => ({
           id: cat.id,
           name: cat.name,
           description: cat.description || 'Custom puzzle category',
@@ -426,7 +406,7 @@ const Puzzles = () => {
         // Puzzle solved!
         setSolved(true);
         playSound('checkmate');
-        toast.success('Checkmate! Brilliant move! ♔', {
+        toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', {
           description: 'You solved the puzzle!',
         });
         
@@ -459,7 +439,7 @@ const Puzzles = () => {
                 if (currentMoveIndex + 2 >= currentPuzzle.solution.length) {
                   setSolved(true);
                   playSound('checkmate');
-                  toast.success('Checkmate! Brilliant move! ♔', {
+                  toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', {
                     description: 'You solved the puzzle!',
                   });
                   
@@ -546,7 +526,7 @@ const Puzzles = () => {
       if (currentMoveIndex + 1 >= currentPuzzle.solution.length) {
         setSolved(true);
         playSound('checkmate');
-        toast.success('Checkmate! Brilliant move! ♔');
+        toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
         trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
       } else {
         // Auto-play opponent's next move
@@ -567,7 +547,7 @@ const Puzzles = () => {
                 if (currentMoveIndex + 2 >= currentPuzzle.solution.length) {
                   setSolved(true);
                   playSound('checkmate');
-                  toast.success('Checkmate! Brilliant move! ♔');
+                  toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
                   trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }

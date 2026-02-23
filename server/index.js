@@ -116,6 +116,7 @@ const puzzleSchema = new mongoose.Schema({
   icon: { type: String, default: '♔' },
   isEnabled: { type: Boolean, default: true },
   preloadedMove: { type: String }, // Optional move to execute automatically before student plays
+  successMessage: { type: String, default: 'Checkmate! Brilliant move!' }, // Custom success message when puzzle is solved
   order: { type: Number, default: 0 }, // Order for manual arrangement
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
@@ -175,54 +176,22 @@ const bestGameSchema = new mongoose.Schema({
 
 const BestGame = mongoose.model('BestGame', bestGameSchema, 'bestgames');
 
+// Puzzle Category Schema - stores custom puzzle categories server-side
+const puzzleCategorySchema = new mongoose.Schema({
+  categoryId: { type: String, required: true, unique: true }, // slug e.g. 'gain-a-queen'
+  name: { type: String, required: true },
+  description: { type: String, default: 'Custom puzzle category' },
+  icon: { type: String, default: '\u265F' },
+  createdAt: { type: Date, default: Date.now }
+});
+const PuzzleCategory = mongoose.model('PuzzleCategory', puzzleCategorySchema, 'puzzlecategories');
+
 // Content Access Schema - Controls what content users can access
+// puzzleAccess uses Mixed type so any custom category can be stored without being dropped
 const contentAccessSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  // Puzzle access by category
-  puzzleAccess: {
-    'mate-in-1': { 
-      enabled: { type: Boolean, default: false }, 
-      limit: { type: Number, default: 0 },
-      rangeStart: { type: Number, default: null },
-      rangeEnd: { type: Number, default: null }
-    },
-    'mate-in-2': { 
-      enabled: { type: Boolean, default: false }, 
-      limit: { type: Number, default: 0 },
-      rangeStart: { type: Number, default: null },
-      rangeEnd: { type: Number, default: null }
-    },
-    'mate-in-3': { 
-      enabled: { type: Boolean, default: false }, 
-      limit: { type: Number, default: 0 },
-      rangeStart: { type: Number, default: null },
-      rangeEnd: { type: Number, default: null }
-    },
-    'pins': { 
-      enabled: { type: Boolean, default: false }, 
-      limit: { type: Number, default: 0 },
-      rangeStart: { type: Number, default: null },
-      rangeEnd: { type: Number, default: null }
-    },
-    'forks': { 
-      enabled: { type: Boolean, default: false }, 
-      limit: { type: Number, default: 0 },
-      rangeStart: { type: Number, default: null },
-      rangeEnd: { type: Number, default: null }
-    },
-    'traps': { 
-      enabled: { type: Boolean, default: false }, 
-      limit: { type: Number, default: 0 },
-      rangeStart: { type: Number, default: null },
-      rangeEnd: { type: Number, default: null }
-    },
-    'famous-mates': { 
-      enabled: { type: Boolean, default: false }, 
-      limit: { type: Number, default: 0 },
-      rangeStart: { type: Number, default: null },
-      rangeEnd: { type: Number, default: null }
-    }
-  },
+  // Puzzle access by category - Mixed allows any category key (including custom ones)
+  puzzleAccess: { type: mongoose.Schema.Types.Mixed, default: {} },
   // Opening access
   openingAccess: {
     enabled: { type: Boolean, default: false },
@@ -1624,7 +1593,10 @@ app.put('/api/content-access/:userId', async (req, res) => {
         bestGamesAccess: bestGamesAccess || { enabled: false, allowedGames: [] }
       });
     } else {
-      if (puzzleAccess) access.puzzleAccess = puzzleAccess;
+      if (puzzleAccess) {
+        access.puzzleAccess = puzzleAccess;
+        access.markModified('puzzleAccess'); // Required for Mixed type fields
+      }
       if (openingAccess) access.openingAccess = openingAccess;
       if (famousMatesAccess) access.famousMatesAccess = famousMatesAccess;
       if (bestGamesAccess) access.bestGamesAccess = bestGamesAccess;
@@ -1666,7 +1638,10 @@ app.put('/api/content-access-bulk', async (req, res) => {
           bestGamesAccess: bestGamesAccess || { enabled: false, allowedGames: [] }
         });
       } else {
-        if (puzzleAccess) access.puzzleAccess = puzzleAccess;
+        if (puzzleAccess) {
+          access.puzzleAccess = puzzleAccess;
+          access.markModified('puzzleAccess');
+        }
         if (openingAccess) access.openingAccess = openingAccess;
         if (famousMatesAccess) access.famousMatesAccess = famousMatesAccess;
         if (bestGamesAccess) access.bestGamesAccess = bestGamesAccess;
@@ -1682,7 +1657,64 @@ app.put('/api/content-access-bulk', async (req, res) => {
   }
 });
 
-// ============ SOCKET.IO - LIVE GAME SYSTEM ============
+// ===== PUZZLE CATEGORIES API =====
+// Get all custom puzzle categories (public)
+app.get('/api/puzzle-categories', async (req, res) => {
+  try {
+    const categories = await PuzzleCategory.find().sort({ createdAt: 1 });
+    res.json(categories);
+  } catch (error) {
+    console.error('Get puzzle categories error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Create a custom puzzle category (admin only)
+app.post('/api/puzzle-categories', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ message: 'No token provided' });
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const requestingUser = await User.findById(decoded.id);
+    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+
+    const { categoryId, name, description, icon } = req.body;
+    if (!categoryId || !name) return res.status(400).json({ message: 'categoryId and name are required' });
+
+    const existing = await PuzzleCategory.findOne({ categoryId });
+    if (existing) return res.status(409).json({ message: 'Category already exists' });
+
+    const category = await PuzzleCategory.create({ categoryId, name, description, icon });
+    res.json(category);
+  } catch (error) {
+    console.error('Create puzzle category error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Delete a custom puzzle category (admin only)
+app.delete('/api/puzzle-categories/:categoryId', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ message: 'No token provided' });
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const requestingUser = await User.findById(decoded.id);
+    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+
+    // Check no puzzles use this category
+    const puzzleCount = await Puzzle.countDocuments({ category: req.params.categoryId });
+    if (puzzleCount > 0) {
+      return res.status(400).json({ message: `Cannot delete: ${puzzleCount} puzzle(s) use this category` });
+    }
+
+    await PuzzleCategory.deleteOne({ categoryId: req.params.categoryId });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete puzzle category error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 
 // In-memory storage for active games and requests
 const activeGames = new Map(); // gameId -> gameData

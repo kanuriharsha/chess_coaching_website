@@ -25,6 +25,7 @@ interface PuzzleData {
   icon: string;
   isEnabled: boolean;
   preloadedMove?: string; // Optional move to execute automatically before student plays
+  successMessage?: string; // Custom success message when puzzle is solved (default: "Checkmate! Brilliant move!")
 }
 
 const PUZZLE_CATEGORIES = [
@@ -90,7 +91,8 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
     difficulty: 'medium',
     icon: '♔',
     isEnabled: true,
-    preloadedMove: ''
+    preloadedMove: '',
+    successMessage: 'Checkmate! Brilliant move!'
   });
 
   // Load puzzles from API
@@ -114,69 +116,84 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
     loadCustomCategories();
   }, [loadPuzzles]);
 
-  // Load custom categories from localStorage
-  const loadCustomCategories = () => {
+  // Load custom categories from API (server-side - consistent across all browsers)
+  const loadCustomCategories = async () => {
     try {
-      const saved = localStorage.getItem('customPuzzleCategories');
-      if (saved) {
-        setCustomCategories(JSON.parse(saved));
+      const response = await fetch(`${API_BASE_URL}/puzzle-categories`);
+      if (response.ok) {
+        const data = await response.json();
+        // Map server response (uses categoryId field) to the {id, name, ...} shape
+        setCustomCategories(data.map((c: any) => ({ id: c.categoryId, name: c.name, description: c.description, icon: c.icon })));
       }
     } catch (error) {
       console.error('Failed to load custom categories');
     }
   };
 
-  // Save custom categories to localStorage
-  const saveCustomCategories = (categories: Array<{id: string, name: string}>) => {
-    try {
-      localStorage.setItem('customPuzzleCategories', JSON.stringify(categories));
-      setCustomCategories(categories);
-    } catch (error) {
-      console.error('Failed to save custom categories');
-    }
-  };
-
-  // Add new custom category
-  const handleAddCategory = () => {
+  // Add new custom category (saves to server)
+  const handleAddCategory = async () => {
     if (!newCategoryName.trim()) {
       toast.error('Please enter a category name');
       return;
     }
     
     const categoryId = newCategoryName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const allCategories = [...DEFAULT_PUZZLE_CATEGORIES, ...customCategories];
+    const allCats = [...DEFAULT_PUZZLE_CATEGORIES, ...customCategories];
     
-    if (allCategories.some(cat => cat.id === categoryId)) {
+    if (allCats.some(cat => cat.id === categoryId)) {
       toast.error('This category already exists');
       return;
     }
     
-    const newCategory = {
-      id: categoryId,
-      name: newCategoryName.trim(),
-      description: newCategoryDescription.trim() || 'Custom puzzle category',
-      icon: newCategoryIcon || '🎯'
-    };
-    const updatedCategories = [...customCategories, newCategory];
-    saveCustomCategories(updatedCategories);
-    toast.success(`Category "${newCategory.name}" added!`);
-    setNewCategoryName('');
-    setNewCategoryDescription('');
-    setNewCategoryIcon('🎯');
-    setShowAddCategoryDialog(false);
+    try {
+      const response = await fetch(`${API_BASE_URL}/puzzle-categories`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          categoryId,
+          name: newCategoryName.trim(),
+          description: newCategoryDescription.trim() || 'Custom puzzle category',
+          icon: newCategoryIcon || '🎯'
+        })
+      });
+      if (response.ok) {
+        toast.success(`Category "${newCategoryName.trim()}" added!`);
+        setNewCategoryName('');
+        setNewCategoryDescription('');
+        setNewCategoryIcon('🎯');
+        setShowAddCategoryDialog(false);
+        loadCustomCategories();
+      } else {
+        const err = await response.json();
+        toast.error(err.message || 'Failed to add category');
+      }
+    } catch (error) {
+      toast.error('Failed to add category');
+    }
   };
 
-  // Delete custom category
-  const handleDeleteCategory = (categoryId: string) => {
+  // Delete custom category (removes from server)
+  const handleDeleteCategory = async (categoryId: string) => {
     const categoryPuzzles = puzzles.filter(p => p.category === categoryId);
     if (categoryPuzzles.length > 0) {
       toast.error(`Cannot delete category with ${categoryPuzzles.length} puzzle(s)`);
       return;
     }
-    
-    const updatedCategories = customCategories.filter(cat => cat.id !== categoryId);
-    saveCustomCategories(updatedCategories);
-    toast.success('Category deleted');
+    try {
+      const response = await fetch(`${API_BASE_URL}/puzzle-categories/${categoryId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) {
+        toast.success('Category deleted');
+        loadCustomCategories();
+      } else {
+        const err = await response.json();
+        toast.error(err.message || 'Failed to delete category');
+      }
+    } catch (error) {
+      toast.error('Failed to delete category');
+    }
   };
 
   // Get all categories (default + custom)
@@ -246,7 +263,8 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
           difficulty: 'medium',
           icon: '♔',
           isEnabled: true,
-          preloadedMove: ''
+          preloadedMove: '',
+          successMessage: 'Checkmate! Brilliant move!'
         });
         loadPuzzles();
       } else {
@@ -922,6 +940,18 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                     onChange={(e) => setNewPuzzle({ ...newPuzzle, hint: e.target.value })}
                     placeholder="e.g., Look at the weak f7 square"
                   />
+                </div>
+
+                {/* Success Message */}
+                <div className="space-y-2">
+                  <Label htmlFor="successMessage">Success Message</Label>
+                  <Input
+                    id="successMessage"
+                    value={newPuzzle.successMessage || 'Checkmate! Brilliant move!'}
+                    onChange={(e) => setNewPuzzle({ ...newPuzzle, successMessage: e.target.value })}
+                    placeholder="Checkmate! Brilliant move!"
+                  />
+                  <p className="text-xs text-muted-foreground">Message shown when puzzle is solved</p>
                 </div>
 
                 {/* Description - Full width */}
