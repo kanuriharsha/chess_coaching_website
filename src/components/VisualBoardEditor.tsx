@@ -57,10 +57,10 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
   const [isEraseMode, setIsEraseMode] = useState(false);
   const [turn, setTurn] = useState<'w' | 'b'>('w');
   // Castling rights and en passant target for FEN
-  const [castleWhiteK, setCastleWhiteK] = useState(true);
-  const [castleWhiteQ, setCastleWhiteQ] = useState(true);
-  const [castleBlackK, setCastleBlackK] = useState(true);
-  const [castleBlackQ, setCastleBlackQ] = useState(true);
+  const [castleWhiteK, setCastleWhiteK] = useState(false);
+  const [castleWhiteQ, setCastleWhiteQ] = useState(false);
+  const [castleBlackK, setCastleBlackK] = useState(false);
+  const [castleBlackQ, setCastleBlackQ] = useState(false);
   const [enPassantTarget, setEnPassantTarget] = useState<string>('-');
   
   // Solution recording state
