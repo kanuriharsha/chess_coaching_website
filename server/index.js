@@ -1701,12 +1701,8 @@ app.delete('/api/puzzle-categories/:categoryId', async (req, res) => {
     const requestingUser = await User.findById(decoded.id);
     if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
 
-    // Check no puzzles use this category
-    const puzzleCount = await Puzzle.countDocuments({ category: req.params.categoryId });
-    if (puzzleCount > 0) {
-      return res.status(400).json({ message: `Cannot delete: ${puzzleCount} puzzle(s) use this category` });
-    }
-
+    // Cascade-delete all puzzles in this category, then delete the category
+    await Puzzle.deleteMany({ category: req.params.categoryId });
     await PuzzleCategory.deleteOne({ categoryId: req.params.categoryId });
     res.json({ success: true });
   } catch (error) {

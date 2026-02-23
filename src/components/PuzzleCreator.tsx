@@ -172,12 +172,12 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
     }
   };
 
-  // Delete custom category (removes from server)
+  // Delete custom category (removes from server, also deletes its puzzles)
   const handleDeleteCategory = async (categoryId: string) => {
     const categoryPuzzles = puzzles.filter(p => p.category === categoryId);
     if (categoryPuzzles.length > 0) {
-      toast.error(`Cannot delete category with ${categoryPuzzles.length} puzzle(s)`);
-      return;
+      const confirmed = window.confirm(`This will also delete ${categoryPuzzles.length} puzzle(s) in this category. Continue?`);
+      if (!confirmed) return;
     }
     try {
       const response = await fetch(`${API_BASE_URL}/puzzle-categories/${categoryId}`, {
@@ -187,6 +187,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
       if (response.ok) {
         toast.success('Category deleted');
         loadCustomCategories();
+        loadPuzzles();
       } else {
         const err = await response.json();
         toast.error(err.message || 'Failed to delete category');

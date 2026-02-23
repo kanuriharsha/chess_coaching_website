@@ -78,6 +78,7 @@ const Puzzles = () => {
   const [customCategories, setCustomCategories] = useState<Array<{id: string, name: string, description?: string, icon?: string}>>([]);
 
   const [puzzleCategories, setPuzzleCategories] = useState<PuzzleCategory[]>(defaultCategories);
+  const [isInitializing, setIsInitializing] = useState(true);
   const [categoryPuzzles, setCategoryPuzzles] = useState<PuzzleData[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState(0);
   const [game, setGame] = useState(new Chess());
@@ -115,6 +116,7 @@ const Puzzles = () => {
       if (!isAdmin) {
         loadContentAccess();
       }
+      setIsInitializing(false);
     };
     init();
   }, [isAdmin]);
@@ -658,6 +660,22 @@ const Puzzles = () => {
         {!selectedCategory ? (
           /* Category Grid */
           <div className="pb-4">
+            {isInitializing ? (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="card-premium p-5 animate-pulse">
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="w-9 h-9 bg-muted rounded-md" />
+                      <div className="w-5 h-5 bg-muted rounded" />
+                    </div>
+                    <div className="h-5 bg-muted rounded w-2/3 mb-2" />
+                    <div className="h-3 bg-muted rounded w-full mb-1" />
+                    <div className="h-3 bg-muted rounded w-4/5 mb-4" />
+                    <div className="h-4 bg-muted rounded w-1/3" />
+                  </div>
+                ))}
+              </div>
+            ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {puzzleCategories.map((category) => {
               const isAccessLocked = !isAdmin && !hasAccessToCategory(category.id);
@@ -731,6 +749,7 @@ const Puzzles = () => {
               );
             })}
             </div>
+            )}
           </div>
         ) : categoryPuzzles.length === 0 ? (
           <div className="text-center py-12">
