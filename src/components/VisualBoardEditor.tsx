@@ -220,7 +220,11 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                 description: 'Now proceeding to solution recording...'
               });
               // Automatically advance to solution mode after recording preloaded move
-                          }
+              setTimeout(() => {
+                setMode('solution');
+                setSolutionMoves([]);
+              }, 600);
+            }
           }
         } catch (e) {
           toast.error('Invalid move');
@@ -724,6 +728,14 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
             <div className="text-sm text-blue-700 font-medium">
               Make the opponent's move that will execute automatically
             </div>
+            {preloadedMove && (
+              <Button
+                onClick={() => { setMode('solution'); setSolutionMoves([]); }}
+                className="self-end sm:ml-auto"
+              >
+                <ArrowRight className="w-4 h-4 mr-1" /> Next: Record Solution
+              </Button>
+            )}
           </>
         ) : (
           <>
