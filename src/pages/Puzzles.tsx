@@ -6,7 +6,7 @@ import PromotionDialog from '@/components/PromotionDialog';
 import { isPromotionMove } from '@/lib/chess';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
-import { Lock, CheckCircle, Puzzle as PuzzleIcon, ArrowRight, RotateCcw, Lightbulb, ShieldOff, Plus, Edit3 } from 'lucide-react';
+import { Lock, CheckCircle, Puzzle as PuzzleIcon, ArrowRight, RotateCcw, Lightbulb, ShieldOff, Plus, Edit3, GripVertical, Save, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useChessSound } from '@/hooks/useChessSound';
@@ -22,6 +22,12 @@ interface PuzzleCategory {
   unlocked: boolean;
   accessLimit: number; // 0 = unlimited, >0 = limited
   icon: string;
+  order_index?: number; // Admin-defined display order
+}
+
+interface CategoryOrder {
+  categoryId: string;
+  order_index: number;
 }
 
 interface PuzzleData {
@@ -92,6 +98,15 @@ const Puzzles = () => {
   const [preloadedMoveExecuted, setPreloadedMoveExecuted] = useState(false); // Track if preloaded move has been executed
   const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white'); // Fixed orientation per puzzle
 
+  // Reorder mode state (admin only)
+  const [isReorderMode, setIsReorderMode] = useState(false);
+  const [reorderList, setReorderList] = useState<PuzzleCategory[]>([]);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [selectedReorderIndex, setSelectedReorderIndex] = useState<number | null>(null);
+  const [categoryOrder, setCategoryOrder] = useState<CategoryOrder[]>([]);
+  const [savingOrder, setSavingOrder] = useState(false);
+
   const isAdmin = user?.role === 'admin';
   const currentPuzzle = categoryPuzzles[currentPuzzleIndex];
 
@@ -112,7 +127,8 @@ const Puzzles = () => {
     // Load puzzle categories from server first, then load puzzles with those categories
     const init = async () => {
       const cats = await loadCustomCategories();
-      await loadPuzzles(cats);
+      const orderData = await loadCategoryOrder();
+      await loadPuzzles(cats, orderData);
       if (!isAdmin) {
         loadContentAccess();
       }
@@ -120,6 +136,130 @@ const Puzzles = () => {
     };
     init();
   }, [isAdmin]);
+
+  // Load category display order from API
+  const loadCategoryOrder = async (): Promise<CategoryOrder[]> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/puzzle-category-order`);
+      if (response.ok) {
+        const data: CategoryOrder[] = await response.json();
+        setCategoryOrder(data);
+        return data;
+      }
+    } catch (error) {
+      console.error('Failed to load category order');
+    }
+    return [];
+  };
+
+  // Save category order (admin only)
+  const saveCategoryOrder = async (orderedCategories: PuzzleCategory[]) => {
+    setSavingOrder(true);
+    try {
+      const order = orderedCategories.map((cat, idx) => ({
+        categoryId: cat.id,
+        order_index: idx
+      }));
+      const response = await fetch(`${API_BASE_URL}/puzzle-category-order`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ order }),
+      });
+      if (response.ok) {
+        const updatedOrder: CategoryOrder[] = await response.json();
+        setCategoryOrder(updatedOrder);
+        // Apply new order to puzzle categories
+        const orderMap = new Map(updatedOrder.map(o => [o.categoryId, o.order_index]));
+        const sorted = [...orderedCategories].map((cat, idx) => ({ ...cat, order_index: idx }));
+        setPuzzleCategories(sorted);
+        toast.success('Category order saved!');
+        setIsReorderMode(false);
+      } else {
+        toast.error('Failed to save order');
+      }
+    } catch (error) {
+      console.error('Save category order error:', error);
+      toast.error('Failed to save order');
+    }
+    setSavingOrder(false);
+  };
+
+  // Drag and drop handlers for category reordering — live reorder on dragOver (same as puzzle rearrange)
+  const handleDragStart = (index: number) => {
+    setDragIndex(index);
+  };
+
+  const handleDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (dragIndex === null || dragIndex === index) return;
+
+    setDragOverIndex(index);
+
+    // Live reorder: splice dragged item to new position immediately
+    const updated = [...reorderList];
+    const dragged = updated[dragIndex];
+    updated.splice(dragIndex, 1);
+    updated.splice(index, 0, dragged);
+    setReorderList(updated);
+    setDragIndex(index); // Track dragged item's new position
+  };
+
+  const handleDragEnd = () => {
+    setDragIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const enterReorderMode = () => {
+    setReorderList([...puzzleCategories]);
+    setSelectedReorderIndex(null);
+    setIsReorderMode(true);
+  };
+
+  const cancelReorderMode = () => {
+    setReorderList([]);
+    setSelectedReorderIndex(null);
+    setIsReorderMode(false);
+  };
+
+  // Keyboard navigation for selected category in reorder mode
+  const handleReorderKeyDown = useCallback((e: KeyboardEvent) => {
+    if (!isReorderMode || selectedReorderIndex === null) return;
+    const maxIndex = reorderList.length - 1;
+
+    let targetIndex: number | null = null;
+    if (e.key === 'ArrowLeft' && selectedReorderIndex > 0) {
+      e.preventDefault();
+      targetIndex = selectedReorderIndex - 1;
+    } else if (e.key === 'ArrowRight' && selectedReorderIndex < maxIndex) {
+      e.preventDefault();
+      targetIndex = selectedReorderIndex + 1;
+    } else if (e.key === 'ArrowUp' && selectedReorderIndex > 0) {
+      e.preventDefault();
+      targetIndex = Math.max(0, selectedReorderIndex - 2);
+    } else if (e.key === 'ArrowDown' && selectedReorderIndex < maxIndex) {
+      e.preventDefault();
+      targetIndex = Math.min(maxIndex, selectedReorderIndex + 2);
+    }
+
+    if (targetIndex !== null) {
+      const updated = [...reorderList];
+      const [item] = updated.splice(selectedReorderIndex, 1);
+      updated.splice(targetIndex, 0, item);
+      setReorderList(updated);
+      setSelectedReorderIndex(targetIndex);
+      toast.info(`Moved to position ${targetIndex + 1}`);
+    }
+  }, [isReorderMode, selectedReorderIndex, reorderList]);
+
+  useEffect(() => {
+    if (isReorderMode) {
+      window.addEventListener('keydown', handleReorderKeyDown);
+      return () => window.removeEventListener('keydown', handleReorderKeyDown);
+    }
+  }, [isReorderMode, handleReorderKeyDown]);
 
   // Load custom categories from API (server-side – consistent for all users)
   const loadCustomCategories = async (): Promise<Array<{id: string, name: string, description?: string, icon?: string}>> => {
@@ -221,7 +361,7 @@ const Puzzles = () => {
     }
   };
 
-  const loadPuzzles = async (cats: Array<{id: string, name: string, description?: string, icon?: string}> = []) => {
+  const loadPuzzles = async (cats: Array<{id: string, name: string, description?: string, icon?: string}> = [], orderData: CategoryOrder[] = []) => {
     try {
       const response = await fetch(`${API_BASE_URL}/puzzles`);
       if (response.ok) {
@@ -253,7 +393,18 @@ const Puzzles = () => {
           unlocked: (categoryCounts[cat.id] || 0) > 0
         }));
 
-        setPuzzleCategories([...updatedDefault, ...customCategoryCards]);
+        // Merge and apply admin-defined order
+        let allCategories: PuzzleCategory[] = [...updatedDefault, ...customCategoryCards];
+        if (orderData.length > 0) {
+          const orderMap = new Map(orderData.map(o => [o.categoryId, o.order_index]));
+          allCategories = allCategories.map(cat => ({
+            ...cat,
+            order_index: orderMap.has(cat.id) ? orderMap.get(cat.id) : 999
+          }));
+          allCategories.sort((a, b) => (a.order_index ?? 999) - (b.order_index ?? 999));
+        }
+
+        setPuzzleCategories(allCategories);
       }
     } catch (error) {
       console.error('Load puzzles error:', error);
@@ -650,10 +801,31 @@ const Puzzles = () => {
             </p>
           </div>
           {isAdmin && !selectedCategory && (
-            <Button size="sm" onClick={() => navigate('/puzzle-manager')}>
-              <Plus className="w-4 h-4 mr-1" />
-              Create
-            </Button>
+            <div className="flex gap-2">
+              {!isReorderMode ? (
+                <Button size="sm" variant="outline" onClick={enterReorderMode}>
+                  <GripVertical className="w-4 h-4 mr-1" />
+                  Reorder
+                </Button>
+              ) : (
+                <>
+                  <Button size="sm" variant="outline" onClick={cancelReorderMode} disabled={savingOrder}>
+                    <X className="w-4 h-4 mr-1" />
+                    Cancel
+                  </Button>
+                  <Button size="sm" onClick={() => saveCategoryOrder(reorderList)} disabled={savingOrder}>
+                    <Save className="w-4 h-4 mr-1" />
+                    {savingOrder ? 'Saving...' : 'Save Order'}
+                  </Button>
+                </>
+              )}
+              {!isReorderMode && (
+                <Button size="sm" onClick={() => navigate('/puzzle-manager')}>
+                  <Plus className="w-4 h-4 mr-1" />
+                  Create
+                </Button>
+              )}
+            </div>
           )}
         </div>
 
@@ -675,14 +847,63 @@ const Puzzles = () => {
                   </div>
                 ))}
               </div>
+            ) : isReorderMode ? (
+              /* Admin Reorder Mode - Bubble/Pill style, live drag like puzzle rearrange */
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Drag categories or tap to select and use arrow keys to move.
+                  This sets the default display order for all users.
+                </p>
+                <div className="flex flex-wrap gap-3 p-4 bg-muted/30 rounded-lg min-h-[120px]">
+                  {reorderList.map((category, index) => {
+                    const isDragging = dragIndex === index;
+                    const isSelected = selectedReorderIndex === index;
+                    return (
+                      <div
+                        key={category.id}
+                        draggable
+                        onDragStart={() => handleDragStart(index)}
+                        onDragOver={(e) => handleDragOver(e, index)}
+                        onDragEnd={handleDragEnd}
+                        onClick={() => setSelectedReorderIndex(isSelected ? null : index)}
+                        title={`${category.name} — click to select, then use arrow keys to move`}
+                        className={`
+                          px-4 py-2.5 rounded-full cursor-move
+                          flex items-center gap-2
+                          transition-all duration-200 ease-in-out
+                          hover:scale-105 hover:shadow-lg
+                          border-2
+                          ${isDragging ? 'opacity-40 scale-90 shadow-2xl' : 'opacity-100'}
+                          ${isSelected
+                            ? 'ring-4 ring-primary ring-offset-2 scale-105 border-primary bg-primary text-primary-foreground'
+                            : 'bg-card border-border text-foreground hover:border-primary/60'
+                          }
+                        `}
+                        style={{ transform: isDragging ? 'rotate(2deg)' : 'rotate(0deg)' }}
+                      >
+                        <GripVertical className="w-4 h-4 opacity-50 flex-shrink-0" />
+                        <span className="text-lg flex-shrink-0">{category.icon}</span>
+                        <span className="font-medium text-sm whitespace-nowrap">{category.name}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded flex-shrink-0 ${isSelected ? 'bg-primary-foreground/20 text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                          <PuzzleIcon className="w-3 h-3 inline mr-0.5" />
+                          {category.count}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {[...puzzleCategories].sort((a, b) => {
-              if (isAdmin) return 0; // admins: preserve original order
+              // Hybrid sorting for students: unlocked first, locked second
+              // Within each group, preserve admin-defined order (order_index)
+              if (isAdmin) return 0; // admins: preserve admin-defined order as-is
               const aLocked = !hasAccessToCategory(a.id) || (a.count === 0);
               const bLocked = !hasAccessToCategory(b.id) || (b.count === 0);
-              if (aLocked === bLocked) return 0;
-              return aLocked ? 1 : -1; // unlocked first
+              if (aLocked !== bLocked) return aLocked ? 1 : -1; // unlocked first
+              // Within same lock group, preserve admin order
+              return (a.order_index ?? 999) - (b.order_index ?? 999);
             }).map((category) => {
               const isAccessLocked = !isAdmin && !hasAccessToCategory(category.id);
               const isEmptyLocked = category.count === 0 && !isAdmin;

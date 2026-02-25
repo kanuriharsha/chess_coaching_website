@@ -7,7 +7,7 @@ import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { toast } from 'sonner';
-import { Trash2, Save, Eye, EyeOff, Edit3, GripVertical, ArrowLeft, Plus, X } from 'lucide-react';
+import { Trash2, Save, Eye, EyeOff, Edit3, GripVertical, ArrowLeft, Plus, X, Copy } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from './ui/dialog';
 
@@ -59,6 +59,17 @@ const PIECE_ICONS = [
 
 interface PuzzleCreatorProps { editPuzzleId?: string }
 
+interface VariationData {
+  fen: string;
+  solution: string[];
+  preloadedMove: string;
+  name: string;
+  hint: string;
+  successMessage: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+  icon: string;
+}
+
 const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
   const { token } = useAuth();
   const [puzzles, setPuzzles] = useState<PuzzleData[]>([]);
@@ -69,6 +80,9 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [tempReorderedPuzzles, setTempReorderedPuzzles] = useState<PuzzleData[]>([]);
   const [selectedPuzzleIndex, setSelectedPuzzleIndex] = useState<number | null>(null);
+
+  // Variations state
+  const [variations, setVariations] = useState<VariationData[]>([]);
   
   // Custom categories
   const [customCategories, setCustomCategories] = useState<Array<{id: string, name: string, description?: string, icon?: string}>>([]);
@@ -212,6 +226,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
 
   const handleEditPuzzle = (p: PuzzleData) => {
     setNewPuzzle({ ...p });
+    setVariations([]);
     setShowPuzzleList(false);
   };
 
@@ -251,6 +266,62 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
     }));
   };
 
+  // --- Variation helpers ---
+
+  const handleAddVariation = () => {
+    if (!newPuzzle.fen) {
+      toast.error('Please set up the main puzzle position first');
+      return;
+    }
+
+    // Compute the name for this variation.
+    // Main puzzle number comes from its name (or we treat it as the next after category's existing puzzles).
+    const categoryPuzzles = puzzles.filter(p => p.category === newPuzzle.category);
+    const categoryName = allCategories.find(c => c.id === newPuzzle.category)?.name || newPuzzle.category;
+
+    const numbers = [...categoryPuzzles, { name: newPuzzle.name }].map(p => {
+      const match = p.name.match(/#(\d+)/i);
+      return match ? parseInt(match[1], 10) : 0;
+    });
+    const maxNumber = numbers.length > 0 ? Math.max(...numbers) : 0;
+
+    // Each variation gets maxNumber + (how many variations already exist) + 1
+    const variationNumber = maxNumber + variations.length + 1;
+
+    setVariations(prev => [
+      ...prev,
+      {
+        fen: newPuzzle.fen,
+        solution: [],
+        preloadedMove: '',
+        name: `${categoryName} #${variationNumber}`,
+        hint: newPuzzle.hint,
+        successMessage: newPuzzle.successMessage || 'Checkmate! Brilliant move!',
+        difficulty: newPuzzle.difficulty,
+        icon: newPuzzle.icon,
+      },
+    ]);
+    toast.success(`Variation ${variations.length + 1} added`);
+  };
+
+  const handleRemoveVariation = (index: number) => {
+    setVariations(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleUpdateVariation = (index: number, field: keyof VariationData, value: any) => {
+    setVariations(prev =>
+      prev.map((v, i) => (i === index ? { ...v, [field]: value } : v))
+    );
+  };
+
+  // Sync all variation FENs when the main puzzle FEN changes
+  const syncVariationFens = (fen: string) => {
+    setVariations(prev => prev.map(v => ({ ...v, fen, solution: [], preloadedMove: '' })));
+    if (variations.length > 0) {
+      toast.info('Variation boards updated to match the new position');
+    }
+  };
+
   const handleSavePuzzle = async () => {
     if (!newPuzzle.name.trim()) {
       toast.error('Please enter a puzzle title');
@@ -273,6 +344,14 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
       return;
     }
 
+    // Validate variations
+    for (let i = 0; i < variations.length; i++) {
+      if (variations[i].solution.length === 0) {
+        toast.error(`Variation ${i + 1}: Please record at least one solution move`);
+        return;
+      }
+    }
+
     setIsLoading(true);
     try {
       const isEdit = !!newPuzzle._id;
@@ -289,7 +368,44 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
       });
 
       if (response.ok) {
-        toast.success(isEdit ? 'Puzzle updated successfully!' : 'Puzzle created successfully!');
+        // Save variations sequentially
+        let variationsSaved = 0;
+        for (const variation of variations) {
+          const variationPuzzle = {
+            name: variation.name,
+            category: newPuzzle.category,
+            description: newPuzzle.description,
+            fen: variation.fen,
+            solution: variation.solution,
+            hint: variation.hint,
+            difficulty: variation.difficulty,
+            icon: variation.icon,
+            isEnabled: newPuzzle.isEnabled,
+            preloadedMove: variation.preloadedMove,
+            successMessage: variation.successMessage,
+          };
+          const vResponse = await fetch(`${API_BASE_URL}/puzzles`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(variationPuzzle)
+          });
+          if (vResponse.ok) {
+            variationsSaved++;
+          } else {
+            const text = await vResponse.text();
+            console.error(`Variation ${variationsSaved + 1} save failed:`, text);
+            toast.error(`Failed to save Variation ${variationsSaved + 1}`);
+          }
+        }
+
+        const savedMsg = variations.length > 0
+          ? `${isEdit ? 'Puzzle updated' : 'Puzzle created'} + ${variationsSaved} variation(s) saved!`
+          : (isEdit ? 'Puzzle updated successfully!' : 'Puzzle created successfully!');
+        toast.success(savedMsg);
+
         setNewPuzzle({
           name: '',
           category: '',
@@ -303,6 +419,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
           preloadedMove: '',
           successMessage: 'Checkmate! Brilliant move!'
         });
+        setVariations([]);
         loadPuzzles();
       } else {
         const text = await response.text();
@@ -871,6 +988,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                 initialMode={newPuzzle.solution && newPuzzle.solution.length > 0 ? 'solution' : 'setup'}
                 onPositionSave={(fen, solution, preloadedMove) => {
                   setNewPuzzle({ ...newPuzzle, fen, solution, preloadedMove: preloadedMove || '' });
+                  syncVariationFens(fen);
                 }}
               />
               {newPuzzle.fen && (
@@ -1003,6 +1121,26 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                   />
                 </div>
 
+                {/* Add Variation Button */}
+                <div className="sm:col-span-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full border-dashed"
+                    disabled={!newPuzzle.fen}
+                    onClick={handleAddVariation}
+                  >
+                    <Copy className="w-4 h-4 mr-2" />
+                    Add Variation
+                    {variations.length > 0 && (
+                      <span className="ml-2 px-2 py-0.5 bg-primary text-primary-foreground text-xs rounded-full">{variations.length}</span>
+                    )}
+                  </Button>
+                  {!newPuzzle.fen && (
+                    <p className="text-xs text-muted-foreground mt-1 text-center">Set up the main puzzle position first to add variations</p>
+                  )}
+                </div>
+
                 {/* Save Button - Full width */}
                 <div className="sm:col-span-2">
                   <Button 
@@ -1016,12 +1154,106 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                     ) : (
                       <Save className="w-4 h-4 mr-2" />
                     )}
-                    Save Puzzle to Database
+                    {variations.length > 0
+                      ? `Save Puzzle + ${variations.length} Variation${variations.length > 1 ? 's' : ''}`
+                      : 'Save Puzzle to Database'}
                   </Button>
                 </div>
               </div>
             </CardContent>
           </Card>
+
+          {/* Variation Cards */}
+          {variations.map((variation, idx) => (
+            <Card key={idx} className="border-2 border-blue-200 bg-blue-50/30">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Copy className="w-4 h-4 text-blue-600" />
+                      Variation {idx + 1}
+                    </CardTitle>
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                      Same position as the main puzzle — record a different solution below.
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => handleRemoveVariation(idx)}
+                    title={`Remove variation ${idx + 1}`}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Board editor pre-loaded with main puzzle FEN */}
+                <VisualBoardEditor
+                  key={`variation-${idx}-${variation.fen}`}
+                  initialFen={variation.fen}
+                  initialSolution={variation.solution}
+                  initialPreloadedMove={variation.preloadedMove}
+                  initialMode="solution"
+                  onPositionSave={(fen, solution, preloadedMove) => {
+                    handleUpdateVariation(idx, 'solution', solution);
+                    handleUpdateVariation(idx, 'preloadedMove', preloadedMove || '');
+                  }}
+                />
+                {variation.solution.length > 0 && (
+                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm">
+                    <strong className="text-green-700">✓ Variation solution saved!</strong><br />
+                    <span className="text-green-600">Solution moves: <span className="font-medium">{variation.solution.join(' → ')}</span></span>
+                  </div>
+                )}
+
+                {/* Variation metadata */}
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label>Variation Title</Label>
+                    <Input
+                      value={variation.name}
+                      onChange={(e) => handleUpdateVariation(idx, 'name', e.target.value)}
+                      placeholder={`Variation ${idx + 1} title`}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Hint (Optional)</Label>
+                    <Input
+                      value={variation.hint}
+                      onChange={(e) => handleUpdateVariation(idx, 'hint', e.target.value)}
+                      placeholder="Hint for this variation"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Success Message</Label>
+                    <Input
+                      value={variation.successMessage}
+                      onChange={(e) => handleUpdateVariation(idx, 'successMessage', e.target.value)}
+                      placeholder="Checkmate! Brilliant move!"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Difficulty</Label>
+                    <Select
+                      value={variation.difficulty}
+                      onValueChange={(value: 'easy' | 'medium' | 'hard') => handleUpdateVariation(idx, 'difficulty', value)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DIFFICULTY_LEVELS.map(level => (
+                          <SelectItem key={level.id} value={level.id}>{level.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       )}
     </div>

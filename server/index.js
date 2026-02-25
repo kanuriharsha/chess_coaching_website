@@ -182,9 +182,17 @@ const puzzleCategorySchema = new mongoose.Schema({
   name: { type: String, required: true },
   description: { type: String, default: 'Custom puzzle category' },
   icon: { type: String, default: '\u265F' },
+  order_index: { type: Number, default: 999 }, // Admin-defined display order
   createdAt: { type: Date, default: Date.now }
 });
 const PuzzleCategory = mongoose.model('PuzzleCategory', puzzleCategorySchema, 'puzzlecategories');
+
+// Puzzle Category Order Schema - stores display order for ALL categories (default + custom)
+const puzzleCategoryOrderSchema = new mongoose.Schema({
+  categoryId: { type: String, required: true, unique: true },
+  order_index: { type: Number, required: true, default: 0 }
+});
+const PuzzleCategoryOrder = mongoose.model('PuzzleCategoryOrder', puzzleCategoryOrderSchema, 'puzzlecategoryorder');
 
 // Content Access Schema - Controls what content users can access
 // puzzleAccess uses Mixed type so any custom category can be stored without being dropped
@@ -1661,10 +1669,59 @@ app.put('/api/content-access-bulk', async (req, res) => {
 // Get all custom puzzle categories (public)
 app.get('/api/puzzle-categories', async (req, res) => {
   try {
-    const categories = await PuzzleCategory.find().sort({ createdAt: 1 });
+    const categories = await PuzzleCategory.find().sort({ order_index: 1, createdAt: 1 });
     res.json(categories);
   } catch (error) {
     console.error('Get puzzle categories error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get display order for ALL categories (default + custom) - public
+app.get('/api/puzzle-category-order', async (req, res) => {
+  try {
+    const orders = await PuzzleCategoryOrder.find().sort({ order_index: 1 });
+    res.json(orders);
+  } catch (error) {
+    console.error('Get puzzle category order error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Set display order for ALL categories (admin only)
+app.put('/api/puzzle-category-order', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ message: 'No token provided' });
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const requestingUser = await User.findById(decoded.id);
+    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+
+    const { order } = req.body; // Array of { categoryId, order_index }
+    if (!Array.isArray(order)) return res.status(400).json({ message: 'order must be an array' });
+
+    // Upsert each category order
+    const bulkOps = order.map(item => ({
+      updateOne: {
+        filter: { categoryId: item.categoryId },
+        update: { $set: { categoryId: item.categoryId, order_index: item.order_index } },
+        upsert: true
+      }
+    }));
+    await PuzzleCategoryOrder.bulkWrite(bulkOps);
+
+    // Also update order_index on custom PuzzleCategory docs (for backward compat)
+    for (const item of order) {
+      await PuzzleCategory.updateOne(
+        { categoryId: item.categoryId },
+        { $set: { order_index: item.order_index } }
+      );
+    }
+
+    const updated = await PuzzleCategoryOrder.find().sort({ order_index: 1 });
+    res.json(updated);
+  } catch (error) {
+    console.error('Set puzzle category order error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
