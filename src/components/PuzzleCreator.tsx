@@ -449,12 +449,12 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h2 className="font-serif text-2xl font-bold text-foreground">Create Puzzles</h2>
-          <p className="text-muted-foreground">Visually create chess puzzles by placing pieces and recording solutions</p>
+          <p className="text-muted-foreground text-sm">Visually create chess puzzles by placing pieces and recording solutions</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Dialog open={showAddCategoryDialog} onOpenChange={setShowAddCategoryDialog}>
             <DialogTrigger asChild>
               <Button variant="outline">
@@ -565,16 +565,16 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
           {isRearrangeMode ? (
             // Rearrange Mode - Draggable Bubbles
             <>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div>
                   <h3 className="text-xl font-semibold">Rearrange Puzzles</h3>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Drag and drop puzzles or click to select and use arrow keys (←→ swap adjacent, ↑↓ jump rows). 
+                    Drag puzzles or tap to select and use arrow keys.
                     <span className="ml-2 inline-block px-2 py-0.5 bg-white border-2 border-gray-800 text-gray-800 text-xs rounded-full">White to play</span>
                     <span className="ml-2 inline-block px-2 py-0.5 bg-gray-800 text-white text-xs rounded-full">Black to play</span>
                   </p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Button
                     variant="outline"
                     onClick={() => {

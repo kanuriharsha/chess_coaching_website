@@ -220,11 +220,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                 description: 'Now proceeding to solution recording...'
               });
               // Automatically advance to solution mode after recording preloaded move
-              setTimeout(() => {
-                setMode('solution');
-                setSolutionMoves([]); // Reset solution moves for the new position
-              }, 500);
-            }
+                          }
           }
         } catch (e) {
           toast.error('Invalid move');
@@ -494,14 +490,14 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                       <button
                         key={`${rank}-${file}`}
                         onClick={() => handleSquareClick(actualRank, actualFile)}
-                        className="w-12 h-12 sm:w-14 sm:h-14 flex items-center justify-center relative transition-all hover:brightness-110"
+                        className="w-9 h-9 sm:w-12 sm:h-12 md:w-14 md:h-14 flex items-center justify-center relative transition-all hover:brightness-110"
                         style={{ backgroundColor: bgColor }}
                       >
                         {piece && (
                           <img 
                             src={PIECE_IMAGES[piece]} 
                             alt={piece} 
-                            className="w-10 h-10 sm:w-12 sm:h-12 object-contain pointer-events-none"
+                            className="w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 object-contain pointer-events-none"
                             draggable={false}
                           />
                         )}
@@ -550,13 +546,13 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                     <button
                       key={piece}
                       onClick={() => { setSelectedPiece(piece); setIsEraseMode(false); }}
-                      className={`w-11 h-11 rounded-lg border-2 transition-all flex items-center justify-center ${
+                      className={`w-9 h-9 sm:w-11 sm:h-11 rounded-lg border-2 transition-all flex items-center justify-center ${
                         selectedPiece === piece && !isEraseMode
                           ? 'border-[#81b64c] bg-[#81b64c]/30 scale-110'
                           : 'border-gray-300 hover:border-[#81b64c]/50 bg-white'
                       }`}
                     >
-                      <img src={PIECE_IMAGES[piece]} alt={piece} className="w-9 h-9 object-contain" />
+                      <img src={PIECE_IMAGES[piece]} alt={piece} className="w-7 h-7 sm:w-9 sm:h-9 object-contain" />
                     </button>
                   ))}
                 </div>
@@ -570,20 +566,20 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                     <button
                       key={piece}
                       onClick={() => { setSelectedPiece(piece); setIsEraseMode(false); }}
-                      className={`w-11 h-11 rounded-lg border-2 transition-all flex items-center justify-center ${
+                      className={`w-9 h-9 sm:w-11 sm:h-11 rounded-lg border-2 transition-all flex items-center justify-center ${
                         selectedPiece === piece && !isEraseMode
                           ? 'border-[#81b64c] bg-[#81b64c]/30 scale-110'
                           : 'border-gray-300 hover:border-[#81b64c]/50 bg-white'
                       }`}
                     >
-                      <img src={PIECE_IMAGES[piece]} alt={piece} className="w-9 h-9 object-contain" />
+                      <img src={PIECE_IMAGES[piece]} alt={piece} className="w-7 h-7 sm:w-9 sm:h-9 object-contain" />
                     </button>
                   ))}
                 </div>
               </div>
 
               {/* Eraser and controls */}
-              <div className="flex items-center gap-2 pt-2 border-t">
+              <div className="flex items-center gap-2 pt-2 border-t flex-wrap">
                 <button
                   onClick={() => { setIsEraseMode(true); setSelectedPiece(null); }}
                   className={`px-3 py-2 rounded-lg border-2 transition-all flex items-center gap-1 text-sm ${
@@ -669,7 +665,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
       </div>
 
       {/* Bottom Controls */}
-      <div className="flex items-center gap-2 pt-3 border-t flex-wrap">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 pt-3 border-t">
         {mode === 'setup' ? (
           <>
             <div className="flex items-center gap-2">
@@ -696,7 +692,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
               </Label>
             </div>
             
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 flex-wrap">
               <div className="text-sm text-gray-600">Castling:</div>
               <label className="text-sm">
                 <input type="checkbox" checked={castleWhiteK} onChange={(e) => setCastleWhiteK(e.target.checked)} className="mr-1" />K
@@ -718,9 +714,9 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                 ))}
               </select>
             </div>
-            <Button onClick={startRecordingSolution} className="ml-auto">
+            <Button onClick={startRecordingSolution} className="self-end sm:ml-auto">
               <ArrowRight className="w-4 h-4 mr-1" /> 
-              {enablePreloadedMove ? 'Next: Record Preloaded Move' : 'Next: Record Solution'}
+              {enablePreloadedMove ? 'Next: Preloaded Move' : 'Next: Record Solution'}
             </Button>
           </>
         ) : mode === 'preloadedMove' ? (
@@ -734,7 +730,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
             <div className="text-sm text-gray-600">
               Make the correct move(s) on the board
             </div>
-            <Button onClick={savePuzzle} className="ml-auto" disabled={solutionMoves.length === 0}>
+            <Button onClick={savePuzzle} className="self-end sm:ml-auto" disabled={solutionMoves.length === 0}>
               <Save className="w-4 h-4 mr-1" /> Save Position & Solution
             </Button>
           </>

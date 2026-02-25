@@ -119,9 +119,14 @@
     @apply border-border;
   }
 
+  html {
+    overflow-x: hidden;
+  }
+
   body {
     @apply bg-background text-foreground font-sans antialiased;
     font-family: 'Inter', system-ui, sans-serif;
+    overflow-x: hidden;
   }
 
   h1, h2, h3, h4 {
