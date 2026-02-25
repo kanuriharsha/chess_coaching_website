@@ -215,6 +215,42 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
     setShowPuzzleList(false);
   };
 
+  // Auto-fill puzzle title and success message when a category is selected (new puzzles only)
+  const handleCategoryChange = (categoryId: string) => {
+    const isNewPuzzle = !newPuzzle._id;
+
+    if (!isNewPuzzle) {
+      // Editing an existing puzzle — just update the category
+      setNewPuzzle(prev => ({ ...prev, category: categoryId }));
+      return;
+    }
+
+    const categoryPuzzles = puzzles.filter(p => p.category === categoryId);
+    const categoryName = allCategories.find(c => c.id === categoryId)?.name || categoryId;
+
+    // Determine the next sequential number
+    let nextNumber = categoryPuzzles.length + 1;
+    if (categoryPuzzles.length > 0) {
+      const numbers = categoryPuzzles.map(p => {
+        const match = p.name.match(/#(\d+)(?:\s*$)/i);
+        return match ? parseInt(match[1], 10) : 0;
+      });
+      const maxNumber = Math.max(...numbers);
+      if (maxNumber > 0) nextNumber = maxNumber + 1;
+    }
+
+    // Copy success message from the last puzzle in that category
+    const lastPuzzle = categoryPuzzles[categoryPuzzles.length - 1];
+    const successMessage = lastPuzzle?.successMessage || 'Checkmate! Brilliant move!';
+
+    setNewPuzzle(prev => ({
+      ...prev,
+      category: categoryId,
+      name: `${categoryName} #${nextNumber}`,
+      successMessage,
+    }));
+  };
+
   const handleSavePuzzle = async () => {
     if (!newPuzzle.name.trim()) {
       toast.error('Please enter a puzzle title');
@@ -884,7 +920,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                 {/* Category */}
                 <div className="space-y-2">
                   <Label>Category *</Label>
-                  <Select value={newPuzzle.category} onValueChange={(value) => setNewPuzzle({ ...newPuzzle, category: value })}>
+                  <Select value={newPuzzle.category} onValueChange={handleCategoryChange}>
                     <SelectTrigger>
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
