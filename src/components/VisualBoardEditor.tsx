@@ -3,9 +3,10 @@ import { Chess, Square } from 'chess.js';
 import { getPossibleSquares, isCapture, isPromotionMove } from '@/lib/chess';
 import PromotionDialog from './PromotionDialog';
 import { Button } from './ui/button';
+import { Input } from './ui/input';
 import { Switch } from './ui/switch';
 import { Label } from './ui/label';
-import { RotateCcw, Trash2, Play, Save, ArrowRight } from 'lucide-react';
+import { RotateCcw, Trash2, Play, Save, ArrowRight, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface VisualBoardEditorProps {
@@ -73,6 +74,9 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
   const [showPromotionDialog, setShowPromotionDialog] = useState(false);
   const [pendingPromotion, setPendingPromotion] = useState<null | { from: string; to: string; gameCopy: Chess }>(null);
   
+  // FEN input state
+  const [fenInput, setFenInput] = useState('');
+
   // Preloaded move state
   const [enablePreloadedMove, setEnablePreloadedMove] = useState(false);
   const [preloadedMove, setPreloadedMove] = useState<string>('');
@@ -321,6 +325,62 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
     setEnablePreloadedMove(false);
     setPreloadedMove('');
     setPreloadedMoveFen('');
+  };
+
+  // Load position from FEN string (parses only the board layout, ignores other fields)
+  const loadFromFen = () => {
+    const trimmed = fenInput.trim();
+    if (!trimmed) {
+      toast.error('Please enter a FEN string');
+      return;
+    }
+
+    // Extract only the board layout (first field before any space)
+    const boardPart = trimmed.split(' ')[0];
+    const ranks = boardPart.split('/');
+
+    if (ranks.length !== 8) {
+      toast.error('Invalid FEN: must have exactly 8 ranks separated by "/"');
+      return;
+    }
+
+    const validPieces = new Set(['K', 'Q', 'R', 'B', 'N', 'P', 'k', 'q', 'r', 'b', 'n', 'p']);
+    const newBoard: (PieceType | null)[][] = Array(8).fill(null).map(() => Array(8).fill(null));
+
+    for (let rankIdx = 0; rankIdx < 8; rankIdx++) {
+      let fileIdx = 0;
+      for (const ch of ranks[rankIdx]) {
+        if (fileIdx > 7) {
+          toast.error(`Invalid FEN: rank ${8 - rankIdx} has too many squares`);
+          return;
+        }
+        if (ch >= '1' && ch <= '8') {
+          // Skip empty squares
+          fileIdx += parseInt(ch, 10);
+        } else if (validPieces.has(ch)) {
+          newBoard[rankIdx][fileIdx] = ch as PieceType;
+          fileIdx++;
+        } else {
+          toast.error(`Invalid FEN: unexpected character '${ch}' in rank ${8 - rankIdx}`);
+          return;
+        }
+      }
+      if (fileIdx !== 8) {
+        toast.error(`Invalid FEN: rank ${8 - rankIdx} has ${fileIdx} squares instead of 8`);
+        return;
+      }
+    }
+
+    setBoard(newBoard);
+    // Reset solution state since we're loading a new position
+    setMode('setup');
+    setSolutionMoves([]);
+    setSolutionGame(null);
+    setSetupFen('');
+    setSelectedSquare(null);
+    setPreloadedMove('');
+    setPreloadedMoveFen('');
+    toast.success('Position loaded from FEN! Set turn, castling rights, and en passant manually, then proceed.');
   };
 
   // Set up starting position
@@ -600,6 +660,27 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                 <Button variant="outline" size="sm" onClick={setupStartingPosition}>
                   <RotateCcw className="w-4 h-4 mr-1" /> Start Position
                 </Button>
+              </div>
+
+              {/* FEN input for quick position loading */}
+              <div className="mt-3 pt-3 border-t">
+                <div className="text-xs font-medium text-gray-500 mb-1.5">Load position from FEN</div>
+                <div className="flex gap-2">
+                  <Input
+                    type="text"
+                    placeholder="Paste FEN string here, e.g. r1br4/1p1n2bk/..."
+                    value={fenInput}
+                    onChange={(e) => setFenInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') loadFromFen(); }}
+                    className="flex-1 text-sm h-9"
+                  />
+                  <Button variant="secondary" size="sm" onClick={loadFromFen} className="shrink-0">
+                    <Upload className="w-4 h-4 mr-1" /> Load FEN
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Only the board layout is loaded. Set turn, castling, and en passant below.
+                </p>
               </div>
             </div>
           )}
