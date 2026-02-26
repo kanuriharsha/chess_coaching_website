@@ -467,22 +467,21 @@ app.put('/api/users/:id', async (req, res) => {
     }
 
     const { username, password, role, isEnabled, joiningDate, profile, achievements, commonNote } = req.body;
-    const updateData = { updatedAt: new Date() };
 
-    if (username) updateData.username = username;
-    if (role) updateData.role = role;
-    if (typeof isEnabled === 'boolean') updateData.isEnabled = isEnabled;
-    if (password) updateData.password = password; // Plain text password
-    if (joiningDate) updateData.joiningDate = new Date(joiningDate);
-    if (profile) updateData.profile = profile;
-    if (achievements) updateData.achievements = achievements;
-    if (typeof commonNote === 'string') updateData.commonNote = commonNote;
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
 
-    const user = await User.findByIdAndUpdate(
-      req.params.id,
-      updateData,
-      { new: true }
-    ).select('-password');
+    if (username) user.username = username;
+    if (role) user.role = role;
+    if (typeof isEnabled === 'boolean') user.isEnabled = isEnabled;
+    if (password && password.trim().length > 0) user.password = password;
+    if (joiningDate) user.joiningDate = new Date(joiningDate);
+    if (profile) user.profile = { ...((user.profile || {})), ...profile };
+    if (achievements) user.achievements = achievements;
+    if (typeof commonNote === 'string') user.commonNote = commonNote;
+
+    user.updatedAt = new Date();
+    await user.save();
 
     res.json({
       success: true,

@@ -405,11 +405,12 @@ const AdminDashboard = () => {
     }
   };
 
-  const loadUsers = async () => {
+  const loadUsers = async (): Promise<User[]> => {
     const data = await getAllUsers();
     setUsers(data);
     // Load fees for all students
     await loadAllUsersFees(data);
+    return data;
   };
 
   // Load fees for all students
@@ -897,9 +898,9 @@ const AdminDashboard = () => {
 
       if (success) {
         toast.success('Profile updated successfully');
-        await loadUsers(); // refresh user list
-        // Update selected user with fresh copy from list
-        const refreshed = users.find(u => u.id === selectedUserForDetail.id);
+        const freshUsers = await loadUsers(); // refresh user list
+        // Update selected user with fresh copy from the returned data (not stale state)
+        const refreshed = freshUsers.find(u => u.id === selectedUserForDetail.id);
         if (refreshed) setSelectedUserForDetail(refreshed as any);
         setIsEditingUserProfile(false);
       } else {
@@ -1029,11 +1030,19 @@ const AdminDashboard = () => {
         body: JSON.stringify({ commonNote: tempCommonFeeNote })
       });
       if (response.ok) {
-        setCommonFeeNote(tempCommonFeeNote);
-        setSelectedUserForDetail(prev => prev ? { ...prev, commonNote: tempCommonFeeNote } : prev);
+        const data = await response.json();
+        const savedNote = data?.user?.commonNote ?? tempCommonFeeNote;
+        // Update local display state
+        setCommonFeeNote(savedNote);
+        // Update selected user in-memory so the note stays visible immediately
+        setSelectedUserForDetail(prev => prev ? { ...prev, commonNote: savedNote } : prev);
+        // Keep users list in sync so re-opening the profile shows the correct note
+        setUsers(prev => prev.map(u => u.id === selectedUserForDetail.id ? { ...u, commonNote: savedNote } : u));
         setIsEditingCommonFeeNote(false);
         toast.success('Common note saved');
       } else {
+        const errText = await response.text().catch(() => '');
+        console.error('Save common note failed:', response.status, errText);
         toast.error('Failed to save common note');
       }
     } catch (error) {
