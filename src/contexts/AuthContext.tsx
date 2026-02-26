@@ -26,6 +26,7 @@ export interface User {
   attendance?: AttendanceRecord[];
   achievements?: Achievement[];
   profile?: StudentProfile;
+  commonNote?: string;
 }
 
 export interface StudentProfile {

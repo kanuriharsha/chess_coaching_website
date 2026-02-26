@@ -98,6 +98,7 @@ const userSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now }
   }],
+  commonNote: { type: String, default: '' }, // Admin-only common note for all fees
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
@@ -427,6 +428,7 @@ app.get('/api/users', async (req, res) => {
       attendance: user.attendance || [],
       achievements: user.achievements || [],
       profile: user.profile,
+      commonNote: user.commonNote || '',
       createdAt: user.createdAt
     })));
   } catch (error) {
@@ -464,7 +466,7 @@ app.put('/api/users/:id', async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    const { username, password, role, isEnabled, joiningDate, profile, achievements } = req.body;
+    const { username, password, role, isEnabled, joiningDate, profile, achievements, commonNote } = req.body;
     const updateData = { updatedAt: new Date() };
 
     if (username) updateData.username = username;
@@ -474,6 +476,7 @@ app.put('/api/users/:id', async (req, res) => {
     if (joiningDate) updateData.joiningDate = new Date(joiningDate);
     if (profile) updateData.profile = profile;
     if (achievements) updateData.achievements = achievements;
+    if (typeof commonNote === 'string') updateData.commonNote = commonNote;
 
     const user = await User.findByIdAndUpdate(
       req.params.id,
@@ -492,7 +495,8 @@ app.put('/api/users/:id', async (req, res) => {
         joiningDate: user.joiningDate,
         attendance: user.attendance || [],
         achievements: user.achievements || [],
-        profile: user.profile
+        profile: user.profile,
+        commonNote: user.commonNote || ''
       }
     });
   } catch (error) {

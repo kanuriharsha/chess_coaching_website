@@ -808,9 +808,8 @@ const AdminDashboard = () => {
   useEffect(() => {
     if (selectedUserForDetail) {
       loadUserFees(selectedUserForDetail.id);
-      // Load common fee note from localStorage
-      const savedCommonNote = localStorage.getItem(`commonFeeNote_${selectedUserForDetail.id}`);
-      setCommonFeeNote(savedCommonNote || '');
+      // Load common fee note from user data (stored in database)
+      setCommonFeeNote(selectedUserForDetail.commonNote || '');
       setShowCommonFeeNote(false);
       setIsEditingCommonFeeNote(false);
     } else {
@@ -1018,12 +1017,29 @@ const AdminDashboard = () => {
   };
 
   // Common fee note handlers
-  const handleSaveCommonFeeNote = () => {
+  const handleSaveCommonFeeNote = async () => {
     if (!selectedUserForDetail) return;
-    localStorage.setItem(`commonFeeNote_${selectedUserForDetail.id}`, tempCommonFeeNote);
-    setCommonFeeNote(tempCommonFeeNote);
-    setIsEditingCommonFeeNote(false);
-    toast.success('Common note saved');
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${selectedUserForDetail.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ commonNote: tempCommonFeeNote })
+      });
+      if (response.ok) {
+        setCommonFeeNote(tempCommonFeeNote);
+        setSelectedUserForDetail(prev => prev ? { ...prev, commonNote: tempCommonFeeNote } : prev);
+        setIsEditingCommonFeeNote(false);
+        toast.success('Common note saved');
+      } else {
+        toast.error('Failed to save common note');
+      }
+    } catch (error) {
+      console.error('Save common note error:', error);
+      toast.error('Failed to save common note');
+    }
   };
 
   const handleCancelCommonFeeNote = () => {
