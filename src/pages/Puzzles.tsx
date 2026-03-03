@@ -485,6 +485,34 @@ const Puzzles = () => {
    * - After each correct user move, the opponent's next move is auto-played
    * - Applies to all puzzle categories: Mate in 1, Mate in 2, Mate in 3, Pins, Forks, Traps
    */
+
+  /**
+   * Checks whether the move played by the user satisfies the solution step.
+   * Each solution step may contain comma-separated alternatives (e.g. "Ba3#,Ba4#").
+   * For the final step of any mate-in-N category, any move that results in
+   * checkmate is also accepted automatically.
+   */
+  const isMoveCorrect = (
+    expectedStep: string,
+    move: { san: string; from: string; to: string },
+    gameAfterMove: Chess,
+    isLastStep: boolean,
+    isMateCategory: boolean
+  ): boolean => {
+    // Accept any checkmate move on the final step of a mate puzzle
+    if (isLastStep && isMateCategory && gameAfterMove.isCheckmate()) {
+      return true;
+    }
+    // Parse comma-separated alternatives and compare case-insensitively
+    const alternatives = expectedStep.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    const moveSanLower = move.san.toLowerCase();
+    const fromTo = (move.from + move.to).toLowerCase();
+    const toLower = move.to.toLowerCase();
+    return alternatives.some(
+      alt => moveSanLower === alt || fromTo === alt || toLower === alt
+    );
+  };
+
   const handleMove = useCallback(
     (from: Square, to: Square): boolean => {
       if (solved || !currentPuzzle) return false;
@@ -516,14 +544,9 @@ const Puzzles = () => {
 
       // Check if this move matches the expected move in the solution
       const expectedMove = currentPuzzle.solution[currentMoveIndex];
-      // Trim whitespace and make case-insensitive comparison for robust validation
-      const expectedMoveTrimmed = expectedMove.trim().toLowerCase();
-      const moveSanLower = move.san.toLowerCase();
-      const fromTo = move.from + move.to;
-      const moveMatches = 
-        moveSanLower === expectedMoveTrimmed ||
-        to.toLowerCase() === expectedMoveTrimmed ||
-        fromTo.toLowerCase() === expectedMoveTrimmed;
+      const isLastStep = currentMoveIndex + 1 >= currentPuzzle.solution.length;
+      const isMateCategory = (currentPuzzle.category || '').startsWith('mate-in-');
+      const moveMatches = isMoveCorrect(expectedMove, move, gameCopy, isLastStep, isMateCategory);
 
       if (!moveMatches) {
         // Wrong move - show error and undo only this move
@@ -576,7 +599,9 @@ const Puzzles = () => {
         playSound('move');
         
         setTimeout(() => {
-          const nextMove = currentPuzzle.solution[currentMoveIndex + 1];
+          const nextMoveRaw = currentPuzzle.solution[currentMoveIndex + 1];
+          // Use only the first alternative for opponent's auto-play
+          const nextMove = nextMoveRaw ? nextMoveRaw.split(',')[0].trim() : null;
           if (nextMove) {
             const updatedGame = new Chess(gameCopy.fen());
             try {
@@ -648,14 +673,9 @@ const Puzzles = () => {
 
       // Check if this move matches the expected move in the solution
       const expectedMove = currentPuzzle.solution[currentMoveIndex];
-      // Trim whitespace and make case-insensitive comparison for robust validation
-      const expectedMoveTrimmed = expectedMove.trim().toLowerCase();
-      const moveSanLower = mv.san.toLowerCase();
-      const fromTo = mv.from + mv.to;
-      const moveMatches = 
-        moveSanLower === expectedMoveTrimmed ||
-        to.toLowerCase() === expectedMoveTrimmed ||
-        fromTo.toLowerCase() === expectedMoveTrimmed;
+      const isLastStep = currentMoveIndex + 1 >= currentPuzzle.solution.length;
+      const isMateCategory = (currentPuzzle.category || '').startsWith('mate-in-');
+      const moveMatches = isMoveCorrect(expectedMove, mv, gameCopy, isLastStep, isMateCategory);
 
       if (!moveMatches) {
         // Wrong move - show error and undo only this move
@@ -686,7 +706,9 @@ const Puzzles = () => {
         playSound('move');
         
         setTimeout(() => {
-          const nextMove = currentPuzzle.solution[currentMoveIndex + 1];
+          const nextMoveRaw = currentPuzzle.solution[currentMoveIndex + 1];
+          // Use only the first alternative for opponent's auto-play
+          const nextMove = nextMoveRaw ? nextMoveRaw.split(',')[0].trim() : null;
           if (nextMove) {
             const updatedGame = new Chess(gameCopy.fen());
             try {

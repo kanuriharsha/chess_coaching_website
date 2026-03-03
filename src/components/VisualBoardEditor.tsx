@@ -6,7 +6,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';
 import { Label } from './ui/label';
-import { RotateCcw, Trash2, Play, Save, ArrowRight, Upload } from 'lucide-react';
+import { RotateCcw, Trash2, Play, Save, ArrowRight, Upload, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface VisualBoardEditorProps {
@@ -76,6 +76,10 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
   
   // FEN input state
   const [fenInput, setFenInput] = useState('');
+
+  // Alternative move recording state
+  const [addingAlternativeForIndex, setAddingAlternativeForIndex] = useState<number | null>(null);
+  const [savedGameFen, setSavedGameFen] = useState<string | null>(null);
 
   // Preloaded move state
   const [enablePreloadedMove, setEnablePreloadedMove] = useState(false);
@@ -256,13 +260,30 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
             setPendingPromotion({ from: selectedSquare as string, to: square, gameCopy });
             setShowPromotionDialog(true);
           } else {
-            const move = solutionGame.move({ from: selectedSquare as Square, to: square });
+            const move = gameCopy.move({ from: selectedSquare as Square, to: square });
             if (move) {
-              setSolutionMoves(prev => [...prev, move.san]);
-              setSolutionGame(new Chess(solutionGame.fen()));
-              toast.success(`Move recorded: ${move.san}`);
-              if (solutionGame.isCheckmate()) {
-                toast.success('Checkmate! Great puzzle!');
+              if (addingAlternativeForIndex !== null) {
+                // Append this move as an alternative for the target step
+                setSolutionMoves(prev => {
+                  const updated = [...prev];
+                  updated[addingAlternativeForIndex] = updated[addingAlternativeForIndex] + ',' + move.san;
+                  return updated;
+                });
+                toast.success(`Alternative move added: ${move.san}`);
+                // Restore the board to where it was before entering alternative mode
+                if (savedGameFen) {
+                  setSolutionGame(new Chess(savedGameFen));
+                }
+                setAddingAlternativeForIndex(null);
+                setSavedGameFen(null);
+              } else {
+                // Normal solution recording
+                setSolutionGame(new Chess(gameCopy.fen()));
+                setSolutionMoves(prev => [...prev, move.san]);
+                toast.success(`Move recorded: ${move.san}`);
+                if (gameCopy.isCheckmate()) {
+                  toast.success('Checkmate! Great puzzle!');
+                }
               }
             }
           }
@@ -300,6 +321,19 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
             setMode('solution');
             setSolutionMoves([]);
           }, 500);
+        } else if (addingAlternativeForIndex !== null) {
+          // Adding alternative via promotion
+          setSolutionMoves(prev => {
+            const updated = [...prev];
+            updated[addingAlternativeForIndex] = updated[addingAlternativeForIndex] + ',' + mv.san;
+            return updated;
+          });
+          toast.success(`Alternative move added: ${mv.san}`);
+          if (savedGameFen) {
+            setSolutionGame(new Chess(savedGameFen));
+          }
+          setAddingAlternativeForIndex(null);
+          setSavedGameFen(null);
         } else {
           // Recording solution move
           setSolutionMoves(prev => [...prev, mv.san]);
@@ -437,6 +471,37 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
     } catch (e) {
       toast.error('Invalid position. Make sure both kings are on the board.');
     }
+  };
+
+  // Enter alternative-move mode: rewind the board to before step i so user can play a different move
+  const enterAlternativeMode = (index: number) => {
+    if (!solutionGame) return;
+    // Save the current game so we can restore after
+    setSavedGameFen(solutionGame.fen());
+    // Reconstruct game up to (but not including) step index
+    const baseFen = preloadedMoveFen || setupFen;
+    const rewoundGame = new Chess(baseFen);
+    // Replay moves 0..index-1 (taking only the first alternative for each step)
+    for (let i = 0; i < index; i++) {
+      const firstAlt = solutionMoves[i].split(',')[0].trim();
+      try { rewoundGame.move(firstAlt); } catch { break; }
+    }
+    setSolutionGame(new Chess(rewoundGame.fen()));
+    setAddingAlternativeForIndex(index);
+    setSelectedSquare(null);
+    setPossibleTargets([]);
+    toast.info(`Make an alternative move for step ${index + 1}`);
+  };
+
+  // Cancel alternative mode and restore the board
+  const cancelAlternativeMode = () => {
+    if (savedGameFen) {
+      setSolutionGame(new Chess(savedGameFen));
+    }
+    setAddingAlternativeForIndex(null);
+    setSavedGameFen(null);
+    setSelectedSquare(null);
+    setPossibleTargets([]);
   };
 
   // Undo last solution move
@@ -713,6 +778,14 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
             ) : (
               <>
                 <div className="text-sm font-medium text-gray-700">Solution Moves</div>
+                {addingAlternativeForIndex !== null && (
+                  <div className="p-2 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-800 flex items-center justify-between">
+                    <span>Adding alt for step {addingAlternativeForIndex + 1} — play a move on the board</span>
+                    <button onClick={cancelAlternativeMode} className="ml-2 text-amber-600 hover:text-amber-800">
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
                 <div className="p-3 bg-gray-50 rounded-lg border min-h-[150px]">
                   {preloadedMove && (
                     <div className="mb-2 pb-2 border-b border-gray-200">
@@ -730,15 +803,38 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
                   ) : (
                     <div className="space-y-1">
                       {solutionMoves.map((move, i) => (
-                        <div key={i} className="flex items-center gap-2 text-sm bg-white px-2 py-1 rounded">
+                        <div key={i} className={`flex items-center gap-2 text-sm px-2 py-1 rounded ${
+                          addingAlternativeForIndex === i ? 'bg-amber-100 ring-2 ring-amber-400' : 'bg-white'
+                        }`}>
                           <span className="text-gray-400 font-medium">{i + 1}.</span>
-                          <span className="font-semibold text-gray-800">{move}</span>
+                          <span className="font-semibold text-gray-800 flex-1">
+                            {move.includes(',') ? (
+                              <span className="flex flex-wrap gap-1">
+                                {move.split(',').map((alt, j) => (
+                                  <span key={j} className={`inline-block px-1 rounded ${
+                                    j === 0 ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-700'
+                                  }`}>
+                                    {alt.trim()}
+                                  </span>
+                                ))}
+                              </span>
+                            ) : move}
+                          </span>
+                          {addingAlternativeForIndex === null && (
+                            <button
+                              onClick={() => enterAlternativeMode(i)}
+                              className="text-gray-400 hover:text-green-600 transition-colors"
+                              title="Add alternative move"
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
-                {solutionMoves.length > 0 && (
+                {solutionMoves.length > 0 && addingAlternativeForIndex === null && (
                   <Button variant="outline" size="sm" onClick={undoSolutionMove} className="w-full">
                     <RotateCcw className="w-4 h-4 mr-1" /> Undo Last Move
                   </Button>
