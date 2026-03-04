@@ -54,6 +54,7 @@ interface ContentAccess {
       limit: number; // 0 = unlimited
       rangeStart?: number; // 1-based inclusive
       rangeEnd?: number; // 1-based inclusive
+      specificPuzzles?: number[]; // specific 1-based puzzle numbers
     };
   };
   openingAccess: {
@@ -441,12 +442,24 @@ const Puzzles = () => {
         const limit = getAccessLimit(category);
         const rangeCfg = contentAccess?.puzzleAccess?.[category];
         if (!isAdmin) {
-          if (rangeCfg && rangeCfg.rangeStart && rangeCfg.rangeEnd && rangeCfg.rangeEnd >= rangeCfg.rangeStart) {
-            const start = Math.max(1, rangeCfg.rangeStart) - 1; // convert to 0-based index
-            const end = Math.min(puzzles.length, rangeCfg.rangeEnd) - 1;
+          const hasRange = rangeCfg && rangeCfg.rangeStart && rangeCfg.rangeEnd && rangeCfg.rangeEnd >= rangeCfg.rangeStart;
+          const hasSpecific = rangeCfg && rangeCfg.specificPuzzles && rangeCfg.specificPuzzles.length > 0;
+          if (hasRange || hasSpecific) {
+            // Merge range and specific puzzles into one combined enabled set
+            const enabledSet = new Set<number>();
+            if (hasRange) {
+              for (let i = rangeCfg!.rangeStart!; i <= rangeCfg!.rangeEnd!; i++) {
+                enabledSet.add(i);
+              }
+            }
+            if (hasSpecific) {
+              for (const n of rangeCfg!.specificPuzzles!) {
+                enabledSet.add(n);
+              }
+            }
             puzzles = puzzles.map((puzzle, index) => ({
               ...puzzle,
-              isLocked: index < start || index > end
+              isLocked: !enabledSet.has(index + 1) // 1-based
             }));
           } else if (limit > 0) {
             puzzles = puzzles.map((puzzle, index) => ({
@@ -969,11 +982,21 @@ const Puzzles = () => {
                     <div className="mt-2">
                       {(() => {
                         const accessCfg = contentAccess?.puzzleAccess?.[category.id];
-                        if (accessCfg?.rangeStart && accessCfg?.rangeEnd) {
+                        const cfgHasRange = accessCfg?.rangeStart && accessCfg?.rangeEnd && accessCfg.rangeEnd >= accessCfg.rangeStart;
+                        const cfgHasSpecific = accessCfg?.specificPuzzles && accessCfg.specificPuzzles.length > 0;
+                        if (cfgHasRange || cfgHasSpecific) {
+                          const numSet = new Set<number>();
+                          if (cfgHasRange) {
+                            for (let i = accessCfg!.rangeStart!; i <= accessCfg!.rangeEnd!; i++) numSet.add(i);
+                          }
+                          if (cfgHasSpecific) {
+                            for (const n of accessCfg!.specificPuzzles!) numSet.add(n);
+                          }
+                          const combined = Array.from(numSet).sort((a, b) => a - b);
                           return (
-                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-500/20 text-blue-700 dark:text-blue-300 rounded-full text-xs">
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-500/20 text-purple-700 dark:text-purple-300 rounded-full text-xs">
                               <ShieldOff className="w-3 h-3" />
-                              Puzzles {accessCfg.rangeStart}-{accessCfg.rangeEnd}
+                              #{combined.join(', #')} unlocked
                             </div>
                           );
                         } else if (accessCfg?.limit === 0) {

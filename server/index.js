@@ -1528,12 +1528,12 @@ app.get('/api/content-access/:userId', async (req, res) => {
       access = await ContentAccess.create({
         userId: req.params.userId,
         puzzleAccess: {
-          'mate-in-1': { enabled: false, limit: 0 },
-          'mate-in-2': { enabled: false, limit: 0 },
-          'mate-in-3': { enabled: false, limit: 0 },
-          'pins': { enabled: false, limit: 0 },
-          'forks': { enabled: false, limit: 0 },
-          'traps': { enabled: false, limit: 0 }
+          'mate-in-1': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
+          'mate-in-2': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
+          'mate-in-3': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
+          'pins': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
+          'forks': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
+          'traps': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] }
         },
         openingAccess: { enabled: false, allowedOpenings: [] },
         bestGamesAccess: { enabled: false, allowedGames: [] }
@@ -1562,12 +1562,12 @@ app.get('/api/my-content-access', async (req, res) => {
       access = await ContentAccess.create({
         userId: decoded.id,
         puzzleAccess: {
-          'mate-in-1': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null },
-          'mate-in-2': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null },
-          'mate-in-3': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null },
-          'pins': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null },
-          'forks': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null },
-          'traps': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null }
+          'mate-in-1': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
+          'mate-in-2': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
+          'mate-in-3': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
+          'pins': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
+          'forks': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
+          'traps': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] }
         },
         openingAccess: { enabled: false, allowedOpenings: [] },
         bestGamesAccess: { enabled: false, allowedGames: [] }

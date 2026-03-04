@@ -114,7 +114,7 @@ interface BestGameData {
 interface ContentAccess {
   userId: string;
   puzzleAccess: {
-    [key: string]: { enabled: boolean; limit: number; rangeStart?: number; rangeEnd?: number };
+    [key: string]: { enabled: boolean; limit: number; rangeStart?: number; rangeEnd?: number; specificPuzzles?: number[] };
   };
   openingAccess: {
     enabled: boolean;
@@ -302,6 +302,7 @@ const AdminDashboard = () => {
   // Content Access states
   const [selectedUserForAccess, setSelectedUserForAccess] = useState<User | null>(null);
   const [userContentAccess, setUserContentAccess] = useState<ContentAccess | null>(null);
+  const [specificPuzzlesInputs, setSpecificPuzzlesInputs] = useState<Record<string, string>>({});
   const [showAccessModal, setShowAccessModal] = useState(false);
   const [puzzleCounts, setPuzzleCounts] = useState<{ [key: string]: number }>({});
   // Bulk selective access UI state
@@ -453,25 +454,30 @@ const AdminDashboard = () => {
     const access = userContentAccess.puzzleAccess[categoryId];
     const rangeStart = access.rangeStart;
     const rangeEnd = access.rangeEnd;
+    const specificPuzzles = access.specificPuzzles;
     
-    // If no range is set, return false (not incomplete)
-    if (!rangeStart || !rangeEnd) return false;
-    
-    // Find the category progress
     const categoryProgress = userPuzzleProgress.find(p => p.category === categoryId);
     if (!categoryProgress || !categoryProgress.puzzleDetails) return false;
-    
-    // Check if all puzzles in the range are solved
-    // puzzleDetails is 0-indexed, so puzzle #1 is at index 0
-    for (let i = rangeStart; i <= rangeEnd; i++) {
-      const puzzleIndex = i - 1; // Convert puzzle number to array index
-      const puzzle = categoryProgress.puzzleDetails[puzzleIndex];
-      if (!puzzle || !puzzle.solved) {
-        return true; // Found an incomplete puzzle
-      }
+
+    // Build combined enabled set from range + specific (merged)
+    const hasRange = rangeStart && rangeEnd && rangeEnd >= rangeStart;
+    const hasSpecific = specificPuzzles && specificPuzzles.length > 0;
+    if (!hasRange && !hasSpecific) return false;
+
+    const enabledSet = new Set<number>();
+    if (hasRange) {
+      for (let i = rangeStart!; i <= rangeEnd!; i++) enabledSet.add(i);
     }
-    
-    return false; // All puzzles in range are completed
+    if (hasSpecific) {
+      for (const n of specificPuzzles!) enabledSet.add(n);
+    }
+    const enabledNums = Array.from(enabledSet).sort((a, b) => a - b);
+
+    for (const puzzleNum of enabledNums) {
+      const puzzle = categoryProgress.puzzleDetails[puzzleNum - 1];
+      if (!puzzle || !puzzle.solved) return true;
+    }
+    return false;
   };
 
   // Get list of incomplete puzzles in the assigned range for a category
@@ -481,28 +487,33 @@ const AdminDashboard = () => {
     const access = userContentAccess.puzzleAccess[categoryId];
     const rangeStart = access.rangeStart;
     const rangeEnd = access.rangeEnd;
-    
-    if (!rangeStart || !rangeEnd) return [];
+    const specificPuzzles = access.specificPuzzles;
     
     const categoryProgress = userPuzzleProgress.find(p => p.category === categoryId);
-    if (!categoryProgress || !categoryProgress.puzzleDetails) {
-      return [];
-    }
-    
+    if (!categoryProgress || !categoryProgress.puzzleDetails) return [];
+
     const incomplete: { number: number; name: string }[] = [];
-    
-    // puzzleDetails is 0-indexed, so puzzle #1 is at index 0
-    for (let i = rangeStart; i <= rangeEnd; i++) {
-      const puzzleIndex = i - 1; // Convert puzzle number to array index
-      const puzzle = categoryProgress.puzzleDetails[puzzleIndex];
+
+    // Build combined enabled set from range + specific (merged)
+    const hasRange = rangeStart && rangeEnd && rangeEnd >= rangeStart;
+    const hasSpecific = specificPuzzles && specificPuzzles.length > 0;
+    if (!hasRange && !hasSpecific) return [];
+
+    const enabledSet = new Set<number>();
+    if (hasRange) {
+      for (let i = rangeStart!; i <= rangeEnd!; i++) enabledSet.add(i);
+    }
+    if (hasSpecific) {
+      for (const n of specificPuzzles!) enabledSet.add(n);
+    }
+    const enabledNums = Array.from(enabledSet).sort((a, b) => a - b);
+
+    for (const puzzleNum of enabledNums) {
+      const puzzle = categoryProgress.puzzleDetails[puzzleNum - 1];
       if (!puzzle || !puzzle.solved) {
-        incomplete.push({
-          number: i,
-          name: puzzle?.puzzleName || `Puzzle ${i}`
-        });
+        incomplete.push({ number: puzzleNum, name: puzzle?.puzzleName || `Puzzle #${puzzleNum}` });
       }
     }
-    
     return incomplete;
   };
 
@@ -637,6 +648,15 @@ const AdminDashboard = () => {
       if (response.ok) {
         const data = await response.json();
         setUserContentAccess(data);
+        // Initialize raw string inputs for specific puzzles
+        if (data.puzzleAccess) {
+          const rawInputs: Record<string, string> = {};
+          for (const catId of Object.keys(data.puzzleAccess)) {
+            const nums: number[] = data.puzzleAccess[catId]?.specificPuzzles || [];
+            rawInputs[catId] = nums.join(', ');
+          }
+          setSpecificPuzzlesInputs(rawInputs);
+        }
       }
     } catch (error) {
       console.error('Load content access error:', error);
@@ -711,7 +731,7 @@ const AdminDashboard = () => {
     }
   };
 
-  const updatePuzzleAccess = (category: string, field: 'enabled' | 'limit' | 'rangeStart' | 'rangeEnd', value: boolean | number | null) => {
+  const updatePuzzleAccess = (category: string, field: 'enabled' | 'limit' | 'rangeStart' | 'rangeEnd' | 'specificPuzzles', value: boolean | number | null | number[]) => {
     if (!userContentAccess) return;
     
     setUserContentAccess({
@@ -3276,32 +3296,72 @@ const AdminDashboard = () => {
                                   disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled}
                                 />
                               </div>
+                              <div className="flex items-center gap-2">
+                                <Label className="text-sm text-muted-foreground whitespace-nowrap">Specific #s:</Label>
+                                <Input
+                                  type="text"
+                                  placeholder="e.g. 11,12,16,18"
+                                  value={specificPuzzlesInputs[cat.id] ?? (userContentAccess.puzzleAccess?.[cat.id]?.specificPuzzles || []).join(', ')}
+                                  onChange={(e) => {
+                                    setSpecificPuzzlesInputs(prev => ({ ...prev, [cat.id]: e.target.value }));
+                                  }}
+                                  onBlur={(e) => {
+                                    const nums = e.target.value
+                                      .split(',')
+                                      .map(s => parseInt(s.trim()))
+                                      .filter(n => !isNaN(n) && n > 0);
+                                    updatePuzzleAccess(cat.id, 'specificPuzzles', nums);
+                                    setSpecificPuzzlesInputs(prev => ({ ...prev, [cat.id]: nums.join(', ') }));
+                                  }}
+                                  className="h-8 flex-1"
+                                  disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled}
+                                />
+                              </div>
+                              {userContentAccess.puzzleAccess?.[cat.id]?.enabled && (
+                                <p className="text-xs text-amber-600">
+                                  Range + Specific #s are combined (union)
+                                </p>
+                              )}
                             </div>
                             <div className="text-xs mt-2">
-                              {userContentAccess.puzzleAccess?.[cat.id]?.enabled 
-                                ? userContentAccess.puzzleAccess?.[cat.id]?.rangeStart && userContentAccess.puzzleAccess?.[cat.id]?.rangeEnd
-                                  ? (
-                                    <>
-                                      <p className="text-muted-foreground mb-1">
-                                        ✓ Puzzles {userContentAccess.puzzleAccess?.[cat.id]?.rangeStart}-{userContentAccess.puzzleAccess?.[cat.id]?.rangeEnd} unlocked
-                                      </p>
-                                      {incompletePuzzles.length > 0 && (
-                                        <div className="mt-2 p-2 bg-red-50 border border-red-300 rounded">
-                                          <p className="font-semibold text-red-700 mb-1">Not Completed:</p>
-                                          <ul className="space-y-0.5">
-                                            {incompletePuzzles.map((puzzle) => (
-                                              <li key={puzzle.number} className="text-red-600">
-                                                Puzzle #{puzzle.number} ({puzzle.name})
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      )}
-                                    </>
-                                  )
-                                  : userContentAccess.puzzleAccess?.[cat.id]?.limit === 0 
-                                    ? <p className="text-muted-foreground">✓ All puzzles unlocked</p>
-                                    : <p className="text-muted-foreground">✓ First {userContentAccess.puzzleAccess?.[cat.id]?.limit} puzzles unlocked</p>
+              {userContentAccess.puzzleAccess?.[cat.id]?.enabled 
+                                ? (() => {
+                                    const acc = userContentAccess.puzzleAccess?.[cat.id];
+                                    const accHasRange = acc?.rangeStart && acc?.rangeEnd && acc.rangeEnd >= acc.rangeStart;
+                                    const accHasSpecific = acc?.specificPuzzles && acc.specificPuzzles.length > 0;
+                                    if (accHasRange || accHasSpecific) {
+                                      const numSet = new Set<number>();
+                                      if (accHasRange) {
+                                        for (let i = acc!.rangeStart!; i <= acc!.rangeEnd!; i++) numSet.add(i);
+                                      }
+                                      if (accHasSpecific) {
+                                        for (const n of acc!.specificPuzzles!) numSet.add(n);
+                                      }
+                                      const combined = Array.from(numSet).sort((a, b) => a - b);
+                                      return (
+                                        <>
+                                          <p className="text-muted-foreground mb-1">
+                                            ✓ Puzzles #{combined.join(', #')} unlocked
+                                          </p>
+                                          {incompletePuzzles.length > 0 && (
+                                            <div className="mt-2 p-2 bg-red-50 border border-red-300 rounded">
+                                              <p className="font-semibold text-red-700 mb-1">Not Completed:</p>
+                                              <ul className="space-y-0.5">
+                                                {incompletePuzzles.map((puzzle) => (
+                                                  <li key={puzzle.number} className="text-red-600">
+                                                    Puzzle #{puzzle.number} ({puzzle.name})
+                                                  </li>
+                                                ))}
+                                              </ul>
+                                            </div>
+                                          )}
+                                        </>
+                                      );
+                                    }
+                                    return acc?.limit === 0
+                                      ? <p className="text-muted-foreground">✓ All puzzles unlocked</p>
+                                      : <p className="text-muted-foreground">✓ First {acc?.limit} puzzles unlocked</p>;
+                                  })()
                                 : <p className="text-muted-foreground">🔒 Category locked</p>}
                             </div>
                           </div>
