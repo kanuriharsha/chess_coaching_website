@@ -119,6 +119,10 @@ const puzzleSchema = new mongoose.Schema({
   preloadedMove: { type: String }, // Optional move to execute automatically before student plays
   successMessage: { type: String, default: 'Checkmate! Brilliant move!' }, // Custom success message when puzzle is solved
   order: { type: Number, default: 0 }, // Order for manual arrangement
+  // Branching move tree – flat list of nodes with parent references
+  // Each node: { id: string, move: string (SAN), parentId: string|null }
+  // parentId === null means root-level (first moves of any variation line)
+  moveTree: { type: mongoose.Schema.Types.Mixed, default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });

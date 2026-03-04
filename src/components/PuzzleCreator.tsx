@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import VisualBoardEditor from './VisualBoardEditor';
+import VisualBoardEditor, { MoveNode } from './VisualBoardEditor';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -26,6 +26,7 @@ interface PuzzleData {
   isEnabled: boolean;
   preloadedMove?: string; // Optional move to execute automatically before student plays
   successMessage?: string; // Custom success message when puzzle is solved (default: "Checkmate! Brilliant move!")
+  moveTree?: MoveNode[]; // Branching move tree (flat node list with parentId refs)
 }
 
 const PUZZLE_CATEGORIES = [
@@ -63,6 +64,7 @@ interface VariationData {
   fen: string;
   solution: string[];
   preloadedMove: string;
+  moveTree?: MoveNode[];
   name: string;
   hint: string;
   successMessage: string;
@@ -228,6 +230,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
     setNewPuzzle({ ...p });
     setVariations([]);
     setShowPuzzleList(false);
+    // moveTree is part of p and will be passed to VisualBoardEditor via initialMoveTree
   };
 
   // Auto-fill puzzle title and success message when a category is selected (new puzzles only)
@@ -985,9 +988,10 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                 initialFen={newPuzzle.fen}
                 initialSolution={newPuzzle.solution}
                 initialPreloadedMove={newPuzzle.preloadedMove}
+                initialMoveTree={newPuzzle.moveTree}
                 initialMode={newPuzzle.solution && newPuzzle.solution.length > 0 ? 'solution' : 'setup'}
-                onPositionSave={(fen, solution, preloadedMove) => {
-                  setNewPuzzle({ ...newPuzzle, fen, solution, preloadedMove: preloadedMove || '' });
+                onPositionSave={(fen, solution, preloadedMove, moveTree) => {
+                  setNewPuzzle({ ...newPuzzle, fen, solution, preloadedMove: preloadedMove || '', moveTree: moveTree || [] });
                   syncVariationFens(fen);
                 }}
               />
@@ -1196,9 +1200,11 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                   initialSolution={variation.solution}
                   initialPreloadedMove={variation.preloadedMove}
                   initialMode="solution"
-                  onPositionSave={(fen, solution, preloadedMove) => {
+                  initialMoveTree={variation.moveTree}
+                  onPositionSave={(fen, solution, preloadedMove, moveTree) => {
                     handleUpdateVariation(idx, 'solution', solution);
                     handleUpdateVariation(idx, 'preloadedMove', preloadedMove || '');
+                    handleUpdateVariation(idx, 'moveTree', moveTree || []);
                   }}
                 />
                 {variation.solution.length > 0 && (

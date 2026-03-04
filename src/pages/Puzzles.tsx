@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { useChessSound } from '@/hooks/useChessSound';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
+import type { MoveNode } from '@/components/VisualBoardEditor';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -41,10 +42,11 @@ interface PuzzleData {
   difficulty: string;
   icon: string;
   isEnabled: boolean;
-  isLocked?: boolean; // For user access control
-  originalIndex?: number; // Original 1-based index in the category (for tracking)
-  preloadedMove?: string; // Optional move to execute automatically before student plays
-  successMessage?: string; // Custom success message when puzzle is solved (default: "Checkmate! Brilliant move!")
+  isLocked?: boolean;
+  originalIndex?: number;
+  preloadedMove?: string;
+  successMessage?: string;
+  moveTree?: MoveNode[]; // Branching move tree (flat nodes with parentId refs)
 }
 
 interface ContentAccess {
@@ -95,7 +97,8 @@ const Puzzles = () => {
   const [showHint, setShowHint] = useState(false);
   const [contentAccess, setContentAccess] = useState<ContentAccess | null>(null);
   const { playSound } = useChessSound();
-  const [currentMoveIndex, setCurrentMoveIndex] = useState(0); // Track which move in the solution we're on
+  const [currentMoveIndex, setCurrentMoveIndex] = useState(0); // Track which move in the solution we're on (legacy flat-array fallback)
+  const [currentNodeId, setCurrentNodeId] = useState<string | null>(null); // Tree-based: ID of the last correctly-played node
   const [preloadedMoveExecuted, setPreloadedMoveExecuted] = useState(false); // Track if preloaded move has been executed
   const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white'); // Fixed orientation per puzzle
 
@@ -329,6 +332,7 @@ const Puzzles = () => {
       setLastMove(null);
       setShowHint(false);
       setCurrentMoveIndex(0); // Critical: Reset move index for new puzzle
+      setCurrentNodeId(null); // Reset tree traversal pointer
       setPreloadedMoveExecuted(false); // Reset preloaded move flag
       
       // Set board orientation based on initial position - this stays fixed for entire puzzle
@@ -526,13 +530,31 @@ const Puzzles = () => {
     );
   };
 
+  // ── Tree traversal helpers ────────────────────────────────────────────────
+  /** Get direct children of nodeId in tree */
+  const treeChildren = (tree: MoveNode[], nodeId: string | null) =>
+    tree.filter(n => n.parentId === nodeId);
+
+  /** Check whether a played move matches a tree node (SAN or from+to) */
+  const nodeMatchesMove = (
+    nodeMove: string,
+    move: { san: string; from: string; to: string }
+  ): boolean => {
+    const alts = nodeMove.split(',').map(s => s.trim().toLowerCase());
+    const sanLower = move.san.toLowerCase();
+    const fromTo = (move.from + move.to).toLowerCase();
+    return alts.some(alt => sanLower === alt || fromTo === alt || move.to.toLowerCase() === alt);
+  };
+
+  /**
+   * Puzzle Move Handler - supports both tree-based and legacy flat-array solutions.
+   */
   const handleMove = useCallback(
     (from: Square, to: Square): boolean => {
       if (solved || !currentPuzzle) return false;
 
       const gameCopy = new Chess(game.fen());
       
-      // If move requires promotion, ask user to choose piece
       const moveVerbose = gameCopy.moves({ square: from, verbose: true }).find(m => m.to === to);
       if (moveVerbose && moveVerbose.promotion) {
         setPendingPromotion({ from, to, gameCopy });
@@ -540,120 +562,120 @@ const Puzzles = () => {
         return false;
       }
 
-      // Try to make the move
       const move = gameCopy.move({ from, to });
-      if (!move) return false; // Invalid move
+      if (!move) return false;
 
-      // ALWAYS PLAY THE MOVE FIRST - Update the board visually
       setGame(gameCopy);
       setLastMove({ from, to });
 
-      // Increment attempts counter
       const newAttempts = attempts + 1;
       setAttempts(newAttempts);
 
-      // Get category id for tracking (use ID not display name for backend matching)
       const categoryId = selectedCategory || '';
-
-      // Check if this move matches the expected move in the solution
-      const expectedMove = currentPuzzle.solution[currentMoveIndex];
-      const isLastStep = currentMoveIndex + 1 >= currentPuzzle.solution.length;
       const isMateCategory = (currentPuzzle.category || '').startsWith('mate-in-');
-      const moveMatches = isMoveCorrect(expectedMove, move, gameCopy, isLastStep, isMateCategory);
+      const isLastFlatStep = currentMoveIndex + 1 >= currentPuzzle.solution.length;
 
-      if (!moveMatches) {
-        // Wrong move - show error and undo only this move
-        playSound('illegal');
-        toast.error('Wrong move, try again', {
-          description: 'Think carefully about the correct move.',
-        });
-        
-        // Track failed attempt - use originalIndex for correct puzzle number
-        trackPuzzleAttempt(
-          currentPuzzle._id,
-          currentPuzzle.name,
-          categoryId,
-          'failed',
-          newAttempts,
-          currentPuzzle.originalIndex || currentPuzzleIndex + 1
-        );
-        
-        // Undo only this wrong move after a brief delay to show it
-        setTimeout(() => {
-          setGame(new Chess(game.fen())); // Revert to previous position
-          setLastMove(null);
-        }, 300);
-        
-        return true; // Move was played, then undone
+      // ── TREE-BASED SOLVING ────────────────────────────────────────────────
+      if (currentPuzzle.moveTree && currentPuzzle.moveTree.length > 0) {
+        const tree = currentPuzzle.moveTree;
+        const validPlayerMoves = treeChildren(tree, currentNodeId);
+        const matchedNode = validPlayerMoves.find(n => nodeMatchesMove(n.move, move));
+
+        if (!matchedNode) {
+          // Wrong move
+          playSound('illegal');
+          toast.error('Wrong move, try again', { description: 'Think carefully about the correct move.' });
+          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+          setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
+          return true;
+        }
+
+        // Correct move — advance tree pointer
+        setCurrentNodeId(matchedNode.id);
+        const opponentCandidates = treeChildren(tree, matchedNode.id);
+
+        if (opponentCandidates.length === 0) {
+          // No opponent reply → puzzle solved!
+          setSolved(true);
+          playSound('checkmate');
+          toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
+          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        } else {
+          // Auto-play opponent's reply (first child of matched node)
+          playSound('move');
+          const opponentNode = opponentCandidates[0];
+          setTimeout(() => {
+            const updatedGame = new Chess(gameCopy.fen());
+            try {
+              const oppMove = updatedGame.move(opponentNode.move.split(',')[0].trim());
+              if (oppMove) {
+                setGame(updatedGame);
+                setLastMove({ from: oppMove.from as Square, to: oppMove.to as Square });
+                setCurrentNodeId(opponentNode.id);
+                playSound('move');
+                // Check if puzzle ends after opponent's reply
+                const afterOpponent = treeChildren(tree, opponentNode.id);
+                if (afterOpponent.length === 0) {
+                  setSolved(true);
+                  playSound('checkmate');
+                  toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
+                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+                }
+              }
+            } catch (err) { console.error('Error playing opponent move:', err); }
+          }, 500);
+        }
+        return true;
       }
 
-      // Correct move!
+      // ── LEGACY FLAT-ARRAY SOLVING (backward compat) ───────────────────────
+      const expectedMove = currentPuzzle.solution[currentMoveIndex];
+      const moveMatches = isMoveCorrect(expectedMove, move, gameCopy, isLastFlatStep, isMateCategory);
+
+      if (!moveMatches) {
+        playSound('illegal');
+        toast.error('Wrong move, try again', { description: 'Think carefully about the correct move.' });
+        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
+        return true;
+      }
+
       setCurrentMoveIndex(currentMoveIndex + 1);
 
-      // Check if puzzle is completely solved
       if (currentMoveIndex + 1 >= currentPuzzle.solution.length) {
-        // Puzzle solved!
         setSolved(true);
         playSound('checkmate');
-        toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', {
-          description: 'You solved the puzzle!',
-        });
-        
-        trackPuzzleAttempt(
-          currentPuzzle._id,
-          currentPuzzle.name,
-          categoryId,
-          'passed',
-          newAttempts,
-          currentPuzzle.originalIndex || currentPuzzleIndex + 1
-        );
+        toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
+        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
       } else {
-        // There are more moves - automatically play the opponent's next move
         playSound('move');
-        
         setTimeout(() => {
           const nextMoveRaw = currentPuzzle.solution[currentMoveIndex + 1];
-          // Use only the first alternative for opponent's auto-play
           const nextMove = nextMoveRaw ? nextMoveRaw.split(',')[0].trim() : null;
           if (nextMove) {
             const updatedGame = new Chess(gameCopy.fen());
             try {
-              // Try to play the opponent's move
               const opponentMove = updatedGame.move(nextMove);
               if (opponentMove) {
                 setGame(updatedGame);
                 setLastMove({ from: opponentMove.from as Square, to: opponentMove.to as Square });
-                setCurrentMoveIndex(currentMoveIndex + 2); // Move past both user and opponent move
+                setCurrentMoveIndex(currentMoveIndex + 2);
                 playSound('move');
-                
-                // Check if that was the last move (puzzle solved after opponent's reply)
                 if (currentMoveIndex + 2 >= currentPuzzle.solution.length) {
                   setSolved(true);
                   playSound('checkmate');
-                  toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', {
-                    description: 'You solved the puzzle!',
-                  });
-                  
-                  trackPuzzleAttempt(
-                    currentPuzzle._id,
-                    currentPuzzle.name,
-                    categoryId,
-                    'passed',
-                    newAttempts,
-                    currentPuzzle.originalIndex || currentPuzzleIndex + 1
-                  );
+                  toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
+                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }
-            } catch (err) {
-              console.error('Error playing opponent move:', err);
-            }
+            } catch (err) { console.error('Error playing opponent move:', err); }
           }
-        }, 500); // Small delay to show the user's move first
+        }, 500);
       }
 
       return true;
     },
-    [game, solved, playSound, currentPuzzle, attempts, selectedCategory, puzzleCategories, trackPuzzleAttempt, currentMoveIndex]
+    [game, solved, playSound, currentPuzzle, attempts, selectedCategory, puzzleCategories, trackPuzzleAttempt, currentMoveIndex, currentNodeId]
   );
 
   // Promotion modal state for puzzles
@@ -673,7 +695,6 @@ const Puzzles = () => {
         return;
       }
 
-      // ALWAYS PLAY THE MOVE FIRST - Update the board visually
       setGame(gameCopy);
       setLastMove({ from, to });
       setPendingPromotion(null);
@@ -681,46 +702,79 @@ const Puzzles = () => {
 
       const newAttempts = attempts + 1;
       setAttempts(newAttempts);
-
       const categoryId = selectedCategory || '';
-
-      // Check if this move matches the expected move in the solution
-      const expectedMove = currentPuzzle.solution[currentMoveIndex];
-      const isLastStep = currentMoveIndex + 1 >= currentPuzzle.solution.length;
       const isMateCategory = (currentPuzzle.category || '').startsWith('mate-in-');
-      const moveMatches = isMoveCorrect(expectedMove, mv, gameCopy, isLastStep, isMateCategory);
 
-      if (!moveMatches) {
-        // Wrong move - show error and undo only this move
-        playSound('illegal');
-        toast.error('Wrong move, try again');
-        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
-        
-        // Undo only this wrong move after a brief delay to show it
-        setTimeout(() => {
-          setGame(new Chess(game.fen())); // Revert to previous position
-          setLastMove(null);
-        }, 300);
-        
+      // ── TREE-BASED SOLVING ────────────────────────────────────────────────
+      if (currentPuzzle.moveTree && currentPuzzle.moveTree.length > 0) {
+        const tree = currentPuzzle.moveTree;
+        const validPlayerMoves = treeChildren(tree, currentNodeId);
+        const matchedNode = validPlayerMoves.find(n => nodeMatchesMove(n.move, mv));
+
+        if (!matchedNode) {
+          playSound('illegal');
+          toast.error('Wrong move, try again');
+          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+          setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
+          return;
+        }
+
+        setCurrentNodeId(matchedNode.id);
+        const opponentCandidates = treeChildren(tree, matchedNode.id);
+
+        if (opponentCandidates.length === 0) {
+          setSolved(true);
+          playSound('checkmate');
+          toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
+          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        } else {
+          playSound('move');
+          const opponentNode = opponentCandidates[0];
+          setTimeout(() => {
+            const updatedGame = new Chess(gameCopy.fen());
+            try {
+              const oppMove = updatedGame.move(opponentNode.move.split(',')[0].trim());
+              if (oppMove) {
+                setGame(updatedGame);
+                setLastMove({ from: oppMove.from as Square, to: oppMove.to as Square });
+                setCurrentNodeId(opponentNode.id);
+                playSound('move');
+                if (treeChildren(tree, opponentNode.id).length === 0) {
+                  setSolved(true);
+                  playSound('checkmate');
+                  toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
+                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+                }
+              }
+            } catch (err) { console.error('Error playing opponent move:', err); }
+          }, 500);
+        }
         return;
       }
 
-      // Correct move!
-      setCurrentMoveIndex(currentMoveIndex + 1);
+      // ── LEGACY FLAT-ARRAY SOLVING (backward compat) ───────────────────────
+      const isLastStep = currentMoveIndex + 1 >= currentPuzzle.solution.length;
+      const expectedMove = currentPuzzle.solution[currentMoveIndex];
+      const moveMatches = isMoveCorrect(expectedMove, mv, gameCopy, isLastStep, isMateCategory);
 
-      // Check if puzzle is solved
+      if (!moveMatches) {
+        playSound('illegal');
+        toast.error('Wrong move, try again');
+        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
+        return;
+      }
+
+      setCurrentMoveIndex(currentMoveIndex + 1);
       if (currentMoveIndex + 1 >= currentPuzzle.solution.length) {
         setSolved(true);
         playSound('checkmate');
         toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
         trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
       } else {
-        // Auto-play opponent's next move
         playSound('move');
-        
         setTimeout(() => {
           const nextMoveRaw = currentPuzzle.solution[currentMoveIndex + 1];
-          // Use only the first alternative for opponent's auto-play
           const nextMove = nextMoveRaw ? nextMoveRaw.split(',')[0].trim() : null;
           if (nextMove) {
             const updatedGame = new Chess(gameCopy.fen());
@@ -731,7 +785,6 @@ const Puzzles = () => {
                 setLastMove({ from: opponentMove.from as Square, to: opponentMove.to as Square });
                 setCurrentMoveIndex(currentMoveIndex + 2);
                 playSound('move');
-                
                 if (currentMoveIndex + 2 >= currentPuzzle.solution.length) {
                   setSolved(true);
                   playSound('checkmate');
@@ -739,9 +792,7 @@ const Puzzles = () => {
                   trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }
-            } catch (err) {
-              console.error('Error playing opponent move:', err);
-            }
+            } catch (err) { console.error('Error playing opponent move:', err); }
           }
         }, 500);
       }
@@ -762,6 +813,7 @@ const Puzzles = () => {
     setLastMove(null);
     setShowHint(false);
     setCurrentMoveIndex(0); // Reset move index
+    setCurrentNodeId(null); // Reset tree traversal pointer
     setPreloadedMoveExecuted(false); // Reset preloaded move flag
     
     // Execute preloaded move again on reattempt

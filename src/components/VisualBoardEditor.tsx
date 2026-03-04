@@ -6,15 +6,191 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';
 import { Label } from './ui/label';
-import { RotateCcw, Trash2, Play, Save, ArrowRight, Upload, Plus, X } from 'lucide-react';
+import { RotateCcw, Trash2, Play, Save, ArrowRight, Upload, Plus, X, GitBranch } from 'lucide-react';
 import { toast } from 'sonner';
 
+// ─── Move Tree Types ──────────────────────────────────────────────────────
+export interface MoveNode {
+  id: string;
+  move: string;          // SAN notation
+  parentId: string | null; // null = root level
+}
+
+const genId = () => Math.random().toString(36).substr(2, 9);
+
+/** Replay moves from root to nodeId and return the resulting FEN */
+function computeFenAtNode(
+  tree: MoveNode[],
+  nodeId: string | null,
+  startFen: string
+): string {
+  if (!nodeId) return startFen;
+  const path: string[] = [];
+  let cur: string | null = nodeId;
+  while (cur !== null) {
+    path.unshift(cur);
+    const n = tree.find(x => x.id === cur);
+    cur = n?.parentId ?? null;
+  }
+  const game = new Chess(startFen);
+  for (const id of path) {
+    const n = tree.find(x => x.id === id);
+    if (n) { try { game.move(n.move); } catch { break; } }
+  }
+  return game.fen();
+}
+
+/** Return main-line moves (follow the first child at each level) */
+function getMainLine(tree: MoveNode[]): string[] {
+  const moves: string[] = [];
+  let cur: string | null = null;
+  while (true) {
+    const children = tree.filter(n => n.parentId === cur);
+    if (children.length === 0) break;
+    moves.push(children[0].move);
+    cur = children[0].id;
+  }
+  return moves;
+}
+
+/** Convert a flat solution array to a linear tree chain */
+function flatToTree(solution: string[]): MoveNode[] {
+  const nodes: MoveNode[] = [];
+  let parentId: string | null = null;
+  for (const move of solution) {
+    const id = genId();
+    nodes.push({ id, move, parentId });
+    parentId = id;
+  }
+  return nodes;
+}
+
+// ─── Column-based tree display ───────────────────────────────────────────────
+
+/** Get the depth of a node from the root (root children = depth 0) */
+function getNodeDepth(tree: MoveNode[], nodeId: string): number {
+  let depth = 0;
+  let cur: string | null = nodeId;
+  while (cur !== null) {
+    const n = tree.find(x => x.id === cur);
+    cur = n?.parentId ?? null;
+    if (cur !== null) depth++;
+  }
+  return depth;
+}
+
+/**
+ * Build a list of columns for display.
+ * Column 0 = main line (always first child), Column N = Nth variation.
+ * Each column is an ordered array of MoveNodes.
+ */
+function buildColumns(tree: MoveNode[]): MoveNode[][] {
+  if (tree.length === 0) return [];
+  const columns: MoveNode[][] = [];
+
+  function dfs(parentId: string | null, col: MoveNode[]) {
+    const children = tree.filter(n => n.parentId === parentId);
+    if (children.length === 0) {
+      if (col.length > 0) columns.push(col);
+      return;
+    }
+    // first child continues the current column
+    dfs(children[0].id, [...col, children[0]]);
+    // extra children each start a brand-new column
+    for (let i = 1; i < children.length; i++) {
+      dfs(children[i].id, [children[i]]);
+    }
+  }
+
+  dfs(null, []);
+  return columns;
+}
+
+interface ColumnTreeDisplayProps {
+  tree: MoveNode[];
+  currentParentId: string | null;
+  /** isSolverMove(depth) – true when the solver (not the opponent) moves */
+  isSolverMove: (depth: number) => boolean;
+  onBranch: (nodeId: string) => void;
+  onDelete: (nodeId: string) => void;
+  onNavigate: (nodeId: string) => void;
+}
+
+const ColumnTreeDisplay: React.FC<ColumnTreeDisplayProps> = ({
+  tree, currentParentId, isSolverMove, onBranch, onDelete, onNavigate,
+}) => {
+  const columns = buildColumns(tree);
+  if (columns.length === 0) return null;
+
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-1">
+      {columns.map((col, colIdx) => (
+        <div key={colIdx} className="flex-shrink-0 min-w-[90px]">
+          {/* Column header */}
+          <div className="text-[10px] font-bold mb-1 px-1 text-gray-400 uppercase tracking-wide">
+            {colIdx === 0 ? 'Main' : `Var ${colIdx}`}
+          </div>
+          {col.map((node) => {
+            const depth = getNodeDepth(tree, node.id);
+            const isCurrentEnd = currentParentId === node.id;
+            const solverTurn = isSolverMove(depth);
+            const moveNum = Math.floor(depth / 2) + 1;
+            const isBlackMove = depth % 2 === 1;
+            return (
+              <div
+                key={node.id}
+                onClick={() => onNavigate(node.id)}
+                className={`flex items-center gap-1 py-0.5 px-1 rounded text-sm group cursor-pointer ${
+                  isCurrentEnd ? 'bg-green-100 ring-1 ring-green-400' : 'hover:bg-gray-100'
+                }`}
+              >
+                <span className="text-gray-400 text-xs font-medium w-6 flex-shrink-0">
+                  {isBlackMove ? '…' : `${moveNum}.`}
+                </span>
+                <span className={`font-semibold flex-1 truncate ${
+                  isCurrentEnd ? 'text-green-700' : 'text-gray-800'
+                }`}>
+                  {node.move}
+                </span>
+                {/* + only on solver's moves */}
+                {solverTurn && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onBranch(node.id); }}
+                    className="opacity-0 group-hover:opacity-100 text-blue-500 hover:text-blue-700 transition-all flex-shrink-0"
+                    title={`Add alternative to ${node.move}`}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDelete(node.id); }}
+                  className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all flex-shrink-0"
+                  title={`Delete ${node.move}`}
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ─── Props ────────────────────────────────────────────────────────────────
 interface VisualBoardEditorProps {
-  onPositionSave: (fen: string, solution: string[], preloadedMove?: string) => void;
+  onPositionSave: (
+    fen: string,
+    solution: string[],
+    preloadedMove?: string,
+    moveTree?: MoveNode[]
+  ) => void;
   initialFen?: string;
   initialSolution?: string[];
   initialMode?: 'setup' | 'solution';
   initialPreloadedMove?: string;
+  initialMoveTree?: MoveNode[];
 }
 
 type PieceType = 'K' | 'Q' | 'R' | 'B' | 'N' | 'P' | 'k' | 'q' | 'r' | 'b' | 'n' | 'p';
@@ -47,105 +223,135 @@ const DARK_SQUARE = '#779556';
 const SELECTED_LIGHT = '#f7f769';
 const SELECTED_DARK = '#bbcc44';
 
-const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, initialFen, initialSolution, initialMode, initialPreloadedMove }) => {
-  // Board state: 8x8 array of pieces (null = empty)
-  const [board, setBoard] = useState<(PieceType | null)[][]>(() => {
-    const emptyBoard: (PieceType | null)[][] = Array(8).fill(null).map(() => Array(8).fill(null));
-    return emptyBoard;
-  });
-  
+const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
+  onPositionSave,
+  initialFen,
+  initialSolution,
+  initialMode,
+  initialPreloadedMove,
+  initialMoveTree,
+}) => {
+  // Board state
+  const [board, setBoard] = useState<(PieceType | null)[][]>(() =>
+    Array(8).fill(null).map(() => Array(8).fill(null))
+  );
+
   const [selectedPiece, setSelectedPiece] = useState<PieceType | null>(null);
   const [isEraseMode, setIsEraseMode] = useState(false);
   const [turn, setTurn] = useState<'w' | 'b'>('w');
-  // Castling rights and en passant target for FEN
   const [castleWhiteK, setCastleWhiteK] = useState(false);
   const [castleWhiteQ, setCastleWhiteQ] = useState(false);
   const [castleBlackK, setCastleBlackK] = useState(false);
   const [castleBlackQ, setCastleBlackQ] = useState(false);
   const [enPassantTarget, setEnPassantTarget] = useState<string>('-');
-  
+
   // Solution recording state
   const [mode, setMode] = useState<'setup' | 'preloadedMove' | 'solution'>('setup');
   const [setupFen, setSetupFen] = useState<string>('');
   const [solutionGame, setSolutionGame] = useState<Chess | null>(null);
-  const [solutionMoves, setSolutionMoves] = useState<string[]>([]);
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [possibleTargets, setPossibleTargets] = useState<string[]>([]);
   const [showPromotionDialog, setShowPromotionDialog] = useState(false);
   const [pendingPromotion, setPendingPromotion] = useState<null | { from: string; to: string; gameCopy: Chess }>(null);
-  
+
+  // Move tree state
+  const [moveTree, setMoveTree] = useState<MoveNode[]>([]);
+  // currentParentId: the node ID the NEXT recorded move will be a child of (null = root)
+  const [currentParentId, setCurrentParentId] = useState<string | null>(null);
+  // branchingFromNodeId: the node we're creating an alternative TO (set when admin clicks "+")
+  const [branchingFromNodeId, setBranchingFromNodeId] = useState<string | null>(null);
+
   // FEN input state
   const [fenInput, setFenInput] = useState('');
-
-  // Alternative move recording state
-  const [addingAlternativeForIndex, setAddingAlternativeForIndex] = useState<number | null>(null);
-  const [savedGameFen, setSavedGameFen] = useState<string | null>(null);
 
   // Preloaded move state
   const [enablePreloadedMove, setEnablePreloadedMove] = useState(false);
   const [preloadedMove, setPreloadedMove] = useState<string>('');
-  const [preloadedMoveFen, setPreloadedMoveFen] = useState<string>(''); // FEN after preloaded move
+  const [preloadedMoveFen, setPreloadedMoveFen] = useState<string>('');
 
   // Load initial FEN and solution if provided (for editing existing puzzles)
   React.useEffect(() => {
-    if (initialFen) {
-      try {
-        const startGame = new Chess(initialFen);
-        // populate board array from FEN
-        const newBoard: (PieceType | null)[][] = Array(8).fill(null).map(() => Array(8).fill(null));
-        for (let rank = 0; rank < 8; rank++) {
-          for (let file = 0; file < 8; file++) {
-            const square = `${FILES[file]}${RANKS[rank]}` as Square;
-            const piece = startGame.get(square);
-            if (piece) {
-              const pchar = piece.color === 'w' ? piece.type.toUpperCase() : piece.type.toLowerCase();
-              newBoard[rank][file] = pchar as PieceType;
-            }
+    if (!initialFen) return;
+    try {
+      const startGame = new Chess(initialFen);
+      const newBoard: (PieceType | null)[][] = Array(8).fill(null).map(() => Array(8).fill(null));
+      for (let rank = 0; rank < 8; rank++) {
+        for (let file = 0; file < 8; file++) {
+          const square = `${FILES[file]}${RANKS[rank]}` as Square;
+          const piece = startGame.get(square);
+          if (piece) {
+            const pchar = piece.color === 'w' ? piece.type.toUpperCase() : piece.type.toLowerCase();
+            newBoard[rank][file] = pchar as PieceType;
           }
         }
-        setBoard(newBoard);
-        setTurn(startGame.turn());
-
-        // castling rights from FEN
-        const fenParts = initialFen.split(' ');
-        const castling = fenParts[2] || '-';
-        setCastleWhiteK(castling.includes('K'));
-        setCastleWhiteQ(castling.includes('Q'));
-        setCastleBlackK(castling.includes('k'));
-        setCastleBlackQ(castling.includes('q'));
-
-        const ep = fenParts[3] || '-';
-        setEnPassantTarget(ep);
-
-        setSetupFen(initialFen);
-
-        // Check if initial preloaded move is provided
-        if (initialPreloadedMove && initialPreloadedMove.trim()) {
-          setEnablePreloadedMove(true);
-          setPreloadedMove(initialPreloadedMove);
-        }
-
-        // If an initial solution is provided, apply it
-        if (initialSolution && initialSolution.length > 0) {
-          const g = new Chess(initialFen);
-          const moves: string[] = [];
-          for (const san of initialSolution) {
-            try {
-              const mv = g.move(san);
-              if (mv) moves.push(mv.san);
-            } catch (e) {
-              // ignore invalid SAN while loading
-            }
-          }
-          setSolutionMoves(moves);
-          setSolutionGame(new Chess(g.fen()));
-          if (initialMode === 'solution' || moves.length > 0) setMode('solution');
-        }
-      } catch (e) {
-        // ignore invalid fen
       }
+      setBoard(newBoard);
+      setTurn(startGame.turn());
+
+      const fenParts = initialFen.split(' ');
+      const castling = fenParts[2] || '-';
+      setCastleWhiteK(castling.includes('K'));
+      setCastleWhiteQ(castling.includes('Q'));
+      setCastleBlackK(castling.includes('k'));
+      setCastleBlackQ(castling.includes('q'));
+      setEnPassantTarget(fenParts[3] || '-');
+      setSetupFen(initialFen);
+
+      // Compute the correct base FEN for solution playback.
+      // If there's a preloaded move, the solution tree was recorded from AFTER it,
+      // so we need to flip the turn and apply the preloaded move to get that base FEN.
+      let baseFen = initialFen;
+      if (initialPreloadedMove?.trim()) {
+        setEnablePreloadedMove(true);
+        setPreloadedMove(initialPreloadedMove);
+        try {
+          const parts = initialFen.split(' ');
+          // The preloaded move is the opponent's move, so flip the turn before applying
+          parts[1] = parts[1] === 'w' ? 'b' : 'w';
+          const flipped = new Chess(parts.join(' '));
+          flipped.move(initialPreloadedMove);
+          baseFen = flipped.fen();
+          setPreloadedMoveFen(baseFen);
+        } catch {
+          // fall back to initialFen if the move can't be applied
+          baseFen = initialFen;
+        }
+      }
+
+      // Build the initial tree
+      let tree: MoveNode[] = [];
+      if (initialMoveTree && initialMoveTree.length > 0) {
+        tree = initialMoveTree;
+      } else if (initialSolution && initialSolution.length > 0) {
+        tree = flatToTree(initialSolution);
+      }
+
+      if (tree.length > 0) {
+        setMoveTree(tree);
+        // Set currentParentId to the last node of the main line
+        const mainLine = getMainLine(tree);
+        let lastId: string | null = null;
+        let curSearch: string | null = null;
+        for (const mv of mainLine) {
+          const child = tree.filter(n => n.parentId === curSearch).find(n => n.move === mv);
+          if (child) { lastId = child.id; curSearch = child.id; } else break;
+        }
+        setCurrentParentId(lastId);
+
+        // Replay solution moves from baseFen (position after preloaded move, if any)
+        const g = new Chess(baseFen);
+        for (const mv of mainLine) { try { g.move(mv); } catch { break; } }
+        setSolutionGame(new Chess(g.fen()));
+        if (initialMode === 'solution' || mainLine.length > 0) setMode('solution');
+      } else if (initialPreloadedMove?.trim() && baseFen !== initialFen) {
+        // Has a preloaded move but no solution moves yet — show position after preloaded move
+        setSolutionGame(new Chess(baseFen));
+        setMode('solution');
+      }
+    } catch (e) {
+      // ignore invalid FEN
     }
-  }, [initialFen, initialSolution, initialMode, initialPreloadedMove]);
+  }, [initialFen, initialSolution, initialMode, initialPreloadedMove, initialMoveTree]);
 
   // Convert board array to FEN
   const boardToFen = useCallback((): string => {
@@ -184,6 +390,88 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
     fen += ` ${turn} ${castling} ${ep} 0 1`;
     return fen;
   }, [board, turn, castleWhiteK, castleWhiteQ, castleBlackK, castleBlackQ, enPassantTarget]);
+
+  // ── Record a move to the tree ─────────────────────────────────────────────
+  const recordMoveToTree = useCallback((san: string, gameAfterMove: Chess) => {
+    const newId = genId();
+    setMoveTree(prev => [...prev, { id: newId, move: san, parentId: currentParentId }]);
+    setCurrentParentId(newId);
+    setSolutionGame(new Chess(gameAfterMove.fen()));
+    toast.success(`Move recorded: ${san}`);
+    if (gameAfterMove.isCheckmate()) toast.success('Checkmate! Great puzzle!');
+  }, [currentParentId]);
+
+  // ── Branch from a node (adds alternative TO that move, not after it) ────────
+  const branchFromNode = useCallback((nodeId: string) => {
+    const node = moveTree.find(n => n.id === nodeId);
+    if (!node) return;
+    const parentId = node.parentId; // go back to BEFORE this move
+    const baseFen = preloadedMoveFen || setupFen;
+    if (!baseFen) { toast.error('Save the position first'); return; }
+    const fen = computeFenAtNode(moveTree, parentId, baseFen);
+    setSolutionGame(new Chess(fen));
+    setCurrentParentId(parentId);
+    setBranchingFromNodeId(nodeId);
+    setSelectedSquare(null);
+    setPossibleTargets([]);
+    toast.info(`Play an alternative move to "${node.move}".`);
+  }, [moveTree, preloadedMoveFen, setupFen]);
+
+  // ── Navigate to a node (just show position, no variation mode) ───────────────
+  const navigateToNode = useCallback((nodeId: string) => {
+    const baseFen = preloadedMoveFen || setupFen;
+    if (!baseFen) return;
+    const fen = computeFenAtNode(moveTree, nodeId, baseFen);
+    setSolutionGame(new Chess(fen));
+    setCurrentParentId(nodeId);
+    setSelectedSquare(null);
+    setPossibleTargets([]);
+  }, [moveTree, preloadedMoveFen, setupFen]);
+
+  // ── Delete a node and its entire subtree ─────────────────────────────────
+  const deleteNodeSubtree = useCallback((nodeId: string) => {
+    setMoveTree(prev => {
+      const toDelete = new Set<string>();
+      const queue = [nodeId];
+      while (queue.length > 0) {
+        const cur = queue.shift()!;
+        toDelete.add(cur);
+        prev.filter(n => n.parentId === cur).forEach(n => queue.push(n.id));
+      }
+      return prev.filter(n => !toDelete.has(n.id));
+    });
+    // Reset currentParentId if it falls within the deleted subtree
+    setCurrentParentId(prev => {
+      let cur: string | null = prev;
+      while (cur !== null) {
+        if (cur === nodeId) {
+          const node = moveTree.find(n => n.id === nodeId);
+          return node?.parentId ?? null;
+        }
+        const n = moveTree.find(x => x.id === cur);
+        cur = n?.parentId ?? null;
+      }
+      return prev;
+    });
+    if (branchingFromNodeId === nodeId) setBranchingFromNodeId(null);
+    toast.info('Variation deleted');
+  }, [moveTree, branchingFromNodeId]);
+
+  // ── Undo the last recorded move ───────────────────────────────────────────
+  const undoLastMove = () => {
+    if (!currentParentId) return;
+    const lastNode = moveTree.find(n => n.id === currentParentId);
+    if (!lastNode) return;
+    const newTree = moveTree.filter(n => n.id !== lastNode.id);
+    setMoveTree(newTree);
+    const newParentId = lastNode.parentId;
+    setCurrentParentId(newParentId);
+    const baseFen = preloadedMoveFen || setupFen;
+    setSolutionGame(new Chess(computeFenAtNode(newTree, newParentId, baseFen)));
+    setSelectedSquare(null);
+    setPossibleTargets([]);
+    if (branchingFromNodeId === lastNode.id) setBranchingFromNodeId(null);
+  };
 
   // Handle clicking on a square in setup mode
   const handleSquareClick = (rank: number, file: number) => {
@@ -230,7 +518,8 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
               // Automatically advance to solution mode after recording preloaded move
               setTimeout(() => {
                 setMode('solution');
-                setSolutionMoves([]);
+                setMoveTree([]);
+                setCurrentParentId(null);
               }, 600);
             }
           }
@@ -248,11 +537,10 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
         }
       }
     } else if (mode === 'solution' && solutionGame) {
-      // Handle move in solution mode
+      // Handle move in solution mode - tree-based recording
       const square = `${FILES[file]}${RANKS[rank]}` as Square;
       
       if (selectedSquare) {
-        // Try to make move
         try {
           const gameCopy = new Chess(solutionGame.fen());
           const moveVerbose = gameCopy.moves({ square: selectedSquare as Square, verbose: true }).find(m => m.to === square);
@@ -262,29 +550,8 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
           } else {
             const move = gameCopy.move({ from: selectedSquare as Square, to: square });
             if (move) {
-              if (addingAlternativeForIndex !== null) {
-                // Append this move as an alternative for the target step
-                setSolutionMoves(prev => {
-                  const updated = [...prev];
-                  updated[addingAlternativeForIndex] = updated[addingAlternativeForIndex] + ',' + move.san;
-                  return updated;
-                });
-                toast.success(`Alternative move added: ${move.san}`);
-                // Restore the board to where it was before entering alternative mode
-                if (savedGameFen) {
-                  setSolutionGame(new Chess(savedGameFen));
-                }
-                setAddingAlternativeForIndex(null);
-                setSavedGameFen(null);
-              } else {
-                // Normal solution recording
-                setSolutionGame(new Chess(gameCopy.fen()));
-                setSolutionMoves(prev => [...prev, move.san]);
-                toast.success(`Move recorded: ${move.san}`);
-                if (gameCopy.isCheckmate()) {
-                  toast.success('Checkmate! Great puzzle!');
-                }
-              }
+              recordMoveToTree(move.san, gameCopy);
+              setBranchingFromNodeId(null);
             }
           }
         } catch (e) {
@@ -319,26 +586,13 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
           });
           setTimeout(() => {
             setMode('solution');
-            setSolutionMoves([]);
+            setMoveTree([]);
+            setCurrentParentId(null);
           }, 500);
-        } else if (addingAlternativeForIndex !== null) {
-          // Adding alternative via promotion
-          setSolutionMoves(prev => {
-            const updated = [...prev];
-            updated[addingAlternativeForIndex] = updated[addingAlternativeForIndex] + ',' + mv.san;
-            return updated;
-          });
-          toast.success(`Alternative move added: ${mv.san}`);
-          if (savedGameFen) {
-            setSolutionGame(new Chess(savedGameFen));
-          }
-          setAddingAlternativeForIndex(null);
-          setSavedGameFen(null);
         } else {
-          // Recording solution move
-          setSolutionMoves(prev => [...prev, mv.san]);
-          setSolutionGame(new Chess(gameCopy.fen()));
-          toast.success(`Move recorded: ${mv.san}`);
+          // Recording solution move (tree)
+          recordMoveToTree(mv.san, gameCopy);
+          setBranchingFromNodeId(null);
         }
       }
     } catch (err) {
@@ -352,7 +606,9 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
   const clearBoard = () => {
     setBoard(Array(8).fill(null).map(() => Array(8).fill(null)));
     setMode('setup');
-    setSolutionMoves([]);
+    setMoveTree([]);
+    setCurrentParentId(null);
+    setBranchingFromNodeId(null);
     setSolutionGame(null);
     setSetupFen('');
     setSelectedSquare(null);
@@ -408,7 +664,9 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
     setBoard(newBoard);
     // Reset solution state since we're loading a new position
     setMode('setup');
-    setSolutionMoves([]);
+    setMoveTree([]);
+    setCurrentParentId(null);
+    setBranchingFromNodeId(null);
     setSolutionGame(null);
     setSetupFen('');
     setSelectedSquare(null);
@@ -441,16 +699,10 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
       
       if (enablePreloadedMove) {
         // Go to preloaded move mode first
-        // The preloaded move should be made by the OPPOSITE color of who's solving
-        // If puzzle is "White to move", preloaded move is Black's move
-        // So we need to flip the turn temporarily
         const preloadedTurn = turn === 'w' ? 'b' : 'w';
-        
-        // Create FEN with flipped turn for preloaded move
         const fenParts = fen.split(' ');
         fenParts[1] = preloadedTurn;
         const preloadedFen = fenParts.join(' ');
-        
         const preloadedGame = new Chess(preloadedFen);
         setSolutionGame(preloadedGame);
         setMode('preloadedMove');
@@ -459,9 +711,11 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
           description: 'This move will execute automatically for students'
         });
       } else {
-        // Go directly to solution mode (no preloaded move)
+        // Go directly to solution mode
         setSolutionGame(game);
-        setSolutionMoves([]);
+        setMoveTree([]);
+        setCurrentParentId(null);
+        setBranchingFromNodeId(null);
         setMode('solution');
         setSelectedSquare(null);
         setPreloadedMove('');
@@ -470,48 +724,6 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
       }
     } catch (e) {
       toast.error('Invalid position. Make sure both kings are on the board.');
-    }
-  };
-
-  // Enter alternative-move mode: rewind the board to before step i so user can play a different move
-  const enterAlternativeMode = (index: number) => {
-    if (!solutionGame) return;
-    // Save the current game so we can restore after
-    setSavedGameFen(solutionGame.fen());
-    // Reconstruct game up to (but not including) step index
-    const baseFen = preloadedMoveFen || setupFen;
-    const rewoundGame = new Chess(baseFen);
-    // Replay moves 0..index-1 (taking only the first alternative for each step)
-    for (let i = 0; i < index; i++) {
-      const firstAlt = solutionMoves[i].split(',')[0].trim();
-      try { rewoundGame.move(firstAlt); } catch { break; }
-    }
-    setSolutionGame(new Chess(rewoundGame.fen()));
-    setAddingAlternativeForIndex(index);
-    setSelectedSquare(null);
-    setPossibleTargets([]);
-    toast.info(`Make an alternative move for step ${index + 1}`);
-  };
-
-  // Cancel alternative mode and restore the board
-  const cancelAlternativeMode = () => {
-    if (savedGameFen) {
-      setSolutionGame(new Chess(savedGameFen));
-    }
-    setAddingAlternativeForIndex(null);
-    setSavedGameFen(null);
-    setSelectedSquare(null);
-    setPossibleTargets([]);
-  };
-
-  // Undo last solution move
-  const undoSolutionMove = () => {
-    if (solutionGame && solutionMoves.length > 0) {
-      solutionGame.undo();
-      setSolutionGame(new Chess(solutionGame.fen()));
-      setSolutionMoves(prev => prev.slice(0, -1));
-      setSelectedSquare(null);
-      setPossibleTargets([]);
     }
   };
 
@@ -527,12 +739,12 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
 
   // Save puzzle
   const savePuzzle = () => {
-    if (solutionMoves.length === 0) {
+    if (moveTree.length === 0) {
       toast.error('Please record at least one solution move');
       return;
     }
-    // Pass preloaded move (if any) to the callback
-    onPositionSave(setupFen, solutionMoves, preloadedMove || undefined);
+    const mainLine = getMainLine(moveTree);
+    onPositionSave(setupFen, mainLine, preloadedMove || undefined, moveTree);
     toast.success('Puzzle position and solution saved!');
   };
 
@@ -753,7 +965,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
 
         {/* Right side: Solution moves panel - show in solution or preloaded move modes */}
         {(mode === 'solution' || mode === 'preloadedMove') && (
-          <div className="w-full lg:w-48 space-y-2">
+          <div className="w-full lg:w-52 space-y-2">
             {mode === 'preloadedMove' ? (
               <>
                 <div className="text-sm font-medium text-blue-700">Preloaded Move</div>
@@ -777,67 +989,92 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
               </>
             ) : (
               <>
-                <div className="text-sm font-medium text-gray-700">Solution Moves</div>
-                {addingAlternativeForIndex !== null && (
-                  <div className="p-2 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-800 flex items-center justify-between">
-                    <span>Adding alt for step {addingAlternativeForIndex + 1} — play a move on the board</span>
-                    <button onClick={cancelAlternativeMode} className="ml-2 text-amber-600 hover:text-amber-800">
-                      <X className="w-3.5 h-3.5" />
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-medium text-gray-700">Solution Tree</div>
+                  {branchingFromNodeId && (
+                    <button
+                      onClick={() => setBranchingFromNodeId(null)}
+                      className="text-xs text-amber-600 hover:text-amber-800 flex items-center gap-1"
+                    >
+                      <X className="w-3 h-3" /> Exit branch
                     </button>
+                  )}
+                </div>
+
+                {/* Branch mode banner */}
+                {branchingFromNodeId && (
+                  <div className="p-2 bg-amber-50 border border-amber-300 rounded-lg text-xs text-amber-800 flex items-center gap-2">
+                    <GitBranch className="w-3 h-3 flex-shrink-0" />
+                    <span>
+                      Recording alternative to <strong>{moveTree.find(n => n.id === branchingFromNodeId)?.move}</strong>.
+                      Play the alternative move on the board.
+                    </span>
                   </div>
                 )}
-                <div className="p-3 bg-gray-50 rounded-lg border min-h-[150px]">
-                  {preloadedMove && (
-                    <div className="mb-2 pb-2 border-b border-gray-200">
-                      <div className="text-xs text-gray-500 mb-1">Preloaded:</div>
-                      <div className="flex items-center gap-2 text-sm bg-blue-50 px-2 py-1 rounded">
-                        <span className="text-blue-500 font-bold">0.</span>
-                        <span className="font-semibold text-blue-700">{preloadedMove}</span>
-                      </div>
-                    </div>
-                  )}
-                  {solutionMoves.length === 0 ? (
+
+                {preloadedMove && (
+                  <div
+                    onClick={() => {
+                      const baseFen = preloadedMoveFen || setupFen;
+                      if (!baseFen) return;
+                      setSolutionGame(new Chess(baseFen));
+                      setCurrentParentId(null);
+                      setSelectedSquare(null);
+                      setPossibleTargets([]);
+                    }}
+                    className="flex items-center gap-1 px-2 py-1 rounded cursor-pointer bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-colors"
+                    title="Click to view the position after the preloaded move"
+                  >
+                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-wide w-6">Pre</span>
+                    <span className="text-sm font-semibold text-blue-700 flex-1">{preloadedMove}</span>
+                    <span className="text-[10px] text-blue-400 italic">Starting position ↵</span>
+                  </div>
+                )}
+
+                {/* Move tree display – columns layout */}
+                <div className="p-2 bg-gray-50 rounded-lg border min-h-[150px] max-h-72 overflow-auto">
+                  {moveTree.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       Click on a piece, then click where to move it.
                     </p>
                   ) : (
-                    <div className="space-y-1">
-                      {solutionMoves.map((move, i) => (
-                        <div key={i} className={`flex items-center gap-2 text-sm px-2 py-1 rounded ${
-                          addingAlternativeForIndex === i ? 'bg-amber-100 ring-2 ring-amber-400' : 'bg-white'
-                        }`}>
-                          <span className="text-gray-400 font-medium">{i + 1}.</span>
-                          <span className="font-semibold text-gray-800 flex-1">
-                            {move.includes(',') ? (
-                              <span className="flex flex-wrap gap-1">
-                                {move.split(',').map((alt, j) => (
-                                  <span key={j} className={`inline-block px-1 rounded ${
-                                    j === 0 ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-700'
-                                  }`}>
-                                    {alt.trim()}
-                                  </span>
-                                ))}
-                              </span>
-                            ) : move}
-                          </span>
-                          {addingAlternativeForIndex === null && (
-                            <button
-                              onClick={() => enterAlternativeMode(i)}
-                              className="text-gray-400 hover:text-green-600 transition-colors"
-                              title="Add alternative move"
-                            >
-                              <Plus className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    <ColumnTreeDisplay
+                      tree={moveTree}
+                      currentParentId={currentParentId}
+                      isSolverMove={(depth) => depth % 2 === 0}
+                      onBranch={branchFromNode}
+                      onDelete={deleteNodeSubtree}
+                      onNavigate={navigateToNode}
+                    />
                   )}
                 </div>
-                {solutionMoves.length > 0 && addingAlternativeForIndex === null && (
-                  <Button variant="outline" size="sm" onClick={undoSolutionMove} className="w-full">
-                    <RotateCcw className="w-4 h-4 mr-1" /> Undo Last Move
-                  </Button>
+
+                <div className="text-xs text-muted-foreground px-1">
+                  Click a move to view that position. Hover a solver move → click <Plus className="w-3 h-3 inline text-blue-500" /> to add an alternative.
+                </div>
+
+                {moveTree.length > 0 && (
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={undoLastMove} className="flex-1">
+                      <RotateCcw className="w-4 h-4 mr-1" /> Undo
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (window.confirm('Clear all solution moves?')) {
+                          setMoveTree([]);
+                          setCurrentParentId(null);
+                          setBranchingFromNodeId(null);
+                          const baseFen = preloadedMoveFen || setupFen;
+                          setSolutionGame(new Chess(baseFen));
+                        }
+                      }}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 )}
               </>
             )}
@@ -907,7 +1144,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
             </div>
             {preloadedMove && (
               <Button
-                onClick={() => { setMode('solution'); setSolutionMoves([]); }}
+                onClick={() => { setMode('solution'); setMoveTree([]); setCurrentParentId(null); }}
                 className="self-end sm:ml-auto"
               >
                 <ArrowRight className="w-4 h-4 mr-1" /> Next: Record Solution
@@ -919,7 +1156,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({ onPositionSave, i
             <div className="text-sm text-gray-600">
               Make the correct move(s) on the board
             </div>
-            <Button onClick={savePuzzle} className="self-end sm:ml-auto" disabled={solutionMoves.length === 0}>
+            <Button onClick={savePuzzle} className="self-end sm:ml-auto" disabled={moveTree.length === 0}>
               <Save className="w-4 h-4 mr-1" /> Save Position & Solution
             </Button>
           </>
