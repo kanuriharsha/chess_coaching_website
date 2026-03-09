@@ -113,6 +113,12 @@ const Puzzles = () => {
 
   const isAdmin = user?.role === 'admin';
   const currentPuzzle = categoryPuzzles[currentPuzzleIndex];
+  const getPuzzleDisplayNumber = (p: PuzzleData | undefined, idx: number) => {
+    if (!p) return `#${idx + 1}`;
+    const match = (p.name || '').match(/#(\d+)/);
+    if (match) return `#${match[1]}`;
+    return `#${idx + 1}`;
+  };
 
   // Track page visit
   useEffect(() => {
@@ -1045,6 +1051,16 @@ const Puzzles = () => {
                             for (const n of accessCfg!.specificPuzzles!) numSet.add(n);
                           }
                           const combined = Array.from(numSet).sort((a, b) => a - b);
+                          // For students we avoid showing explicit puzzle numbers
+                          if (user?.role === 'student') {
+                            return (
+                              <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-500/20 text-purple-700 dark:text-purple-300 rounded-full text-xs">
+                                <ShieldOff className="w-3 h-3" />
+                                Unlocked
+                              </div>
+                            );
+                          }
+
                           return (
                             <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-purple-500/20 text-purple-700 dark:text-purple-300 rounded-full text-xs">
                               <ShieldOff className="w-3 h-3" />
@@ -1122,9 +1138,9 @@ const Puzzles = () => {
               </div>
               
               {/* Progress Indicator - Compact */}
-              <div className="flex items-center gap-2 text-xs text-muted-foreground flex-shrink-0">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground flex-shrink-0">
                 <span className="font-medium">
-                  {currentPuzzleIndex + (solved ? 1 : 0)}/{categoryPuzzles.length}
+                  {getPuzzleDisplayNumber(currentPuzzle, currentPuzzleIndex)}
                 </span>
               </div>
             </div>
