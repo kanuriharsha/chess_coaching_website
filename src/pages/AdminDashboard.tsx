@@ -3131,9 +3131,9 @@ const AdminDashboard = () => {
                                   className="flex items-center gap-2"
                                 >
                                   <Settings className="w-4 h-4" />
-                                  Access
+                                  Manage Access
                                 </Button>
-                                <Select
+                                {/* <Select
                                   value={(u as any).groupId?.toString() || 'none'}
                                   onValueChange={(val) => handleAssignGroup(u.id, val === 'none' ? null : val)}
                                 >
@@ -3147,7 +3147,7 @@ const AdminDashboard = () => {
                                       <SelectItem key={g._id} value={g._id}>{g.name}</SelectItem>
                                     ))}
                                   </SelectContent>
-                                </Select>
+                                </Select> */}
                               </div>
 
                             )}
