@@ -238,10 +238,10 @@ const ContentAccess = mongoose.model('ContentAccess', contentAccessSchema, 'cont
 // User Activity Schema - Tracks all user activity with timestamps
 const userActivitySchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  type: { 
-    type: String, 
+  type: {
+    type: String,
     enum: ['page_visit', 'puzzle_attempt', 'puzzle_solved', 'puzzle_failed', 'opening_viewed', 'game_viewed', 'login', 'logout'],
-    required: true 
+    required: true
   },
   description: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
@@ -358,7 +358,7 @@ app.get('/api/auth/me', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.id).select('-password');
-    
+
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -390,8 +390,8 @@ app.put('/api/auth/onboarding', async (req, res) => {
 
     const user = await User.findByIdAndUpdate(
       decoded.id,
-      { 
-        onboardingComplete: true, 
+      {
+        onboardingComplete: true,
         profile,
         updatedAt: new Date()
       },
@@ -425,7 +425,7 @@ app.get('/api/users', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    
+
     if (requestingUser.role !== 'admin') {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -476,7 +476,7 @@ app.put('/api/users/:id', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    
+
     if (requestingUser.role !== 'admin') {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -529,7 +529,7 @@ app.delete('/api/users/:id', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    
+
     if (requestingUser.role !== 'admin') {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -552,7 +552,7 @@ app.post('/api/users/:id/attendance', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    
+
     if (requestingUser.role !== 'admin') {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -633,13 +633,13 @@ app.delete('/api/users/:id/attendance', async (req, res) => {
     } else if (typeof daysBefore !== 'undefined') {
       const days = parseInt(daysBefore.toString(), 10) || 0;
       targetDate = new Date();
-      targetDate.setHours(0,0,0,0);
+      targetDate.setHours(0, 0, 0, 0);
       targetDate.setDate(targetDate.getDate() - days);
     } else {
       return res.status(400).json({ message: 'Provide date or daysBefore query parameter' });
     }
 
-    targetDate.setHours(0,0,0,0);
+    targetDate.setHours(0, 0, 0, 0);
 
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
@@ -651,7 +651,7 @@ app.delete('/api/users/:id/attendance', async (req, res) => {
     const beforeCount = user.attendance.length;
     user.attendance = user.attendance.filter(a => {
       const aDate = new Date(a.date);
-      aDate.setHours(0,0,0,0);
+      aDate.setHours(0, 0, 0, 0);
       return aDate.getTime() !== targetDate.getTime();
     });
 
@@ -745,7 +745,7 @@ app.put('/api/users/:id/fees/:feeId', async (req, res) => {
     if (typeof paid === 'boolean') fee.paid = paid;
     if (typeof secretNote === 'string') fee.secretNote = secretNote;
     if (typeof secretVisible === 'boolean') fee.secretVisible = secretVisible;
-    
+
     fee.updatedAt = new Date();
     user.updatedAt = new Date();
     await user.save();
@@ -800,7 +800,7 @@ app.post('/api/attendance/bulk', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    
+
     if (requestingUser.role !== 'admin') {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -1013,7 +1013,7 @@ app.post('/api/users/:id/activity', async (req, res) => {
 app.post('/api/users/:id/activity/beacon', async (req, res) => {
   try {
     const { type, description, duration, details, _token } = req.body;
-    
+
     if (!_token) {
       return res.status(401).json({ message: 'No token provided' });
     }
@@ -1059,16 +1059,16 @@ app.get('/api/users/:id/activity', async (req, res) => {
     }
 
     const { limit = 50, startDate, endDate, type } = req.query;
-    
+
     const query = { userId: req.params.id };
-    
+
     // Filter by date range if provided
     if (startDate || endDate) {
       query.timestamp = {};
       if (startDate) query.timestamp.$gte = new Date(startDate);
       if (endDate) query.timestamp.$lte = new Date(endDate);
     }
-    
+
     // Filter by activity type if provided
     if (type) {
       query.type = type;
@@ -1101,9 +1101,9 @@ app.get('/api/users/:id/activity/summary', async (req, res) => {
     }
 
     const { startDate, endDate } = req.query;
-    
+
     const matchQuery = { userId: new mongoose.Types.ObjectId(req.params.id) };
-    
+
     if (startDate || endDate) {
       matchQuery.timestamp = {};
       if (startDate) matchQuery.timestamp.$gte = new Date(startDate);
@@ -1125,8 +1125,8 @@ app.get('/api/users/:id/activity/summary', async (req, res) => {
 
     // Get puzzle-specific stats
     const puzzleStats = await UserActivity.aggregate([
-      { 
-        $match: { 
+      {
+        $match: {
           ...matchQuery,
           type: { $in: ['puzzle_solved', 'puzzle_failed'] }
         }
@@ -1176,9 +1176,9 @@ app.delete('/api/activity/cleanup', async (req, res) => {
       timestamp: { $lt: cutoffDate }
     });
 
-    res.json({ 
-      success: true, 
-      message: `Deleted ${result.deletedCount} activities older than ${daysOld} days` 
+    res.json({
+      success: true,
+      message: `Deleted ${result.deletedCount} activities older than ${daysOld} days`
     });
   } catch (error) {
     console.error('Cleanup activities error:', error);
@@ -1209,7 +1209,7 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
 
     // Get all puzzles to know total counts
     const allPuzzles = await Puzzle.find({ isEnabled: true });
-    
+
     // Group puzzles by category
     const puzzlesByCategory = {};
     allPuzzles.forEach(puzzle => {
@@ -1224,18 +1224,18 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
 
     // Group activities by category and puzzle
     const progressByCategory = {};
-    
+
     puzzleActivities.forEach(activity => {
       const category = activity.details?.category || 'unknown';
       const puzzleName = activity.details?.puzzleName || 'Unknown';
       const puzzleId = activity.details?.puzzleId || activity._id.toString();
-      
+
       if (!progressByCategory[category]) {
         progressByCategory[category] = {
           puzzles: {}
         };
       }
-      
+
       if (!progressByCategory[category].puzzles[puzzleId]) {
         progressByCategory[category].puzzles[puzzleId] = {
           puzzleId,
@@ -1245,7 +1245,7 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
           solvedAt: null
         };
       }
-      
+
       progressByCategory[category].puzzles[puzzleId].attempts++;
       if (activity.type === 'puzzle_solved' && !progressByCategory[category].puzzles[puzzleId].solved) {
         progressByCategory[category].puzzles[puzzleId].solved = true;
@@ -1257,7 +1257,7 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
     const result = Object.keys(puzzlesByCategory).map(category => {
       const categoryPuzzles = puzzlesByCategory[category];
       const progress = progressByCategory[category]?.puzzles || {};
-      
+
       const puzzleDetails = categoryPuzzles.map(puzzle => {
         const progressData = progress[puzzle.puzzleId] || {
           puzzleId: puzzle.puzzleId,
@@ -1268,9 +1268,9 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
         };
         return progressData;
       });
-      
+
       const solvedCount = puzzleDetails.filter(p => p.solved).length;
-      
+
       return {
         category,
         totalPuzzles: categoryPuzzles.length,
@@ -1324,15 +1324,15 @@ app.post('/api/puzzles', async (req, res) => {
     const maxOrderPuzzle = await Puzzle.findOne({ category: req.body.category })
       .sort({ order: -1 })
       .select('order');
-    
+
     const newOrder = maxOrderPuzzle ? (maxOrderPuzzle.order + 1) : 1;
-    
+
     // Create puzzle with the new order value
     const puzzle = await Puzzle.create({
       ...req.body,
       order: newOrder
     });
-    
+
     res.status(201).json({ success: true, puzzle });
   } catch (error) {
     console.error('Create puzzle error:', error);
@@ -1391,12 +1391,12 @@ app.post('/api/puzzles/reorder', async (req, res) => {
     if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
 
     const { puzzleOrders } = req.body; // Array of { id, order }
-    
+
     // Update each puzzle's order
     const updatePromises = puzzleOrders.map(({ id, order }) =>
       Puzzle.findByIdAndUpdate(id, { order, updatedAt: new Date() })
     );
-    
+
     await Promise.all(updatePromises);
     res.json({ success: true, message: 'Puzzle order updated' });
   } catch (error) {
@@ -1672,9 +1672,9 @@ app.get('/api/content-access/:userId', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
 
     const decoded = jwt.verify(token, JWT_SECRET);
-    
+
     let access = await ContentAccess.findOne({ userId: req.params.userId });
-    
+
     // Create default access if not exists
     if (!access) {
       access = await ContentAccess.create({
@@ -1691,7 +1691,7 @@ app.get('/api/content-access/:userId', async (req, res) => {
         bestGamesAccess: { enabled: false, allowedGames: [] }
       });
     }
-    
+
     res.json(access);
   } catch (error) {
     console.error('Get content access error:', error);
@@ -1706,9 +1706,9 @@ app.get('/api/my-content-access', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
 
     const decoded = jwt.verify(token, JWT_SECRET);
-    
+
     let access = await ContentAccess.findOne({ userId: decoded.id });
-    
+
     // Create default access if not exists
     if (!access) {
       access = await ContentAccess.create({
@@ -1725,7 +1725,7 @@ app.get('/api/my-content-access', async (req, res) => {
         bestGamesAccess: { enabled: false, allowedGames: [] }
       });
     }
-    
+
     res.json(access);
   } catch (error) {
     console.error('Get my content access error:', error);
@@ -1744,9 +1744,9 @@ app.put('/api/content-access/:userId', async (req, res) => {
     if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
 
     const { puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess } = req.body;
-    
+
     let access = await ContentAccess.findOne({ userId: req.params.userId });
-    
+
     if (!access) {
       access = await ContentAccess.create({
         userId: req.params.userId,
@@ -1766,7 +1766,7 @@ app.put('/api/content-access/:userId', async (req, res) => {
       access.updatedAt = new Date();
       await access.save();
     }
-    
+
     res.json({ success: true, access });
   } catch (error) {
     console.error('Update content access error:', error);
@@ -1785,13 +1785,13 @@ app.put('/api/content-access-bulk', async (req, res) => {
     if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
 
     const { puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess, userIds } = req.body;
-    
+
     // Get all students or specific users
     const targetUserIds = userIds || (await User.find({ role: 'student' }).select('_id')).map(u => u._id);
-    
+
     for (const userId of targetUserIds) {
       let access = await ContentAccess.findOne({ userId });
-      
+
       if (!access) {
         await ContentAccess.create({
           userId,
@@ -1812,7 +1812,7 @@ app.put('/api/content-access-bulk', async (req, res) => {
         await access.save();
       }
     }
-    
+
     res.json({ success: true, message: `Updated access for ${targetUserIds.length} users` });
   } catch (error) {
     console.error('Bulk update content access error:', error);
@@ -1975,13 +1975,13 @@ io.use(async (socket, next) => {
     if (!token) {
       return next(new Error('Authentication error: No token provided'));
     }
-    
+
     const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.id).select('-password');
     if (!user) {
       return next(new Error('Authentication error: User not found'));
     }
-    
+
     socket.user = user;
     next();
   } catch (error) {
@@ -1993,17 +1993,17 @@ io.use(async (socket, next) => {
 io.on('connection', (socket) => {
   const userId = socket.user._id.toString();
   console.log(`🔌 User connected: ${socket.user.username} (role: ${socket.user.role}) (socket: ${socket.id})`);
-  
+
   // Store socket mapping
   if (!userSockets.has(userId)) userSockets.set(userId, []);
   userSockets.get(userId).push(socket.id);
   socketUsers.set(socket.id, userId);
-  
+
   // Log all connected users
   console.log(`   📊 Total connected users: ${userSockets.size}`);
   console.log(`   👥 Connected user IDs:`, Array.from(userSockets.keys()));
   console.log(`   🔌 Socket mappings:`, Array.from(userSockets.entries()));
-  
+
   // Notify admins about online students
   if (socket.user.role === 'student') {
     socket.broadcast.emit('user:online', { userId, username: socket.user.username });
@@ -2037,11 +2037,11 @@ io.on('connection', (socket) => {
   });
 
   // ---- GAME REQUEST EVENTS ----
-  
+
   // Student sends game request to coach
   socket.on('game:request-send', async (data) => {
     console.log(`📤 Received game request from ${socket.user.username}, mode: ${data.mode}, targetAdmin: ${data.targetAdminId}`);
-    
+
     const requestId = generateId();
     const request = {
       id: requestId,
@@ -2053,7 +2053,7 @@ io.on('connection', (socket) => {
       status: 'pending',
       createdAt: new Date().toISOString()
     };
-    
+
     // If target admin specified, add to request
     if (data.targetAdminId) {
       const targetAdmin = await User.findById(data.targetAdminId).select('_id username');
@@ -2064,9 +2064,9 @@ io.on('connection', (socket) => {
         };
       }
     }
-    
+
     gameRequests.set(requestId, request);
-    
+
     // Send to target admin or all connected admins (only admins not already in an active game)
     let adminUsers = [];
     if (data.targetAdminId && request.to) {
@@ -2097,7 +2097,7 @@ io.on('connection', (socket) => {
       });
       console.log(`👥 Notifying ${adminUsers.length} available admins`);
     }
-    
+
     let notifiedCount = 0;
     adminUsers.forEach(admin => {
       const adminSockets = userSockets.get(admin._id.toString());
@@ -2110,9 +2110,9 @@ io.on('connection', (socket) => {
         console.log(`   ✅ Sent game:request to admin ${admin.username}`);
       }
     });
-    
+
     console.log(`📬 Notified ${notifiedCount}/${adminUsers.length} admins about game request`);
-    
+
     // Confirm to sender
     socket.emit('game:request-sent', { requestId, ...request });
     console.log(`📩 Game request from ${socket.user.username}: ${requestId}`);
@@ -2135,25 +2135,25 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'Only admins can accept game requests' });
       return;
     }
-    
+
     const request = gameRequests.get(data.requestId);
     if (!request) {
       socket.emit('error', { message: 'Game request not found' });
       return;
     }
-    
+
     // Check if this admin is the target (if specified)
     if (request.to && request.to.id !== userId) {
       socket.emit('error', { message: 'This request is not for you' });
       return;
     }
-    
+
     console.log(`🎮 Admin ${socket.user.username} accepting game request`);
     console.log(`   Request from: ${request.from.username} (ID: ${request.from.id})`);
     console.log(`   Admin user ID: ${userId} (from socket.user._id)`);
     console.log(`   Admin socket.user._id type: ${typeof socket.user._id}`);
     console.log(`   Request.from.id type: ${typeof request.from.id}`);
-    
+
     // Normalize IDs (strings) first
     const studentId = String(request.from.id);
     const adminId = String(userId);
@@ -2176,16 +2176,16 @@ io.on('connection', (socket) => {
 
     // Create the game - student gets random color
     const studentIsWhite = Math.random() > 0.5;
-    
+
     console.log(`   Normalized student ID: ${studentId}`);
     console.log(`   Normalized admin ID: ${adminId}`);
-    
+
     const game = {
       id: gameId,
-      white: studentIsWhite 
+      white: studentIsWhite
         ? { id: studentId, username: request.from.username }
         : { id: adminId, username: socket.user.username },
-      black: studentIsWhite 
+      black: studentIsWhite
         ? { id: adminId, username: socket.user.username }
         : { id: studentId, username: request.from.username },
       fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
@@ -2201,29 +2201,29 @@ io.on('connection', (socket) => {
       offline: { white: false, black: false },
       _lock: Promise.resolve()
     };
-    
+
     activeGames.set(gameId, game);
     gameRequests.delete(data.requestId);
-    
+
     // Notify the student
     const studentSockets = userSockets.get(request.from.id);
     if (studentSockets && studentSockets.length > 0) {
       studentSockets.forEach(socketId => {
-        io.to(socketId).emit('game:request-response', { 
-          requestId: data.requestId, 
-          status: 'accepted', 
-          game 
+        io.to(socketId).emit('game:request-response', {
+          requestId: data.requestId,
+          status: 'accepted',
+          game
         });
         io.to(socketId).emit('game:started', game);
       });
     }
-    
+
     // Notify the admin (coach)
     socket.emit('game:started', game);
-    
+
     // Start the game timer
     startGameTimer(gameId);
-    
+
     console.log(`🎮 Game started: ${gameId}`);
     console.log(`   White: ${game.white.username} (ID: ${game.white.id})`);
     console.log(`   Black: ${game.black.username} (ID: ${game.black.id})`);
@@ -2233,71 +2233,71 @@ io.on('connection', (socket) => {
   // Admin declines game request
   socket.on('game:request-decline', (data) => {
     if (socket.user.role !== 'admin') return;
-    
+
     const request = gameRequests.get(data.requestId);
     if (request) {
       gameRequests.delete(data.requestId);
-      
+
       // Notify the student
       const studentSockets = userSockets.get(request.from.id);
       if (studentSockets && studentSockets.length > 0) {
         studentSockets.forEach(socketId => {
-          io.to(socketId).emit('game:request-response', { 
-            requestId: data.requestId, 
-            status: 'declined' 
+          io.to(socketId).emit('game:request-response', {
+            requestId: data.requestId,
+            status: 'declined'
           });
         });
       }
-      
+
       console.log(`❌ Game request declined: ${data.requestId}`);
     }
   });
 
   // ---- GAME EVENTS ----
-  
+
   // Make a move
   socket.on('game:make-move', (data) => {
     console.log(`\n♟️ ========== MOVE: ${data.from}→${data.to} from ${socket.user.username} ==========`);
-    
+
     const game = activeGames.get(data.gameId);
     if (!game || game.status !== 'active') {
       console.log(`❌ Game not found or not active: ${data.gameId}`);
       socket.emit('error', { message: 'Game not found or not active' });
       return;
     }
-    
+
     // Check if it's this player's turn
     const isWhite = game.white.id === userId;
     const isBlack = game.black.id === userId;
     const isPlayerTurn = (game.turn === 'w' && isWhite) || (game.turn === 'b' && isBlack);
-    
+
     console.log(`   Game: ${game.id} | White: ${game.white.username} | Black: ${game.black.username}`);
     console.log(`   Player: ${socket.user.username} (${isWhite ? 'WHITE' : 'BLACK'}) | Turn: ${game.turn === 'w' ? 'WHITE' : 'BLACK'}`);
-    
+
     if (!isPlayerTurn) {
       console.log(`❌ Not player's turn!`);
       socket.emit('error', { message: 'Not your turn' });
       return;
     }
-    
+
     const previousTurn = game.turn;
-    
+
     // Validate and make the move
     const move = `${data.from}${data.to}${data.promotion || ''}`;
     game.moves.push(move);
     game.fen = data.fen || game.fen;
     game.turn = game.turn === 'w' ? 'b' : 'w';
     game.lastMoveAt = new Date().toISOString();
-    
+
     console.log(`   ✅ Move accepted: ${move} | Turn: ${previousTurn} → ${game.turn}`);
-    
+
     // Determine opponent
     const opponentId = isWhite ? game.black.id : game.white.id;
     const opponentSockets = userSockets.get(opponentId);
-    
+
     console.log(`   📡 Opponent ID: ${opponentId}`);
     console.log(`   📡 Opponent sockets: ${JSON.stringify(opponentSockets)}`);
-    
+
     const moveData = {
       gameId: game.id,
       move,
@@ -2306,11 +2306,11 @@ io.on('connection', (socket) => {
       blackTime: game.blackTime,
       turn: game.turn
     };
-    
+
     // Send to current player
     socket.emit('game:move', moveData);
     console.log(`   ✅ Sent to ${socket.user.username}`);
-    
+
     // Send to all opponent sockets
     if (opponentSockets && opponentSockets.length > 0) {
       opponentSockets.forEach(socketId => {
@@ -2329,10 +2329,10 @@ io.on('connection', (socket) => {
   socket.on('game:resign', (data) => {
     const game = activeGames.get(data.gameId);
     if (!game || game.status !== 'active') return;
-    
+
     const isWhite = game.white.id === userId;
     const result = isWhite ? 'black' : 'white';
-    
+
     endGame(data.gameId, result, 'resignation');
   });
 
@@ -2340,7 +2340,7 @@ io.on('connection', (socket) => {
   socket.on('game:offer-draw', (data) => {
     const game = activeGames.get(data.gameId);
     if (!game || game.status !== 'active') return;
-    
+
     const isWhite = game.white.id === userId;
     const opponentId = isWhite ? game.black.id : game.white.id;
     const opponentSockets = userSockets.get(opponentId);
@@ -2358,7 +2358,7 @@ io.on('connection', (socket) => {
   socket.on('game:accept-draw', (data) => {
     const game = activeGames.get(data.gameId);
     if (!game || game.status !== 'active') return;
-    
+
     endGame(data.gameId, 'draw', 'agreement');
   });
 
@@ -2366,7 +2366,7 @@ io.on('connection', (socket) => {
   socket.on('game:checkmate', (data) => {
     const game = activeGames.get(data.gameId);
     if (!game || game.status !== 'active') return;
-    
+
     // The winner is whoever's turn it is NOT (they just got checkmated)
     const result = game.turn === 'w' ? 'black' : 'white';
     endGame(data.gameId, result, 'checkmate');
@@ -2375,7 +2375,7 @@ io.on('connection', (socket) => {
   socket.on('game:stalemate', (data) => {
     const game = activeGames.get(data.gameId);
     if (!game || game.status !== 'active') return;
-    
+
     endGame(data.gameId, 'draw', 'stalemate');
   });
 
@@ -2406,12 +2406,12 @@ io.on('connection', (socket) => {
       if (sockets.length === 0) userSockets.delete(userId);
     }
     socketUsers.delete(socket.id);
-    
+
     // Notify about offline status
     if (socket.user.role === 'student') {
       socket.broadcast.emit('user:offline', { userId, username: socket.user.username });
     }
-    
+
     // Handle active games: mark player offline but do NOT end the game. Clocks keep running server-side.
     activeGames.forEach((game) => {
       if ((String(game.white.id) === userId || String(game.black.id) === userId) && game.status === 'active') {
@@ -2438,7 +2438,7 @@ io.on('connection', (socket) => {
 // Game timer function
 function startGameTimer(gameId) {
   console.log(`⏱️ Starting game timer for game ${gameId}`);
-  
+
   let lastLoggedTime = 0;
   const timerInterval = setInterval(() => {
     const game = activeGames.get(gameId);
@@ -2447,7 +2447,7 @@ function startGameTimer(gameId) {
       console.log(`⏹️ Timer stopped for game ${gameId}`);
       return;
     }
-    
+
     // ✅ CHESS RULE: Only ONE timer decrements at a time
     // Decrement time ONLY for the player whose turn it is
     if (game.turn === 'w') {
@@ -2457,7 +2457,7 @@ function startGameTimer(gameId) {
         console.log(`⏰ WHITE's turn | White: ${game.whiteTime}s | Black: ${game.blackTime}s`);
         lastLoggedTime = game.whiteTime;
       }
-      
+
       if (game.whiteTime === 0) {
         clearInterval(timerInterval);
         console.log('⏰ WHITE ran out of time - BLACK wins!');
@@ -2471,7 +2471,7 @@ function startGameTimer(gameId) {
         console.log(`⏰ BLACK's turn | White: ${game.whiteTime}s | Black: ${game.blackTime}s`);
         lastLoggedTime = game.blackTime;
       }
-      
+
       if (game.blackTime === 0) {
         clearInterval(timerInterval);
         console.log('⏰ BLACK ran out of time - WHITE wins!');
@@ -2479,25 +2479,25 @@ function startGameTimer(gameId) {
         return;
       }
     }
-    
+
     // Send time updates to both players every second
     const whiteSockets = userSockets.get(game.white.id);
     const blackSockets = userSockets.get(game.black.id);
-    
+
     const timeUpdate = {
       gameId,
       whiteTime: game.whiteTime,
       blackTime: game.blackTime,
       turn: game.turn
     };
-    
+
     // Send to all white player's sockets
     if (whiteSockets && whiteSockets.length > 0) {
       whiteSockets.forEach(socketId => {
         io.to(socketId).emit('game:time-update', timeUpdate);
       });
     }
-    
+
     // Send to all black player's sockets
     if (blackSockets && blackSockets.length > 0) {
       blackSockets.forEach(socketId => {
@@ -2505,7 +2505,7 @@ function startGameTimer(gameId) {
       });
     }
   }, 1000);
-  
+
   // Store timer reference for cleanup
   const game = activeGames.get(gameId);
   if (game) {
@@ -2517,16 +2517,16 @@ function startGameTimer(gameId) {
 function endGame(gameId, result, reason) {
   const game = activeGames.get(gameId);
   if (!game) return;
-  
+
   // Clear timer
   if (game.timerInterval) {
     clearInterval(game.timerInterval);
   }
-  
+
   game.status = 'finished';
   game.result = result;
   game.resultReason = reason;
-  
+
   // Create a clear winner message
   let winnerMessage = '';
   if (result === 'white') {
@@ -2536,12 +2536,12 @@ function endGame(gameId, result, reason) {
   } else if (result === 'draw') {
     winnerMessage = `Game DRAWN by ${reason}`;
   }
-  
+
   console.log(`🏁 Game ended: ${gameId} | ${winnerMessage}`);
-  
+
   // Notify both players
   const endData = { gameId, result, reason };
-  
+
   const whiteSockets = userSockets.get(game.white.id);
   const blackSockets = userSockets.get(game.black.id);
 
@@ -2551,10 +2551,10 @@ function endGame(gameId, result, reason) {
   if (blackSockets && blackSockets.length > 0) {
     blackSockets.forEach(sid => io.to(sid).emit('game:ended', endData));
   }
-  
+
   console.log(`   👤 ${game.white.username} (White) vs ${game.black.username} (Black)`);
   console.log(`   ⏱️ Final times - White: ${game.whiteTime}s | Black: ${game.blackTime}s`);
-  
+
   // Keep game in memory for a while for review, then delete
   setTimeout(() => {
     activeGames.delete(gameId);
@@ -2571,7 +2571,7 @@ app.get('/api/game-requests', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.id);
-    
+
     if (user.role !== 'admin') {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -2608,7 +2608,7 @@ async function migratePuzzleOrders() {
   try {
     // Get all puzzles grouped by category
     const allPuzzles = await Puzzle.find().sort({ createdAt: 1 });
-    
+
     // Group puzzles by category
     const puzzlesByCategory = {};
     allPuzzles.forEach(puzzle => {
@@ -2617,26 +2617,26 @@ async function migratePuzzleOrders() {
       }
       puzzlesByCategory[puzzle.category].push(puzzle);
     });
-    
+
     let totalUpdated = 0;
-    
+
     // For each category, reassign sequential order values
     for (const category in puzzlesByCategory) {
       const categoryPuzzles = puzzlesByCategory[category];
-      
+
       // Sort by existing order (ascending) then by createdAt
       categoryPuzzles.sort((a, b) => {
         if (a.order !== b.order) return a.order - b.order;
         return new Date(a.createdAt) - new Date(b.createdAt);
       });
-      
+
       // Reassign sequential order values starting from 1
       for (let i = 0; i < categoryPuzzles.length; i++) {
         const puzzle = categoryPuzzles[i];
         const newOrder = i + 1;
-        
+
         if (puzzle.order !== newOrder) {
-          await Puzzle.findByIdAndUpdate(puzzle._id, { 
+          await Puzzle.findByIdAndUpdate(puzzle._id, {
             order: newOrder,
             updatedAt: new Date()
           });
@@ -2644,7 +2644,7 @@ async function migratePuzzleOrders() {
         }
       }
     }
-    
+
     if (totalUpdated > 0) {
       console.log(`✅ Migration completed: Updated order for ${totalUpdated} puzzles across ${Object.keys(puzzlesByCategory).length} categories`);
     } else {

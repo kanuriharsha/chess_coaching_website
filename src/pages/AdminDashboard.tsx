@@ -44,8 +44,12 @@ import {
   Play,
   Timer,
   Wifi,
+<<<<<<< HEAD
   Crown,
   Layers
+=======
+  Crown
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
@@ -60,6 +64,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
+<<<<<<< HEAD
 interface Group {
   _id: string;
   name: string;
@@ -68,6 +73,8 @@ interface Group {
   createdAt: string;
 }
 
+=======
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
 interface Stats {
   totalStudents: number;
   activeStudents: number;
@@ -195,6 +202,7 @@ const AdminDashboard = () => {
   const [bestGames, setBestGames] = useState<BestGameData[]>([]);
   const [activeTab, setActiveTab] = useState('users');
   const [isLoading, setIsLoading] = useState(true);
+<<<<<<< HEAD
 
   // Groups state
   const [groups, setGroups] = useState<Group[]>([]);
@@ -206,6 +214,8 @@ const AdminDashboard = () => {
   const [editGroupName, setEditGroupName] = useState('');
   const [editGroupDescription, setEditGroupDescription] = useState('');
   const [showGroupMembersId, setShowGroupMembersId] = useState<string | null>(null);
+=======
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
   
   // Custom puzzle categories from localStorage
   const [customCategories, setCustomCategories] = useState<Array<{id: string, name: string, description?: string, icon?: string}>>([]);
@@ -407,12 +417,17 @@ const AdminDashboard = () => {
       loadOpenings(),
       loadFamousMates(),
       loadBestGames(),
+<<<<<<< HEAD
       loadCustomCategoriesFromAPI(),
       loadGroups()
+=======
+      loadCustomCategoriesFromAPI()
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
     ]);
     setIsLoading(false);
   };
 
+<<<<<<< HEAD
   // ============ GROUP FUNCTIONS ============
   const loadGroups = async () => {
     try {
@@ -523,6 +538,8 @@ const AdminDashboard = () => {
     }
   };
 
+=======
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
   const loadStats = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/stats`, {
@@ -2850,6 +2867,7 @@ const AdminDashboard = () => {
 
         {/* Tabs for Management */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+<<<<<<< HEAD
           <TabsList className="w-full mb-6 h-auto flex-wrap md:grid md:grid-cols-6">
             <TabsTrigger value="users" className="flex items-center gap-2 flex-1 min-w-[60px]">
               <Users className="w-4 h-4" /> <span className="hidden sm:inline">Users</span>
@@ -2857,6 +2875,12 @@ const AdminDashboard = () => {
             <TabsTrigger value="groups" className="flex items-center gap-2 flex-1 min-w-[60px]">
               <Layers className="w-4 h-4" /> <span className="hidden sm:inline">Groups</span>
             </TabsTrigger>
+=======
+          <TabsList className="w-full mb-6 h-auto flex-wrap md:grid md:grid-cols-5">
+            <TabsTrigger value="users" className="flex items-center gap-2 flex-1 min-w-[60px]">
+              <Users className="w-4 h-4" /> <span className="hidden sm:inline">Users</span>
+            </TabsTrigger>
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
             <TabsTrigger value="access" className="flex items-center gap-2 flex-1 min-w-[60px]">
               <Settings className="w-4 h-4" /> <span className="hidden sm:inline">Content Access</span>
             </TabsTrigger>
@@ -2886,7 +2910,10 @@ const AdminDashboard = () => {
                         <Plus className="w-4 h-4" /> Add User
                       </Button>
                     </DialogTrigger>
+<<<<<<< HEAD
 
+=======
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
                     <DialogContent>
                       <DialogHeader>
                         <DialogTitle>Add New User</DialogTitle>
@@ -2929,6 +2956,7 @@ const AdminDashboard = () => {
                   </Dialog>
                 </div>
               </div>
+<<<<<<< HEAD
 
               {/* Group Filter Pills */}
               {groups.length > 0 && (
@@ -2968,6 +2996,8 @@ const AdminDashboard = () => {
                 </div>
               )}
 
+=======
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
               <p className="text-sm text-muted-foreground mb-4">
                 Click on any user row to view detailed profile, activity, and edit credentials (username, email, password)
               </p>
@@ -2986,10 +3016,14 @@ const AdminDashboard = () => {
                     </tr>
                   </thead>
                   <tbody>
+<<<<<<< HEAD
                     {users.filter(u => {
                       if (groupFilter === 'all') return true;
                       return (u as any).groupId?.toString() === groupFilter;
                     }).map((u) => {
+=======
+                    {users.map((u) => {
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
                       const todayAttendance = getTodayAttendance(u);
                       const hasUnpaid = hasUnpaidFees(u.id);
                       return (
@@ -3013,11 +3047,14 @@ const AdminDashboard = () => {
                                 <div className="font-medium text-foreground flex items-center gap-2">
                                   {u.username}
                                   <Eye className="w-3 h-3 text-muted-foreground" />
+<<<<<<< HEAD
                                   {(u as any).groupName && (
                                     <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-primary/15 text-primary border border-primary/30">
                                       {(u as any).groupName}
                                     </span>
                                   )}
+=======
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
                                 </div>
                                 <p className="text-sm text-muted-foreground">
                                   {u.profile?.fullName || 'No profile'}
@@ -3104,6 +3141,7 @@ const AdminDashboard = () => {
                           </td>
                           <td className="py-4" onClick={(e) => e.stopPropagation()}>
                             {u.role === 'student' && (
+<<<<<<< HEAD
                               <div className="flex items-center gap-2 flex-wrap">
                                 <Button
                                   variant="outline"
@@ -3130,6 +3168,17 @@ const AdminDashboard = () => {
                                   </SelectContent>
                                 </Select>
                               </div>
+=======
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleOpenAccessModal(u)}
+                                className="flex items-center gap-2"
+                              >
+                                <Settings className="w-4 h-4" />
+                                Manage Access
+                              </Button>
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
                             )}
                             {u.role === 'admin' && (
                               <span className="text-sm text-muted-foreground">Full Access</span>
@@ -4521,6 +4570,7 @@ const AdminDashboard = () => {
               </div>
             </div>
           </TabsContent>
+<<<<<<< HEAD
 
           {/* Groups Tab */}
           <TabsContent value="groups">
@@ -4719,6 +4769,8 @@ const AdminDashboard = () => {
             </div>
           </TabsContent>
 
+=======
+>>>>>>> 4765c2e47ae9403abbf0c2e219d33d8086a1342b
         </Tabs>
           </>
         )}
