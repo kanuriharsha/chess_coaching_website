@@ -648,8 +648,8 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
   };
 
   // Load position from FEN string (parses only the board layout, ignores other fields)
-  const loadFromFen = () => {
-    const trimmed = fenInput.trim();
+  const loadFromFen = (fenValue = fenInput) => {
+    const trimmed = fenValue.trim();
     if (!trimmed) {
       toast.error('Please enter a FEN string');
       return;
@@ -704,6 +704,23 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
     setPreloadedMoveFen('');
     toast.success('Position loaded from FEN! Set turn, castling rights, and en passant manually, then proceed.');
   };
+
+  // Allow pasting a FEN anywhere in the editor while it is in setup mode.
+  React.useEffect(() => {
+    if (mode !== 'setup') return;
+
+    const handlePaste = (event: ClipboardEvent) => {
+      const pastedText = event.clipboardData?.getData('text')?.trim();
+      if (!pastedText || !pastedText.includes('/')) return;
+
+      event.preventDefault();
+      setFenInput(pastedText);
+      loadFromFen(pastedText);
+    };
+
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [mode, fenInput]);
 
   // Set up starting position
   const setupStartingPosition = () => {
