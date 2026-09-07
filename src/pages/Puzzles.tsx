@@ -375,6 +375,9 @@ const Puzzles = () => {
 
       // Execute preloaded move if specified
       const timer = executePreloadedMove();
+      if (!currentPuzzle.preloadedMove?.trim()) {
+        playSound('move');
+      }
 
       return () => {
         if (timer) {
@@ -382,7 +385,7 @@ const Puzzles = () => {
         }
       };
     }
-  }, [currentPuzzle?._id, currentPuzzleIndex, executePreloadedMove]);
+  }, [currentPuzzle?._id, currentPuzzleIndex, executePreloadedMove, playSound]);
 
   const loadContentAccess = async () => {
     try {
