@@ -1222,8 +1222,8 @@ const Puzzles = () => {
                         {category.description}
                       </p>
                       <div className="flex items-center gap-2 text-sm">
-                        {/* <PuzzleIcon className="w-4 h-4 text-primary" /> */}
-                        {/* <span className="text-muted-foreground">{category.count} puzzles</span> */}
+                        <PuzzleIcon className="w-4 h-4 text-primary" />
+                        <span className="text-muted-foreground">Puzzles</span>
                       </div>
                       {/* Show access info */}
                       {!isAdmin && hasAccessToCategory(category.id) && (
