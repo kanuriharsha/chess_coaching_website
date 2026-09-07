@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Chess, Square, Move } from 'chess.js';
 import {
   getSquareColor,
@@ -6,6 +6,7 @@ import {
   getLegalMoves,
   isCapture,
 } from '@/lib/chess';
+import { useChessSound } from '@/hooks/useChessSound';
 
 // Chess.com style piece images
 const PIECE_IMAGES: { [color: string]: { [piece: string]: string } } = {
@@ -50,6 +51,15 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
 }) => {
   const [internalSelectedSquare, setInternalSelectedSquare] = useState<Square | null>(null);
   const [possibleMoves, setPossibleMoves] = useState<Move[]>([]);
+  const [dragState, setDragState] = useState<{
+    pointerId: number;
+    from: Square;
+    x: number;
+    y: number;
+    hasMoved: boolean;
+  } | null>(null);
+  const suppressNextClick = useRef(false);
+  const { playSound } = useChessSound();
 
   // Use external selected square if provided, otherwise use internal state
   const selectedSquare = externalSelectedSquare !== undefined ? externalSelectedSquare : internalSelectedSquare;
@@ -73,6 +83,11 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
   const handleSquareClick = useCallback(
     (square: Square) => {
       if (!interactive) return;
+
+      if (suppressNextClick.current) {
+        suppressNextClick.current = false;
+        return;
+      }
 
       // If external onSquareClick is provided, use it instead
       if (onSquareClick) {
@@ -117,6 +132,71 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
     [game, interactive, selectedSquare, possibleMoves, onMove, onSquareClick]
   );
 
+  const handlePointerDown = useCallback((event: React.PointerEvent, square: Square) => {
+    if (!interactive || !onMove || event.button !== 0) return;
+
+    const piece = game.get(square);
+    if (!piece || piece.color !== game.turn()) return;
+
+    setInternalSelectedSquare(square);
+    setPossibleMoves(getLegalMoves(game, square));
+    setDragState({
+      pointerId: event.pointerId,
+      from: square,
+      x: event.clientX,
+      y: event.clientY,
+      hasMoved: false,
+    });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }, [game, interactive, onMove]);
+
+  const handlePointerMove = useCallback((event: React.PointerEvent) => {
+    if (!dragState || event.pointerId !== dragState.pointerId) return;
+
+    const moved = dragState.hasMoved ||
+      Math.hypot(event.clientX - dragState.x, event.clientY - dragState.y) >= 4;
+
+    setDragState({
+      ...dragState,
+      x: event.clientX,
+      y: event.clientY,
+      hasMoved: moved,
+    });
+    event.preventDefault();
+  }, [dragState]);
+
+  const finishPointerDrag = useCallback((event: React.PointerEvent) => {
+    if (!dragState || event.pointerId !== dragState.pointerId) return;
+
+    if (dragState.hasMoved) {
+      suppressNextClick.current = true;
+      const target = document.elementFromPoint(event.clientX, event.clientY);
+      const targetSquare = target?.closest<HTMLElement>('[data-chess-square]')?.dataset.chessSquare as Square | undefined;
+      const isLegalTarget = targetSquare && possibleMoves.some(move => move.to === targetSquare);
+      const moveSucceeded = isLegalTarget
+        ? onMove?.(dragState.from, targetSquare)
+        : false;
+
+      if (!isLegalTarget) {
+        playSound('illegal');
+      }
+
+      if (moveSucceeded) {
+        setInternalSelectedSquare(null);
+        setPossibleMoves([]);
+      }
+    }
+
+    setDragState(null);
+    event.preventDefault();
+  }, [dragState, onMove, playSound, possibleMoves]);
+
+  const handlePointerCancel = useCallback((event: React.PointerEvent) => {
+    if (!dragState || event.pointerId !== dragState.pointerId) return;
+    setDragState(null);
+  }, [dragState]);
+
   // If an external selected square is provided, compute its possible moves
   useEffect(() => {
     if (selectedSquare) {
@@ -147,9 +227,12 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
           {orientation === 'white' ? 'Black' : 'White'}
         </div>
         
-        <div className="relative aspect-square w-full max-w-[min(100vw-2rem,500px)] mx-auto">
+        <div
+          className="relative aspect-square w-full max-w-[min(100vw-2rem,500px)] mx-auto select-none"
+          style={{ touchAction: interactive && onMove ? 'none' : undefined }}
+        >
           {board.map((row, rowIndex) => (
-          <div key={rowIndex} className="flex">
+          <div key={rowIndex} className="flex" style={{ touchAction: interactive && onMove ? 'none' : undefined }}>
             {row.map(({ square, piece, row: actualRow, col: actualCol }) => {
               const squareColorClass =
                 getSquareColor(actualRow, actualCol) === 'light'
@@ -168,6 +251,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
               return (
                 <div
                   key={square}
+                  data-chess-square={square}
                   className={`
                     relative flex items-center justify-center
                     w-[12.5%] aspect-square cursor-pointer
@@ -175,6 +259,10 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
                     transition-colors duration-100
                   `}
                   onClick={() => handleSquareClick(square)}
+                  onPointerDown={(event) => handlePointerDown(event, square)}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={finishPointerDrag}
+                  onPointerCancel={handlePointerCancel}
                 >
                   {/* Piece */}
                   {piece && (
@@ -183,7 +271,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
                       alt={`${piece.color}${piece.type}`}
                       className={`
                         w-[80%] h-[80%] object-contain select-none pointer-events-none
-                        ${selectedSquare === square ? 'animate-piece-move' : ''}
+                        ${selectedSquare === square && !dragState ? 'animate-piece-move' : ''}
                       `}
                       style={{
                         filter: 'drop-shadow(0 2px 2px rgba(0,0,0,0.3))',
@@ -233,6 +321,16 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
           </div>
         ))}
         </div>
+
+        {dragState?.hasMoved && game.get(dragState.from) && (
+          <img
+            src={PIECE_IMAGES[game.get(dragState.from)!.color][game.get(dragState.from)!.type]}
+            alt=""
+            aria-hidden="true"
+            className="pointer-events-none fixed z-50 h-[clamp(2.5rem,10vw,5rem)] w-[clamp(2.5rem,10vw,5rem)] -translate-x-1/2 -translate-y-1/2 object-contain select-none"
+            style={{ left: dragState.x, top: dragState.y }}
+          />
+        )}
         
         {/* Bottom label - subtle and small */}
         <div className="text-[0.65rem] font-normal text-muted-foreground opacity-50">

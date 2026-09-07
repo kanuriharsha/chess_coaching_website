@@ -8,6 +8,7 @@ import { Switch } from './ui/switch';
 import { Label } from './ui/label';
 import { RotateCcw, Trash2, Play, Save, ArrowRight, Upload, Plus, X, GitBranch } from 'lucide-react';
 import { toast } from 'sonner';
+import { useChessSound } from '@/hooks/useChessSound';
 
 // ─── Move Tree Types ──────────────────────────────────────────────────────
 export interface MoveNode {
@@ -231,6 +232,8 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
   initialPreloadedMove,
   initialMoveTree,
 }) => {
+  const { playSound } = useChessSound();
+
   // Board state
   const [board, setBoard] = useState<(PieceType | null)[][]>(() =>
     Array(8).fill(null).map(() => Array(8).fill(null))
@@ -238,6 +241,9 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
   const [draggedPiece, setDraggedPiece] = useState<{
     piece: PieceType;
     from?: { rank: number; file: number };
+    startX: number;
+    startY: number;
+    moved: boolean;
   } | null>(null);
   const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | null>(null);
   const activePointerId = useRef<number | null>(null);
@@ -686,20 +692,23 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
     piece: PieceType,
     from?: { rank: number; file: number }
   ) => {
-    if (event.button !== 0 || (mode !== 'setup' && !solutionGame)) return;
+    if (event.button !== 0 || (mode !== 'preloadedMove' && mode !== 'solution') || !solutionGame || !from) return;
 
-    if (mode !== 'setup') {
-      if (!from) return;
-      const square = `${FILES[from.file]}${RANKS[from.rank]}` as Square;
-      const boardPiece = solutionGame?.get(square);
-      if (!boardPiece || boardPiece.color !== solutionGame?.turn()) return;
-      setSelectedSquare(square);
-      setPossibleTargets(getPossibleSquares(solutionGame, square));
-    }
+    const square = `${FILES[from.file]}${RANKS[from.rank]}` as Square;
+    const boardPiece = solutionGame.get(square);
+    if (!boardPiece || boardPiece.color !== solutionGame.turn()) return;
+    setSelectedSquare(square);
+    setPossibleTargets(getPossibleSquares(solutionGame, square));
 
     activePointerId.current = event.pointerId;
     suppressNextClick.current = true;
-    setDraggedPiece({ piece, from });
+    setDraggedPiece({
+      piece,
+      from,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    });
     setDragPosition({ x: event.clientX, y: event.clientY });
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
@@ -707,6 +716,11 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
 
   const handlePointerMove = (event: React.PointerEvent) => {
     if (activePointerId.current !== event.pointerId) return;
+    if (!draggedPiece) return;
+
+    const moved = draggedPiece.moved ||
+      Math.hypot(event.clientX - draggedPiece.startX, event.clientY - draggedPiece.startY) >= 4;
+    setDraggedPiece(prev => prev ? { ...prev, moved } : prev);
     setDragPosition({ x: event.clientX, y: event.clientY });
     event.preventDefault();
   };
@@ -719,26 +733,21 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
     const square = squareElement?.dataset.editorSquare;
     const from = draggedPiece?.from;
 
-    if (square && draggedPiece) {
+    const isLegalTarget = !!square && draggedPiece?.moved && possibleTargets.includes(square);
+
+    if (isLegalTarget && draggedPiece) {
       const file = FILES.indexOf(square[0]);
       const rank = RANKS.indexOf(square[1]);
       if (file >= 0 && rank >= 0) {
-        if (mode === 'setup') {
-          const newBoard = board.map(row => [...row]);
-          if (from && (from.rank !== rank || from.file !== file)) {
-            newBoard[from.rank][from.file] = null;
-          }
-          newBoard[rank][file] = draggedPiece.piece;
-          setBoard(newBoard);
-          setSelectedPiece(draggedPiece.piece);
-          setIsEraseMode(false);
-        } else if (from) {
+        if (from) {
           handleDraggedMove(
             `${FILES[from.file]}${RANKS[from.rank]}` as Square,
             square as Square
           );
         }
       }
+    } else if (draggedPiece?.moved) {
+      playSound('illegal');
     }
 
     activePointerId.current = null;
@@ -759,15 +768,19 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
     piece: PieceType,
     from?: { rank: number; file: number }
   ) => {
-    if (mode !== 'setup') {
-      if (!from || !solutionGame) return;
-      const square = `${FILES[from.file]}${RANKS[from.rank]}` as Square;
-      const boardPiece = solutionGame.get(square);
-      if (!boardPiece || boardPiece.color !== solutionGame.turn()) return;
-      setSelectedSquare(square);
-      setPossibleTargets(getPossibleSquares(solutionGame, square));
-    }
-    setDraggedPiece({ piece, from });
+    if ((mode !== 'preloadedMove' && mode !== 'solution') || !solutionGame || !from) return;
+    const square = `${FILES[from.file]}${RANKS[from.rank]}` as Square;
+    const boardPiece = solutionGame.get(square);
+    if (!boardPiece || boardPiece.color !== solutionGame.turn()) return;
+    setSelectedSquare(square);
+    setPossibleTargets(getPossibleSquares(solutionGame, square));
+    setDraggedPiece({
+      piece,
+      from,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: true,
+    });
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', piece);
   };
@@ -1038,8 +1051,11 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
   const displayBoard = getOrientedBoard();
 
   return (
-    <div className="space-y-4 select-none" style={{ touchAction: 'none' }}>
-      {draggedPiece && dragPosition && (
+    <div
+      className="space-y-4 select-none"
+      style={{ touchAction: mode === 'preloadedMove' || mode === 'solution' ? 'none' : 'auto' }}
+    >
+      {draggedPiece?.moved && dragPosition && (
         <img
           src={PIECE_IMAGES[draggedPiece.piece]}
           alt=""
@@ -1107,26 +1123,26 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
                         onDoubleClick={() => handleSquareDoubleClick(actualRank, actualFile)}
                         onMouseDown={(event) => handleSquareMouseDown(event, actualRank, actualFile)}
                         onPointerDown={(event) => {
-                          if (canDragBoardPiece && piece) {
+                          if (mode !== 'setup' && canDragBoardPiece && piece) {
                             handlePointerDown(event, piece, { rank: actualRank, file: actualFile });
                           }
                         }}
-                        onPointerMove={handlePointerMove}
-                        onPointerUp={handlePointerUp}
-                        onPointerCancel={handlePointerCancel}
+                        onPointerMove={mode !== 'setup' ? handlePointerMove : undefined}
+                        onPointerUp={mode !== 'setup' ? handlePointerUp : undefined}
+                        onPointerCancel={mode !== 'setup' ? handlePointerCancel : undefined}
                         draggable={false}
                         onDragStart={(event) => {
-                          if (piece) {
+                          if (mode !== 'setup' && piece) {
                             handlePieceDragStart(event, piece, { rank: actualRank, file: actualFile });
                           }
                         }}
                         onDragOver={(event) => {
-                          if (mode === 'setup' || mode === 'preloadedMove' || mode === 'solution') {
+                          if (mode === 'preloadedMove' || mode === 'solution') {
                             event.preventDefault();
                           }
                         }}
-                        onDrop={(event) => handleSquareDrop(event, actualRank, actualFile)}
-                        onDragEnd={() => setDraggedPiece(null)}
+                        onDrop={mode !== 'setup' ? (event) => handleSquareDrop(event, actualRank, actualFile) : undefined}
+                        onDragEnd={mode !== 'setup' ? () => setDraggedPiece(null) : undefined}
                         className="w-9 h-9 sm:w-12 sm:h-12 md:w-14 md:h-14 flex items-center justify-center relative transition-all hover:brightness-110"
                         style={{ backgroundColor: bgColor }}
                       >
@@ -1184,10 +1200,6 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
                       key={piece}
                       onClick={() => { setSelectedPiece(piece); setIsEraseMode(false); }}
                       draggable={false}
-                      onPointerDown={(event) => handlePointerDown(event, piece)}
-                      onPointerMove={handlePointerMove}
-                      onPointerUp={handlePointerUp}
-                      onPointerCancel={handlePointerCancel}
                       className={`w-9 h-9 sm:w-11 sm:h-11 rounded-lg border-2 transition-all flex items-center justify-center ${
                         selectedPiece === piece && !isEraseMode
                           ? 'border-[#81b64c] bg-[#81b64c]/30 scale-110'
@@ -1209,10 +1221,6 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
                       key={piece}
                       onClick={() => { setSelectedPiece(piece); setIsEraseMode(false); }}
                       draggable={false}
-                      onPointerDown={(event) => handlePointerDown(event, piece)}
-                      onPointerMove={handlePointerMove}
-                      onPointerUp={handlePointerUp}
-                      onPointerCancel={handlePointerCancel}
                       className={`w-9 h-9 sm:w-11 sm:h-11 rounded-lg border-2 transition-all flex items-center justify-center ${
                         selectedPiece === piece && !isEraseMode
                           ? 'border-[#81b64c] bg-[#81b64c]/30 scale-110'
