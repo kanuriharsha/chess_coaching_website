@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { Chess, Square } from 'chess.js';
 import { getPossibleSquares, isCapture, isPromotionMove } from '@/lib/chess';
 import PromotionDialog from './PromotionDialog';
@@ -235,6 +235,13 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
   const [board, setBoard] = useState<(PieceType | null)[][]>(() =>
     Array(8).fill(null).map(() => Array(8).fill(null))
   );
+  const [draggedPiece, setDraggedPiece] = useState<{
+    piece: PieceType;
+    from?: { rank: number; file: number };
+  } | null>(null);
+  const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | null>(null);
+  const activePointerId = useRef<number | null>(null);
+  const suppressNextClick = useRef(false);
 
   const [selectedPiece, setSelectedPiece] = useState<PieceType | null>(null);
   const [isEraseMode, setIsEraseMode] = useState(false);
@@ -505,6 +512,11 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
 
   // Handle clicking on a square in setup mode
   const handleSquareClick = (rank: number, file: number) => {
+    if (suppressNextClick.current) {
+      suppressNextClick.current = false;
+      return;
+    }
+
     if (mode === 'setup') {
       if (isEraseMode) {
         // Erase piece
@@ -529,6 +541,10 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
       const square = `${FILES[file]}${RANKS[rank]}` as Square;
       
       if (selectedSquare) {
+        if (selectedSquare === square) {
+          setPossibleTargets(getPossibleSquares(solutionGame, square));
+          return;
+        }
         // Try to make the preloaded move
         try {
           const gameCopy = new Chess(solutionGame.fen());
@@ -571,6 +587,10 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
       const square = `${FILES[file]}${RANKS[rank]}` as Square;
       
       if (selectedSquare) {
+        if (selectedSquare === square) {
+          setPossibleTargets(getPossibleSquares(solutionGame, square));
+          return;
+        }
         try {
           const gameCopy = new Chess(solutionGame.fen());
           const moveVerbose = gameCopy.moves({ square: selectedSquare as Square, verbose: true }).find(m => m.to === square);
@@ -598,6 +618,188 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
         }
       }
     }
+  };
+
+  const handleSquareDoubleClick = (rank: number, file: number) => {
+    if ((mode !== 'preloadedMove' && mode !== 'solution') || !solutionGame) return;
+
+    const square = `${FILES[file]}${RANKS[rank]}` as Square;
+    const piece = solutionGame.get(square);
+    if (!piece || piece.color !== solutionGame.turn()) return;
+
+    setSelectedSquare(square);
+    setPossibleTargets(getPossibleSquares(solutionGame, square));
+  };
+
+  const handleSquareMouseDown = (event: React.MouseEvent, rank: number, file: number) => {
+    if (event.button !== 0 || (mode !== 'preloadedMove' && mode !== 'solution') || !solutionGame) return;
+
+    const square = `${FILES[file]}${RANKS[rank]}` as Square;
+    const piece = solutionGame.get(square);
+    if (!piece || piece.color !== solutionGame.turn()) return;
+
+    setSelectedSquare(square);
+    setPossibleTargets(getPossibleSquares(solutionGame, square));
+  };
+
+  const handleDraggedMove = (from: Square, to: Square) => {
+    if ((mode !== 'preloadedMove' && mode !== 'solution') || !solutionGame) return;
+
+    try {
+      const gameCopy = new Chess(solutionGame.fen());
+      const moveVerbose = gameCopy.moves({ square: from, verbose: true }).find(move => move.to === to);
+      if (moveVerbose && moveVerbose.promotion) {
+        setPendingPromotion({ from, to, gameCopy });
+        setShowPromotionDialog(true);
+        return;
+      }
+
+      const move = gameCopy.move({ from, to });
+      if (!move) return;
+
+      if (mode === 'preloadedMove') {
+        setPreloadedMove(move.san);
+        setPreloadedMoveFen(gameCopy.fen());
+        setSolutionGame(new Chess(gameCopy.fen()));
+        toast.success(`Preloaded move recorded: ${move.san}`, {
+          description: 'Now proceeding to solution recording...'
+        });
+        setTimeout(() => {
+          setMode('solution');
+          setMoveTree([]);
+          setCurrentParentId(null);
+        }, 600);
+      } else {
+        recordMoveToTree(move.san, gameCopy);
+        setBranchingFromNodeId(null);
+      }
+    } catch (error) {
+      toast.error('Invalid move');
+    }
+
+    setSelectedSquare(null);
+    setPossibleTargets([]);
+  };
+
+  const handlePointerDown = (
+    event: React.PointerEvent,
+    piece: PieceType,
+    from?: { rank: number; file: number }
+  ) => {
+    if (event.button !== 0 || (mode !== 'setup' && !solutionGame)) return;
+
+    if (mode !== 'setup') {
+      if (!from) return;
+      const square = `${FILES[from.file]}${RANKS[from.rank]}` as Square;
+      const boardPiece = solutionGame?.get(square);
+      if (!boardPiece || boardPiece.color !== solutionGame?.turn()) return;
+      setSelectedSquare(square);
+      setPossibleTargets(getPossibleSquares(solutionGame, square));
+    }
+
+    activePointerId.current = event.pointerId;
+    suppressNextClick.current = true;
+    setDraggedPiece({ piece, from });
+    setDragPosition({ x: event.clientX, y: event.clientY });
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+
+  const handlePointerMove = (event: React.PointerEvent) => {
+    if (activePointerId.current !== event.pointerId) return;
+    setDragPosition({ x: event.clientX, y: event.clientY });
+    event.preventDefault();
+  };
+
+  const handlePointerUp = (event: React.PointerEvent) => {
+    if (activePointerId.current !== event.pointerId) return;
+
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    const squareElement = target?.closest<HTMLElement>('[data-editor-square]');
+    const square = squareElement?.dataset.editorSquare;
+    const from = draggedPiece?.from;
+
+    if (square && draggedPiece) {
+      const file = FILES.indexOf(square[0]);
+      const rank = RANKS.indexOf(square[1]);
+      if (file >= 0 && rank >= 0) {
+        if (mode === 'setup') {
+          const newBoard = board.map(row => [...row]);
+          if (from && (from.rank !== rank || from.file !== file)) {
+            newBoard[from.rank][from.file] = null;
+          }
+          newBoard[rank][file] = draggedPiece.piece;
+          setBoard(newBoard);
+          setSelectedPiece(draggedPiece.piece);
+          setIsEraseMode(false);
+        } else if (from) {
+          handleDraggedMove(
+            `${FILES[from.file]}${RANKS[from.rank]}` as Square,
+            square as Square
+          );
+        }
+      }
+    }
+
+    activePointerId.current = null;
+    setDraggedPiece(null);
+    setDragPosition(null);
+    event.preventDefault();
+  };
+
+  const handlePointerCancel = (event: React.PointerEvent) => {
+    if (activePointerId.current !== event.pointerId) return;
+    activePointerId.current = null;
+    setDraggedPiece(null);
+    setDragPosition(null);
+  };
+
+  const handlePieceDragStart = (
+    event: React.DragEvent,
+    piece: PieceType,
+    from?: { rank: number; file: number }
+  ) => {
+    if (mode !== 'setup') {
+      if (!from || !solutionGame) return;
+      const square = `${FILES[from.file]}${RANKS[from.rank]}` as Square;
+      const boardPiece = solutionGame.get(square);
+      if (!boardPiece || boardPiece.color !== solutionGame.turn()) return;
+      setSelectedSquare(square);
+      setPossibleTargets(getPossibleSquares(solutionGame, square));
+    }
+    setDraggedPiece({ piece, from });
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', piece);
+  };
+
+  const handleSquareDrop = (event: React.DragEvent, rank: number, file: number) => {
+    event.preventDefault();
+
+    if (mode !== 'setup') {
+      const from = draggedPiece?.from;
+      if (from) {
+        handleDraggedMove(
+          `${FILES[from.file]}${RANKS[from.rank]}` as Square,
+          `${FILES[file]}${RANKS[rank]}` as Square
+        );
+      }
+      setDraggedPiece(null);
+      return;
+    }
+
+    const piece = draggedPiece?.piece || event.dataTransfer.getData('text/plain') as PieceType;
+    if (!piece || !PIECE_IMAGES[piece]) return;
+
+    const newBoard = board.map(row => [...row]);
+    const from = draggedPiece?.from;
+    if (from && (from.rank !== rank || from.file !== file)) {
+      newBoard[from.rank][from.file] = null;
+    }
+    newBoard[rank][file] = piece;
+    setBoard(newBoard);
+    setSelectedPiece(piece);
+    setIsEraseMode(false);
+    setDraggedPiece(null);
   };
 
   const handlePromotionSelect = (piece: 'q' | 'r' | 'b' | 'n') => {
@@ -836,7 +1038,20 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
   const displayBoard = getOrientedBoard();
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 select-none" style={{ touchAction: 'none' }}>
+      {draggedPiece && dragPosition && (
+        <img
+          src={PIECE_IMAGES[draggedPiece.piece]}
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none fixed z-[100] h-12 w-12 object-contain drop-shadow-lg"
+          style={{
+            left: dragPosition.x,
+            top: dragPosition.y,
+            transform: 'translate(-50%, -50%)',
+          }}
+        />
+      )}
       {/* Mode indicator */}
       <div className="flex items-center justify-between">
         <div className={`px-3 py-1 rounded-full text-sm font-medium ${
@@ -871,6 +1086,12 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
                     const isLight = (actualRank + actualFile) % 2 === 0;
                     const square = `${FILES[actualFile]}${RANKS[actualRank]}`;
                     const isSelected = selectedSquare === square;
+                    const canDragBoardPiece = !!piece && (
+                      mode === 'setup' || (
+                        !!solutionGame &&
+                        solutionGame.get(square as Square)?.color === solutionGame.turn()
+                      )
+                    );
                     
                     // Chess.com colors
                     let bgColor = isLight ? LIGHT_SQUARE : DARK_SQUARE;
@@ -881,7 +1102,31 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
                     return (
                       <button
                         key={`${rank}-${file}`}
+                        data-editor-square={square}
                         onClick={() => handleSquareClick(actualRank, actualFile)}
+                        onDoubleClick={() => handleSquareDoubleClick(actualRank, actualFile)}
+                        onMouseDown={(event) => handleSquareMouseDown(event, actualRank, actualFile)}
+                        onPointerDown={(event) => {
+                          if (canDragBoardPiece && piece) {
+                            handlePointerDown(event, piece, { rank: actualRank, file: actualFile });
+                          }
+                        }}
+                        onPointerMove={handlePointerMove}
+                        onPointerUp={handlePointerUp}
+                        onPointerCancel={handlePointerCancel}
+                        draggable={false}
+                        onDragStart={(event) => {
+                          if (piece) {
+                            handlePieceDragStart(event, piece, { rank: actualRank, file: actualFile });
+                          }
+                        }}
+                        onDragOver={(event) => {
+                          if (mode === 'setup' || mode === 'preloadedMove' || mode === 'solution') {
+                            event.preventDefault();
+                          }
+                        }}
+                        onDrop={(event) => handleSquareDrop(event, actualRank, actualFile)}
+                        onDragEnd={() => setDraggedPiece(null)}
                         className="w-9 h-9 sm:w-12 sm:h-12 md:w-14 md:h-14 flex items-center justify-center relative transition-all hover:brightness-110"
                         style={{ backgroundColor: bgColor }}
                       >
@@ -938,6 +1183,11 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
                     <button
                       key={piece}
                       onClick={() => { setSelectedPiece(piece); setIsEraseMode(false); }}
+                      draggable={false}
+                      onPointerDown={(event) => handlePointerDown(event, piece)}
+                      onPointerMove={handlePointerMove}
+                      onPointerUp={handlePointerUp}
+                      onPointerCancel={handlePointerCancel}
                       className={`w-9 h-9 sm:w-11 sm:h-11 rounded-lg border-2 transition-all flex items-center justify-center ${
                         selectedPiece === piece && !isEraseMode
                           ? 'border-[#81b64c] bg-[#81b64c]/30 scale-110'
@@ -958,6 +1208,11 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
                     <button
                       key={piece}
                       onClick={() => { setSelectedPiece(piece); setIsEraseMode(false); }}
+                      draggable={false}
+                      onPointerDown={(event) => handlePointerDown(event, piece)}
+                      onPointerMove={handlePointerMove}
+                      onPointerUp={handlePointerUp}
+                      onPointerCancel={handlePointerCancel}
                       className={`w-9 h-9 sm:w-11 sm:h-11 rounded-lg border-2 transition-all flex items-center justify-center ${
                         selectedPiece === piece && !isEraseMode
                           ? 'border-[#81b64c] bg-[#81b64c]/30 scale-110'
