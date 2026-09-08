@@ -125,6 +125,7 @@ const puzzleSchema = new mongoose.Schema({
   difficulty: { type: String, enum: ['easy', 'medium', 'hard'], default: 'medium' },
   icon: { type: String, default: '♔' },
   isEnabled: { type: Boolean, default: true },
+  allowedGroups: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Group' }],
   preloadedMove: { type: String }, // Optional move to execute automatically before student plays
   successMessage: { type: String, default: 'Checkmate! Brilliant move!' }, // Custom success message when puzzle is solved
   order: { type: Number, default: 0 }, // Order for manual arrangement
@@ -204,7 +205,10 @@ const PuzzleCategory = mongoose.model('PuzzleCategory', puzzleCategorySchema, 'p
 // Puzzle Category Order Schema - stores display order for ALL categories (default + custom)
 const puzzleCategoryOrderSchema = new mongoose.Schema({
   categoryId: { type: String, required: true, unique: true },
-  order_index: { type: Number, required: true, default: 0 }
+  order_index: { type: Number, required: true, default: 0 },
+  isEnabled: { type: Boolean, default: true },
+  allowedGroups: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Group' }],
+  groupsConfigured: { type: Boolean, default: false }
 });
 const PuzzleCategoryOrder = mongoose.model('PuzzleCategoryOrder', puzzleCategoryOrderSchema, 'puzzlecategoryorder');
 
@@ -339,7 +343,8 @@ app.post('/api/auth/login', async (req, res) => {
         role: foundUser.role,
         isEnabled: foundUser.isEnabled,
         onboardingComplete: foundUser.onboardingComplete,
-        profile: foundUser.profile
+        profile: foundUser.profile,
+        groupId: foundUser.groupId
       }
     });
   } catch (error) {
@@ -369,7 +374,8 @@ app.get('/api/auth/me', async (req, res) => {
       role: user.role,
       isEnabled: user.isEnabled,
       onboardingComplete: user.onboardingComplete,
-      profile: user.profile
+      profile: user.profile,
+      groupId: user.groupId
     });
   } catch (error) {
     console.error('Auth check error:', error);
@@ -1290,10 +1296,24 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
 
 // ============ PUZZLE ROUTES ============
 
+// Resolve the authenticated user when a puzzle request includes a token.
+const getPuzzleViewer = async (req) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return null;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return await User.findById(decoded.id).select('role groupId');
+  } catch {
+    return null;
+  }
+};
+
 // Get all puzzles
 app.get('/api/puzzles', async (req, res) => {
   try {
-    const puzzles = await Puzzle.find().sort({ order: 1, createdAt: 1 });
+    const viewer = await getPuzzleViewer(req);
+    const query = viewer?.role === 'admin' ? {} : { isEnabled: true };
+    const puzzles = await Puzzle.find(query).sort({ order: 1, createdAt: 1 });
     res.json(puzzles);
   } catch (error) {
     console.error('Get puzzles error:', error);
@@ -1304,7 +1324,18 @@ app.get('/api/puzzles', async (req, res) => {
 // Get puzzles by category
 app.get('/api/puzzles/category/:category', async (req, res) => {
   try {
-    const puzzles = await Puzzle.find({ category: req.params.category, isEnabled: true }).sort({ order: 1, createdAt: 1 });
+    const viewer = await getPuzzleViewer(req);
+    if (viewer?.role !== 'admin') {
+      const categorySettings = await PuzzleCategoryOrder.findOne({ categoryId: req.params.category });
+      const allowedGroups = categorySettings?.allowedGroups || [];
+      const categoryIsVisible = categorySettings?.isEnabled !== false &&
+        (!categorySettings?.groupsConfigured || (viewer?.groupId && allowedGroups.some(id => id.toString() === viewer.groupId.toString())));
+      if (!categoryIsVisible) return res.json([]);
+    }
+    const query = viewer?.role === 'admin'
+      ? { category: req.params.category }
+      : { category: req.params.category, isEnabled: true };
+    const puzzles = await Puzzle.find(query).sort({ order: 1, createdAt: 1 });
     res.json(puzzles);
   } catch (error) {
     console.error('Get puzzles by category error:', error);
@@ -1328,10 +1359,14 @@ app.post('/api/puzzles', async (req, res) => {
       .select('order');
 
     const newOrder = maxOrderPuzzle ? (maxOrderPuzzle.order + 1) : 1;
+    const allowedGroups = Array.isArray(req.body.allowedGroups)
+      ? req.body.allowedGroups
+      : await Group.distinct('_id');
 
     // Create puzzle with the new order value
     const puzzle = await Puzzle.create({
       ...req.body,
+      allowedGroups,
       order: newOrder
     });
 
@@ -1854,14 +1889,20 @@ app.put('/api/puzzle-category-order', async (req, res) => {
     const requestingUser = await User.findById(decoded.id);
     if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
 
-    const { order } = req.body; // Array of { categoryId, order_index }
+    const { order } = req.body; // Array of { categoryId, order_index, isEnabled, allowedGroups }
     if (!Array.isArray(order)) return res.status(400).json({ message: 'order must be an array' });
 
     // Upsert each category order
     const bulkOps = order.map(item => ({
       updateOne: {
         filter: { categoryId: item.categoryId },
-        update: { $set: { categoryId: item.categoryId, order_index: item.order_index } },
+        update: { $set: {
+          categoryId: item.categoryId,
+          order_index: item.order_index,
+          ...(typeof item.isEnabled === 'boolean' ? { isEnabled: item.isEnabled } : {}),
+          ...(Array.isArray(item.allowedGroups) ? { allowedGroups: item.allowedGroups } : {})
+          ,...(Array.isArray(item.allowedGroups) ? { groupsConfigured: true } : {})
+        } },
         upsert: true
       }
     }));
@@ -1879,6 +1920,34 @@ app.put('/api/puzzle-category-order', async (req, res) => {
     res.json(updated);
   } catch (error) {
     console.error('Set puzzle category order error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update category visibility and group access (admin only)
+app.put('/api/puzzle-category-visibility/:categoryId', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ message: 'No token provided' });
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const requestingUser = await User.findById(decoded.id);
+    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+
+    const { isEnabled, allowedGroups } = req.body;
+    const update = {};
+    if (typeof isEnabled === 'boolean') update.isEnabled = isEnabled;
+    if (Array.isArray(allowedGroups)) {
+      update.allowedGroups = allowedGroups;
+      update.groupsConfigured = true;
+    }
+    const settings = await PuzzleCategoryOrder.findOneAndUpdate(
+      { categoryId: req.params.categoryId },
+      { $set: update, $setOnInsert: { categoryId: req.params.categoryId, order_index: 999 } },
+      { new: true, upsert: true }
+    );
+    res.json(settings);
+  } catch (error) {
+    console.error('Update puzzle category visibility error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

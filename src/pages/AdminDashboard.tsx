@@ -71,6 +71,13 @@ interface Group {
   createdAt: string;
 }
 
+interface PuzzleCategoryVisibility {
+  categoryId: string;
+  isEnabled?: boolean;
+  allowedGroups?: string[];
+  groupsConfigured?: boolean;
+}
+
 
 interface Stats {
   totalStudents: number;
@@ -333,6 +340,7 @@ const AdminDashboard = () => {
   const [specificPuzzlesInputs, setSpecificPuzzlesInputs] = useState<Record<string, string>>({});
   const [showAccessModal, setShowAccessModal] = useState(false);
   const [puzzleCounts, setPuzzleCounts] = useState<{ [key: string]: number }>({});
+  const [puzzleCategoryVisibility, setPuzzleCategoryVisibility] = useState<PuzzleCategoryVisibility[]>([]);
   // Bulk selective access UI state
   const [bulkSelectionType, setBulkSelectionType] = useState<'openings' | 'famousMates' | 'bestGames'>('openings');
   const [selectedContentItemId, setSelectedContentItemId] = useState<string | null>(null);
@@ -417,10 +425,29 @@ const AdminDashboard = () => {
       loadBestGames(),
 
       loadCustomCategoriesFromAPI(),
-      loadGroups()
+      loadGroups(),
+      loadPuzzleCategoryVisibility()
 
     ]);
     setIsLoading(false);
+  };
+
+  const loadPuzzleCategoryVisibility = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/puzzle-category-order`);
+      if (response.ok) setPuzzleCategoryVisibility(await response.json());
+    } catch (error) {
+      console.error('Load puzzle category visibility error:', error);
+    }
+  };
+
+  const isCategoryVisibleForStudent = (categoryId: string, student: User | null): boolean => {
+    const settings = puzzleCategoryVisibility.find(item => item.categoryId === categoryId);
+    if (!settings) return true;
+    if (settings.isEnabled === false) return false;
+    if (!settings.groupsConfigured) return true;
+    const groupId = String(student?.groupId || '');
+    return !!groupId && settings.allowedGroups.map(String).includes(groupId);
   };
 
 
@@ -3530,7 +3557,7 @@ const AdminDashboard = () => {
                         <Puzzle className="w-5 h-5" /> Puzzle Access
                       </h3>
                       <div className="grid grid-cols-2 gap-4">
-                        {allPuzzleCategories.map((cat) => {
+                        {allPuzzleCategories.filter(cat => isCategoryVisibleForStudent(cat.id, selectedUserForAccess)).map((cat) => {
                           const hasIncomplete = hasIncompletePuzzlesInRange(cat.id);
                           const incompletePuzzles = getIncompletePuzzles(cat.id);
                           return (

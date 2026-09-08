@@ -24,6 +24,7 @@ interface PuzzleData {
   difficulty: 'easy' | 'medium' | 'hard';
   icon: string;
   isEnabled: boolean;
+  allowedGroups?: string[];
   preloadedMove?: string; // Optional move to execute automatically before student plays
   successMessage?: string; // Custom success message when puzzle is solved (default: "Checkmate! Brilliant move!")
   moveTree?: MoveNode[]; // Branching move tree (flat node list with parentId refs)
@@ -59,6 +60,11 @@ const PIECE_ICONS = [
 ];
 
 interface PuzzleCreatorProps { editPuzzleId?: string }
+
+interface PuzzleGroup {
+  _id: string;
+  name: string;
+}
 
 interface VariationData {
   fen: string;
@@ -361,13 +367,14 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
       const url = isEdit ? `${API_BASE_URL}/puzzles/${newPuzzle._id}` : `${API_BASE_URL}/puzzles`;
       const method = isEdit ? 'PUT' : 'POST';
 
+      const puzzlePayload = { ...newPuzzle };
       const response = await fetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify(newPuzzle)
+        body: JSON.stringify(puzzlePayload)
       });
 
       if (response.ok) {
@@ -947,6 +954,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2">
                       <Button
                         variant="ghost"
                         size="icon"
@@ -964,6 +972,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
+                    </div>
                     </div>
                   </div>
                 </CardContent>

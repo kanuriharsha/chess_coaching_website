@@ -8,6 +8,8 @@ import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Lock, CheckCircle, Puzzle as PuzzleIcon, ArrowRight, ArrowLeft, RotateCcw, Lightbulb, ShieldOff, Plus, Edit3, GripVertical, Save, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { useChessSound } from '@/hooks/useChessSound';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
@@ -32,11 +34,17 @@ interface PuzzleCategory {
   accessLimit: number; // 0 = unlimited, >0 = limited
   icon: string;
   order_index?: number; // Admin-defined display order
+  isEnabled?: boolean;
+  allowedGroups?: string[];
+  groupsConfigured?: boolean;
 }
 
 interface CategoryOrder {
   categoryId: string;
   order_index: number;
+  isEnabled?: boolean;
+  allowedGroups?: string[];
+  groupsConfigured?: boolean;
 }
 
 interface PuzzleData {
@@ -55,6 +63,10 @@ interface PuzzleData {
   preloadedMove?: string;
   successMessage?: string;
   moveTree?: MoveNode[]; // Branching move tree (flat nodes with parentId refs)
+}
+
+interface UserWithGroup {
+  groupId?: string;
 }
 
 interface ContentAccess {
@@ -93,6 +105,7 @@ const Puzzles = () => {
   const { trackPageVisit, trackPuzzleAttempt } = useActivityTracker();
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [customCategories, setCustomCategories] = useState<Array<{ id: string, name: string, description?: string, icon?: string }>>([]);
+  const [groups, setGroups] = useState<Array<{ _id: string; name: string }>>([]);
 
   const [puzzleCategories, setPuzzleCategories] = useState<PuzzleCategory[]>(defaultCategories);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -148,6 +161,7 @@ const Puzzles = () => {
     const init = async () => {
       const cats = await loadCustomCategories();
       const orderData = await loadCategoryOrder();
+      if (isAdmin) await loadGroups();
       await loadPuzzles(cats, orderData);
       if (!isAdmin) {
         loadContentAccess();
@@ -156,6 +170,17 @@ const Puzzles = () => {
     };
     init();
   }, [isAdmin]);
+
+  const loadGroups = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/groups`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (response.ok) setGroups(await response.json());
+    } catch (error) {
+      console.error('Failed to load groups:', error);
+    }
+  };
 
   // Load category display order from API
   const loadCategoryOrder = async (): Promise<CategoryOrder[]> => {
@@ -405,7 +430,9 @@ const Puzzles = () => {
 
   const loadPuzzles = async (cats: Array<{ id: string, name: string, description?: string, icon?: string }> = [], orderData: CategoryOrder[] = []) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/puzzles`);
+      const response = await fetch(`${API_BASE_URL}/puzzles`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       if (response.ok) {
         const puzzles: PuzzleData[] = await response.json();
 
@@ -439,9 +466,13 @@ const Puzzles = () => {
         let allCategories: PuzzleCategory[] = [...updatedDefault, ...customCategoryCards];
         if (orderData.length > 0) {
           const orderMap = new Map(orderData.map(o => [o.categoryId, o.order_index]));
+          const settingsMap = new Map(orderData.map(o => [o.categoryId, o]));
           allCategories = allCategories.map(cat => ({
             ...cat,
-            order_index: orderMap.has(cat.id) ? orderMap.get(cat.id) : 999
+            order_index: orderMap.has(cat.id) ? orderMap.get(cat.id) : 999,
+            isEnabled: settingsMap.get(cat.id)?.isEnabled,
+            allowedGroups: settingsMap.get(cat.id)?.allowedGroups?.map(String),
+            groupsConfigured: settingsMap.get(cat.id)?.groupsConfigured
           }));
           allCategories.sort((a, b) => (a.order_index ?? 999) - (b.order_index ?? 999));
         }
@@ -460,6 +491,36 @@ const Puzzles = () => {
     return contentAccess.puzzleAccess?.[categoryId]?.enabled || false;
   };
 
+  const isCategoryVisibleToStudent = (category: PuzzleCategory): boolean => {
+    if (category.isEnabled === false) return false;
+    if (!category.groupsConfigured) return true;
+    const studentGroupId = String((user as UserWithGroup | null)?.groupId || '');
+    return !!studentGroupId && category.allowedGroups.map(String).includes(studentGroupId);
+  };
+
+  const updateCategoryVisibility = async (category: PuzzleCategory, updates: { isEnabled?: boolean; allowedGroups?: string[] }) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/puzzle-category-visibility/${category.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(updates)
+      });
+      if (!response.ok) throw new Error('Update failed');
+      const saved: CategoryOrder = await response.json();
+      setPuzzleCategories(current => current.map(item => item.id === category.id
+        ? {
+            ...item,
+            isEnabled: saved.isEnabled,
+            allowedGroups: saved.allowedGroups?.map(String),
+            groupsConfigured: saved.groupsConfigured
+          }
+        : item));
+      toast.success('Puzzle theme visibility updated');
+    } catch (error) {
+      toast.error('Failed to update puzzle theme visibility');
+    }
+  };
+
   // Get access limit for category
   const getAccessLimit = (categoryId: string): number => {
     if (isAdmin) return 0;
@@ -469,7 +530,9 @@ const Puzzles = () => {
 
   const loadCategoryPuzzles = async (category: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/puzzles/category/${category}`);
+      const response = await fetch(`${API_BASE_URL}/puzzles/category/${category}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       if (response.ok) {
         let puzzles: PuzzleData[] = await response.json();
 
@@ -1190,17 +1253,22 @@ const Puzzles = () => {
                   if (aLocked !== bLocked) return aLocked ? 1 : -1; // unlocked first
                   // Within same lock group, preserve admin order
                   return (a.order_index ?? 999) - (b.order_index ?? 999);
-                }).map((category) => {
+                }).filter(category => isAdmin || isCategoryVisibleToStudent(category)).map((category) => {
                   const isAccessLocked = !isAdmin && !hasAccessToCategory(category.id);
                   const isEmptyLocked = category.count === 0 && !isAdmin;
                   const isLocked = isAccessLocked || isEmptyLocked;
                   const accessLimit = getAccessLimit(category.id);
 
                   return (
-                    <button
+                    <div
                       key={category.id}
                       onClick={() => handleCategoryClick(category)}
-                      className="card-premium p-5 text-left group relative"
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') handleCategoryClick(category);
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      className="card-premium p-5 text-left group relative cursor-pointer"
                     >
                       {/* Locked Badge - Top Right Corner */}
                       {isAccessLocked && (
@@ -1212,11 +1280,47 @@ const Puzzles = () => {
 
                       <div className="flex items-start justify-between mb-3">
                         <span className="text-3xl">{category.icon}</span>
-                        {isLocked ? (
-                          <Lock className="w-5 h-5 text-muted-foreground" />
-                        ) : (
-                          <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
-                        )}
+                        <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                          {isAdmin && (
+                            <div className="flex flex-col items-end gap-2">
+                              <div className="flex items-center gap-2 text-xs font-medium">
+                                <span>{category.isEnabled === false ? 'Hidden' : 'Visible'}</span>
+                                <Switch
+                                  checked={category.isEnabled !== false}
+                                  onCheckedChange={(checked) => updateCategoryVisibility(category, {
+                                    isEnabled: checked,
+                                    allowedGroups: checked
+                                      ? groups.map(group => group._id)
+                                      : (category.allowedGroups || groups.map(group => group._id))
+                                  })}
+                                />
+                              </div>
+                              {category.isEnabled !== false && groups.length > 0 && (
+                                <div className="flex flex-wrap justify-end gap-x-2 gap-y-1">
+                                  {groups.map(group => {
+                                    const allowedGroups = category.groupsConfigured
+                                      ? (category.allowedGroups || [])
+                                      : groups.map(item => item._id);
+                                    return (
+                                      <label key={group._id} className="flex items-center gap-1 text-xs" onClick={(event) => event.stopPropagation()}>
+                                        <Checkbox
+                                          checked={allowedGroups.includes(group._id)}
+                                          onCheckedChange={(checked) => updateCategoryVisibility(category, {
+                                            allowedGroups: checked
+                                              ? [...allowedGroups, group._id]
+                                              : allowedGroups.filter(id => id !== group._id)
+                                          })}
+                                        />
+                                        {group.name}
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {isLocked ? <Lock className="w-5 h-5 text-muted-foreground" /> : <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />}
+                        </div>
                       </div>
                       <h3 className="font-serif text-lg font-semibold text-foreground mb-1">
                         {category.name}
@@ -1278,7 +1382,7 @@ const Puzzles = () => {
                           })()}
                         </div>
                       )}
-                    </button>
+                    </div>
                   );
                 })}
               </div>

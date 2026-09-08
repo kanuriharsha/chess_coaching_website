@@ -20,6 +20,8 @@ export interface User {
   id: string;
   username: string;
   role: 'admin' | 'student';
+  groupId?: string | null;
+  groupName?: string | null;
   isEnabled: boolean;
   onboardingComplete: boolean;
   joiningDate?: string;
