@@ -1,4 +1,5 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Chess, Square } from 'chess.js';
 import { getPossibleSquares, isCapture, isPromotionMove } from '@/lib/chess';
 import PromotionDialog from './PromotionDialog';
@@ -248,6 +249,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
   const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | null>(null);
   const activePointerId = useRef<number | null>(null);
   const suppressNextClick = useRef(false);
+  const initialScrollPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const [selectedPiece, setSelectedPiece] = useState<PieceType | null>(null);
   const [isEraseMode, setIsEraseMode] = useState(false);
@@ -638,6 +640,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
   };
 
   const handleSquareMouseDown = (event: React.MouseEvent, rank: number, file: number) => {
+    event.preventDefault();
     if (event.button !== 0 || (mode !== 'preloadedMove' && mode !== 'solution') || !solutionGame) return;
 
     const square = `${FILES[file]}${RANKS[rank]}` as Square;
@@ -692,16 +695,39 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
     piece: PieceType,
     from?: { rank: number; file: number }
   ) => {
-    if (event.button !== 0 || (mode !== 'preloadedMove' && mode !== 'solution') || !solutionGame || !from) return;
+    if (event.button !== 0 || !from) return;
+
+    // Prevent default touch panning, body scrolling, image drag, and focus scrolling
+    event.preventDefault();
+
+    // Lock scroll position strictly to pre-drag position
+    initialScrollPos.current = { x: window.scrollX, y: window.scrollY };
+
+    if (mode === 'setup') {
+      activePointerId.current = event.pointerId;
+      suppressNextClick.current = false;
+      setDraggedPiece({
+        piece,
+        from,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+      });
+      setDragPosition({ x: event.clientX, y: event.clientY });
+      return;
+    }
+
+    if ((mode !== 'preloadedMove' && mode !== 'solution') || !solutionGame) return;
 
     const square = `${FILES[from.file]}${RANKS[from.rank]}` as Square;
     const boardPiece = solutionGame.get(square);
     if (!boardPiece || boardPiece.color !== solutionGame.turn()) return;
+
     setSelectedSquare(square);
     setPossibleTargets(getPossibleSquares(solutionGame, square));
 
     activePointerId.current = event.pointerId;
-    suppressNextClick.current = true;
+    suppressNextClick.current = false;
     setDraggedPiece({
       piece,
       from,
@@ -710,80 +736,95 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
       moved: false,
     });
     setDragPosition({ x: event.clientX, y: event.clientY });
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
   };
 
-  const handlePointerMove = (event: React.PointerEvent) => {
-    if (activePointerId.current !== event.pointerId) return;
+  // Window-level global listeners for smooth drag tracking without element-level pointer capture reflows
+  useEffect(() => {
     if (!draggedPiece) return;
 
-    const moved = draggedPiece.moved ||
-      Math.hypot(event.clientX - draggedPiece.startX, event.clientY - draggedPiece.startY) >= 4;
-    setDraggedPiece(prev => prev ? { ...prev, moved } : prev);
-    setDragPosition({ x: event.clientX, y: event.clientY });
-    event.preventDefault();
-  };
+    const handleWindowPointerMove = (e: PointerEvent) => {
+      if (activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
 
-  const handlePointerUp = (event: React.PointerEvent) => {
-    if (activePointerId.current !== event.pointerId) return;
+      e.preventDefault();
 
-    const target = document.elementFromPoint(event.clientX, event.clientY);
-    const squareElement = target?.closest<HTMLElement>('[data-editor-square]');
-    const square = squareElement?.dataset.editorSquare;
-    const from = draggedPiece?.from;
+      // Ensure scroll position remains 100% untouched
+      if (window.scrollX !== initialScrollPos.current.x || window.scrollY !== initialScrollPos.current.y) {
+        window.scrollTo(initialScrollPos.current.x, initialScrollPos.current.y);
+      }
 
-    const isLegalTarget = !!square && draggedPiece?.moved && possibleTargets.includes(square);
+      const moved = Math.hypot(e.clientX - draggedPiece.startX, e.clientY - draggedPiece.startY) >= 4;
+      if (moved) {
+        suppressNextClick.current = true;
+      }
 
-    if (isLegalTarget && draggedPiece) {
-      const file = FILES.indexOf(square[0]);
-      const rank = RANKS.indexOf(square[1]);
-      if (file >= 0 && rank >= 0) {
-        if (from) {
+      setDraggedPiece(prev => prev ? { ...prev, moved: prev.moved || moved } : prev);
+      setDragPosition({ x: e.clientX, y: e.clientY });
+    };
+
+    const handleWindowPointerUp = (e: PointerEvent) => {
+      if (activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
+
+      e.preventDefault();
+
+      // Ensure scroll position remains 100% untouched
+      if (window.scrollX !== initialScrollPos.current.x || window.scrollY !== initialScrollPos.current.y) {
+        window.scrollTo(initialScrollPos.current.x, initialScrollPos.current.y);
+      }
+
+      const from = draggedPiece.from;
+      const isMoved = draggedPiece.moved;
+
+      if (isMoved && from) {
+        const target = document.elementFromPoint(e.clientX, e.clientY);
+        const squareElement = target?.closest<HTMLElement>('[data-editor-square]');
+        const square = squareElement?.dataset.editorSquare;
+
+        if (mode === 'setup' && square) {
+          const targetFile = FILES.indexOf(square[0]);
+          const targetRank = RANKS.indexOf(square[1]);
+          if (targetFile >= 0 && targetRank >= 0 && (from.rank !== targetRank || from.file !== targetFile)) {
+            const newBoard = board.map(r => [...r]);
+            newBoard[from.rank][from.file] = null;
+            newBoard[targetRank][targetFile] = draggedPiece.piece;
+            setBoard(newBoard);
+          }
+        } else if ((mode === 'preloadedMove' || mode === 'solution') && square && possibleTargets.includes(square)) {
           handleDraggedMove(
             `${FILES[from.file]}${RANKS[from.rank]}` as Square,
             square as Square
           );
+        } else if (mode !== 'setup') {
+          playSound('illegal');
         }
       }
-    } else if (draggedPiece?.moved) {
-      playSound('illegal');
-    }
 
-    activePointerId.current = null;
-    setDraggedPiece(null);
-    setDragPosition(null);
-    event.preventDefault();
-  };
+      activePointerId.current = null;
+      setDraggedPiece(null);
+      setDragPosition(null);
+    };
 
-  const handlePointerCancel = (event: React.PointerEvent) => {
-    if (activePointerId.current !== event.pointerId) return;
-    activePointerId.current = null;
-    setDraggedPiece(null);
-    setDragPosition(null);
-  };
+    const handleWindowPointerCancel = (e: PointerEvent) => {
+      if (activePointerId.current !== null && e.pointerId !== activePointerId.current) return;
 
-  const handlePieceDragStart = (
-    event: React.DragEvent,
-    piece: PieceType,
-    from?: { rank: number; file: number }
-  ) => {
-    if ((mode !== 'preloadedMove' && mode !== 'solution') || !solutionGame || !from) return;
-    const square = `${FILES[from.file]}${RANKS[from.rank]}` as Square;
-    const boardPiece = solutionGame.get(square);
-    if (!boardPiece || boardPiece.color !== solutionGame.turn()) return;
-    setSelectedSquare(square);
-    setPossibleTargets(getPossibleSquares(solutionGame, square));
-    setDraggedPiece({
-      piece,
-      from,
-      startX: event.clientX,
-      startY: event.clientY,
-      moved: true,
-    });
-    event.dataTransfer.effectAllowed = 'move';
-    event.dataTransfer.setData('text/plain', piece);
-  };
+      if (window.scrollX !== initialScrollPos.current.x || window.scrollY !== initialScrollPos.current.y) {
+        window.scrollTo(initialScrollPos.current.x, initialScrollPos.current.y);
+      }
+
+      activePointerId.current = null;
+      setDraggedPiece(null);
+      setDragPosition(null);
+    };
+
+    window.addEventListener('pointermove', handleWindowPointerMove, { passive: false });
+    window.addEventListener('pointerup', handleWindowPointerUp, { passive: false });
+    window.addEventListener('pointercancel', handleWindowPointerCancel, { passive: false });
+
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove);
+      window.removeEventListener('pointerup', handleWindowPointerUp);
+      window.removeEventListener('pointercancel', handleWindowPointerCancel);
+    };
+  }, [draggedPiece, board, mode, possibleTargets, solutionGame, playSound]);
 
   const handleSquareDrop = (event: React.DragEvent, rank: number, file: number) => {
     event.preventDefault();
@@ -1051,22 +1092,21 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
   const displayBoard = getOrientedBoard();
 
   return (
-    <div
-      className="space-y-4 select-none"
-      style={{ touchAction: mode === 'preloadedMove' || mode === 'solution' ? 'none' : 'auto' }}
-    >
-      {draggedPiece?.moved && dragPosition && (
+    <div className="space-y-4 select-none">
+      {draggedPiece?.moved && dragPosition && createPortal(
         <img
           src={PIECE_IMAGES[draggedPiece.piece]}
           alt=""
           aria-hidden="true"
-          className="pointer-events-none fixed z-[100] h-12 w-12 object-contain drop-shadow-lg"
+          className="pointer-events-none fixed z-[9999] h-12 w-12 object-contain drop-shadow-lg touch-none"
           style={{
             left: dragPosition.x,
             top: dragPosition.y,
             transform: 'translate(-50%, -50%)',
+            willChange: 'left, top',
           }}
-        />
+        />,
+        document.body
       )}
       {/* Mode indicator */}
       <div className="flex items-center justify-between">
@@ -1092,7 +1132,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
         <div className="flex-1">
           {/* Chess board - Chess.com style */}
           <div className="flex justify-center">
-            <div className="inline-block rounded-md overflow-hidden shadow-lg" style={{ border: '3px solid #3d3d3d' }}>
+            <div className="inline-block rounded-md overflow-hidden shadow-lg select-none" style={{ border: '3px solid #3d3d3d', touchAction: 'none', overflowAnchor: 'none' }}>
               {displayBoard.map((row, rank) => (
                 <div key={rank} className="flex">
                   {row.map((piece, file) => {
@@ -1118,32 +1158,24 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
                     return (
                       <button
                         key={`${rank}-${file}`}
+                        tabIndex={-1}
                         data-editor-square={square}
                         onClick={() => handleSquareClick(actualRank, actualFile)}
                         onDoubleClick={() => handleSquareDoubleClick(actualRank, actualFile)}
                         onMouseDown={(event) => handleSquareMouseDown(event, actualRank, actualFile)}
-                        onPointerDown={(event) => {
-                          if (mode !== 'setup' && canDragBoardPiece && piece) {
-                            handlePointerDown(event, piece, { rank: actualRank, file: actualFile });
-                          }
-                        }}
-                        onPointerMove={mode !== 'setup' ? handlePointerMove : undefined}
-                        onPointerUp={mode !== 'setup' ? handlePointerUp : undefined}
-                        onPointerCancel={mode !== 'setup' ? handlePointerCancel : undefined}
-                        draggable={false}
-                        onDragStart={(event) => {
-                          if (mode !== 'setup' && piece) {
-                            handlePieceDragStart(event, piece, { rank: actualRank, file: actualFile });
-                          }
-                        }}
-                        onDragOver={(event) => {
-                          if (mode === 'preloadedMove' || mode === 'solution') {
+                        onTouchStart={(event) => {
+                          if (canDragBoardPiece && piece) {
                             event.preventDefault();
                           }
                         }}
-                        onDrop={mode !== 'setup' ? (event) => handleSquareDrop(event, actualRank, actualFile) : undefined}
-                        onDragEnd={mode !== 'setup' ? () => setDraggedPiece(null) : undefined}
-                        className="w-9 h-9 sm:w-12 sm:h-12 md:w-14 md:h-14 flex items-center justify-center relative transition-all hover:brightness-110"
+                        onPointerDown={(event) => {
+                          if (canDragBoardPiece && piece) {
+                            handlePointerDown(event, piece, { rank: actualRank, file: actualFile });
+                          }
+                        }}
+                        draggable={false}
+                        onDragStart={(event) => event.preventDefault()}
+                        className="w-9 h-9 sm:w-12 sm:h-12 md:w-14 md:h-14 flex items-center justify-center relative transition-colors duration-100 hover:brightness-110 select-none focus:outline-none"
                         style={{ backgroundColor: bgColor }}
                       >
                         {piece && (
