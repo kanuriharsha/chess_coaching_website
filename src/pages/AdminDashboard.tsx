@@ -169,6 +169,7 @@ interface PuzzleProgress {
   }[];
 }
 
+<<<<<<< HEAD
 interface PuzzleRecommendationCategory {
   category: string;
   completed: number;
@@ -186,6 +187,8 @@ interface PuzzleRecommendations {
   categories: PuzzleRecommendationCategory[];
 }
 
+=======
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
 interface UserActivity {
   type: 'page_visit' | 'puzzle_attempt' | 'puzzle_solved' | 'puzzle_failed' | 'opening_viewed' | 'game_viewed' | 'login' | 'logout';
   description: string;
@@ -354,7 +357,10 @@ const AdminDashboard = () => {
   // Content Access states
   const [selectedUserForAccess, setSelectedUserForAccess] = useState<User | null>(null);
   const [userContentAccess, setUserContentAccess] = useState<ContentAccess | null>(null);
+<<<<<<< HEAD
   const [puzzleRecommendations, setPuzzleRecommendations] = useState<PuzzleRecommendations | null>(null);
+=======
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
   const [specificPuzzlesInputs, setSpecificPuzzlesInputs] = useState<Record<string, string>>({});
   const [showAccessModal, setShowAccessModal] = useState(false);
   const [puzzleCounts, setPuzzleCounts] = useState<{ [key: string]: number }>({});
@@ -644,8 +650,13 @@ const AdminDashboard = () => {
     const rangeEnd = access.rangeEnd;
     const specificPuzzles = access.specificPuzzles;
     
+<<<<<<< HEAD
     const categoryProgress = puzzleRecommendations?.categories.find(p => p.category === categoryId);
     if (!categoryProgress) return false;
+=======
+    const categoryProgress = userPuzzleProgress.find(p => p.category === categoryId);
+    if (!categoryProgress || !categoryProgress.puzzleDetails) return false;
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
 
     // Build combined enabled set from range + specific (merged)
     const hasRange = rangeStart && rangeEnd && rangeEnd >= rangeStart;
@@ -662,7 +673,12 @@ const AdminDashboard = () => {
     const enabledNums = Array.from(enabledSet).sort((a, b) => a - b);
 
     for (const puzzleNum of enabledNums) {
+<<<<<<< HEAD
       if (!categoryProgress.solvedPuzzleNumbers.includes(puzzleNum)) return true;
+=======
+      const puzzle = categoryProgress.puzzleDetails[puzzleNum - 1];
+      if (!puzzle || !puzzle.solved) return true;
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
     }
     return false;
   };
@@ -676,8 +692,13 @@ const AdminDashboard = () => {
     const rangeEnd = access.rangeEnd;
     const specificPuzzles = access.specificPuzzles;
     
+<<<<<<< HEAD
     const categoryProgress = puzzleRecommendations?.categories.find(p => p.category === categoryId);
     if (!categoryProgress) return [];
+=======
+    const categoryProgress = userPuzzleProgress.find(p => p.category === categoryId);
+    if (!categoryProgress || !categoryProgress.puzzleDetails) return [];
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
 
     const incomplete: { number: number; name: string }[] = [];
 
@@ -696,8 +717,14 @@ const AdminDashboard = () => {
     const enabledNums = Array.from(enabledSet).sort((a, b) => a - b);
 
     for (const puzzleNum of enabledNums) {
+<<<<<<< HEAD
       if (!categoryProgress.solvedPuzzleNumbers.includes(puzzleNum)) {
         incomplete.push({ number: puzzleNum, name: `Puzzle #${puzzleNum}` });
+=======
+      const puzzle = categoryProgress.puzzleDetails[puzzleNum - 1];
+      if (!puzzle || !puzzle.solved) {
+        incomplete.push({ number: puzzleNum, name: puzzle?.puzzleName || `Puzzle #${puzzleNum}` });
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
       }
     }
     return incomplete;
@@ -851,6 +878,7 @@ const AdminDashboard = () => {
 
   const handleOpenAccessModal = async (u: User) => {
     setSelectedUserForAccess(u);
+<<<<<<< HEAD
     setUserContentAccess(null);
     setPuzzleRecommendations(null);
     setShowAccessModal(true);
@@ -858,6 +886,13 @@ const AdminDashboard = () => {
       loadUserContentAccess(u.id),
       loadPuzzleRecommendations(u.id)
     ]);
+=======
+    await Promise.all([
+      loadUserContentAccess(u.id),
+      loadUserPuzzleProgress(u.id)
+    ]);
+    setShowAccessModal(true);
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
   };
 
   const handleUpdateContentAccess = async () => {
@@ -1057,6 +1092,7 @@ const AdminDashboard = () => {
     }
   };
 
+<<<<<<< HEAD
   const loadPuzzleRecommendations = async (userId: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/users/${userId}/puzzle-recommendations`, {
@@ -1068,6 +1104,8 @@ const AdminDashboard = () => {
     }
   };
 
+=======
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
   const loadUserActivity = async (userId: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/users/${userId}/activity`, {
@@ -3566,7 +3604,11 @@ const AdminDashboard = () => {
                       size="sm"
                       onClick={async () => {
                         if (selectedUserForAccess) {
+<<<<<<< HEAD
                           await loadPuzzleRecommendations(selectedUserForAccess.id);
+=======
+                          await loadUserPuzzleProgress(selectedUserForAccess.id);
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
                           toast.success('Puzzle progress refreshed');
                         }
                       }}
@@ -3582,6 +3624,7 @@ const AdminDashboard = () => {
                   <div className="space-y-6 mt-4">
                     {/* Puzzle Access */}
                     <div>
+<<<<<<< HEAD
                       <div className="flex items-center justify-between gap-3 mb-4">
                         <h3 className="font-semibold text-lg flex items-center gap-2">
                           <Puzzle className="w-5 h-5" /> Puzzle Access
@@ -3592,10 +3635,16 @@ const AdminDashboard = () => {
                           </span>
                         )}
                       </div>
+=======
+                      <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
+                        <Puzzle className="w-5 h-5" /> Puzzle Access
+                      </h3>
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
                       <div className="grid grid-cols-2 gap-4">
                         {allPuzzleCategories.filter(cat => isCategoryVisibleForStudent(cat.id, selectedUserForAccess)).map((cat) => {
                           const hasIncomplete = hasIncompletePuzzlesInRange(cat.id);
                           const incompletePuzzles = getIncompletePuzzles(cat.id);
+<<<<<<< HEAD
                           const recommendation = puzzleRecommendations?.categories.find(item => item.category === cat.id);
                           const recommendationText = recommendation
                             ? recommendation.recommendationType === 'catch_up'
@@ -3604,6 +3653,8 @@ const AdminDashboard = () => {
                                 ? `Continue from #${recommendation.recommendedStart}`
                                 : 'Completed'
                             : 'Loading recommendation...';
+=======
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
                           return (
                           <div key={cat.id} className={`p-4 rounded-lg transition-colors ${
                             hasIncomplete 
@@ -3620,6 +3671,7 @@ const AdminDashboard = () => {
                                 onCheckedChange={(checked) => updatePuzzleAccess(cat.id, 'enabled', checked)}
                               />
                             </div>
+<<<<<<< HEAD
                             <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs">
                               {recommendation ? (
                                 <>
@@ -3635,6 +3687,8 @@ const AdminDashboard = () => {
                                 <span className="text-muted-foreground">{recommendationText}</span>
                               )}
                             </div>
+=======
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
                             <div className="space-y-2">
                               <div className="flex items-center gap-2">
                                 <Label className="text-sm text-muted-foreground">Puzzle Limit:</Label>

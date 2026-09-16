@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+<<<<<<< HEAD
     "dev:server": "npm --prefix server run dev",
+=======
+>>>>>>> c597d0b253a40dc69f1a4ca84f02f7e790781487
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
