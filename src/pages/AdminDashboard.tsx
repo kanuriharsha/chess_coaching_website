@@ -173,6 +173,7 @@ interface PuzzleRecommendationCategory {
   category: string;
   completed: number;
   total: number;
+  remaining: number;
   progress: number;
   averageProgress: number;
   recommendationType: 'catch_up' | 'continue';
@@ -183,6 +184,7 @@ interface PuzzleRecommendationCategory {
 
 interface PuzzleRecommendations {
   averageProgress: number;
+  totalRemaining: number;
   categories: PuzzleRecommendationCategory[];
 }
 
@@ -1101,7 +1103,7 @@ const AdminDashboard = () => {
 
   const handleSaveUserDetailProfile = async () => {
     if (!selectedUserForDetail) return;
-    
+
     try {
       const updateData: any = {
         username: editUserUsername,
@@ -3587,9 +3589,10 @@ const AdminDashboard = () => {
                           <Puzzle className="w-5 h-5" /> Puzzle Access
                         </h3>
                         {puzzleRecommendations && (
-                          <span className="text-sm font-medium text-primary">
-                            Average Progress: {puzzleRecommendations.averageProgress.toFixed(1)}%
-                          </span>
+                          <div className="text-right text-sm">
+                            <p className="font-medium text-primary">Average Progress: {puzzleRecommendations.averageProgress.toFixed(1)}%</p>
+                            <p className="text-muted-foreground">Total Remaining: {puzzleRecommendations.totalRemaining}</p>
+                          </div>
                         )}
                       </div>
                       <div className="grid grid-cols-2 gap-4">
@@ -3605,146 +3608,52 @@ const AdminDashboard = () => {
                                 : 'Completed'
                             : 'Loading recommendation...';
                           return (
-                          <div key={cat.id} className={`p-4 rounded-lg transition-colors ${
-                            hasIncomplete 
-                              ? 'bg-red-100 border-2 border-red-400' 
-                              : 'bg-secondary/50'
-                          }`}>
-                            <div className="flex items-center justify-between mb-3">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xl">{cat.icon}</span>
-                                <span className="font-medium">{cat.name}</span>
+                            <div key={cat.id} className={`p-4 rounded-lg transition-colors ${hasIncomplete ? 'bg-red-100 border-2 border-red-400' : 'bg-secondary/50'}`}>
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xl">{cat.icon}</span>
+                                  <span className="font-medium">{cat.name}</span>
+                                </div>
+                                <Switch checked={userContentAccess.puzzleAccess?.[cat.id]?.enabled || false} onCheckedChange={(checked) => updatePuzzleAccess(cat.id, 'enabled', checked)} />
                               </div>
-                              <Switch
-                                checked={userContentAccess.puzzleAccess?.[cat.id]?.enabled || false}
-                                onCheckedChange={(checked) => updatePuzzleAccess(cat.id, 'enabled', checked)}
-                              />
-                            </div>
-                            <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs">
-                              {recommendation ? (
-                                <>
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="text-muted-foreground">Progress</span>
-                                    <span className="font-medium">
-                                      {recommendation.completed} / {recommendation.total} ({recommendation.progress.toFixed(1)}%)
-                                    </span>
-                                  </div>
-                                  <p className="mt-1 font-medium text-primary">{recommendationText}</p>
-                                </>
-                              ) : (
-                                <span className="text-muted-foreground">{recommendationText}</span>
-                              )}
-                            </div>
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2">
-                                <Label className="text-sm text-muted-foreground">Puzzle Limit:</Label>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  max={puzzleCounts[cat.id] || 100}
-                                  value={userContentAccess.puzzleAccess?.[cat.id]?.limit || 0}
-                                  onChange={(e) => updatePuzzleAccess(cat.id, 'limit', parseInt(e.target.value) || 0)}
-                                  className="w-20 h-8"
-                                  disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled}
-                                />
-                                <span className="text-sm text-muted-foreground">
-                                  / {puzzleCounts[cat.id] || 0} available
-                                </span>
+                              <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs">
+                                {recommendation ? (
+                                  <>
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="text-muted-foreground">Progress</span>
+                                      <span className="font-medium">{recommendation.completed} / {recommendation.total} ({recommendation.progress.toFixed(1)}%)</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-2 mt-1">
+                                      <span className="text-muted-foreground">Remaining</span>
+                                      <span className="font-medium">{recommendation.remaining}</span>
+                                    </div>
+                                    <p className="mt-1 font-medium text-primary">{recommendationText}</p>
+                                  </>
+                                ) : <span className="text-muted-foreground">{recommendationText}</span>}
                               </div>
-                              <div className="flex items-center gap-2">
-                                <Label className="text-sm text-muted-foreground">Range:</Label>
-                                <Input
-                                  type="number"
-                                  min="1"
-                                  max={puzzleCounts[cat.id] || 100}
-                                  placeholder="Start"
-                                  value={userContentAccess.puzzleAccess?.[cat.id]?.rangeStart || ''}
-                                  onChange={(e) => updatePuzzleAccess(cat.id, 'rangeStart', e.target.value ? parseInt(e.target.value) : null)}
-                                  className="w-16 h-8"
-                                  disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled}
-                                />
-                                <span className="text-sm text-muted-foreground">to</span>
-                                <Input
-                                  type="number"
-                                  min="1"
-                                  max={puzzleCounts[cat.id] || 100}
-                                  placeholder="End"
-                                  value={userContentAccess.puzzleAccess?.[cat.id]?.rangeEnd || ''}
-                                  onChange={(e) => updatePuzzleAccess(cat.id, 'rangeEnd', e.target.value ? parseInt(e.target.value) : null)}
-                                  className="w-16 h-8"
-                                  disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled}
-                                />
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Label className="text-sm text-muted-foreground">Puzzle Limit:</Label>
+                                  <Input type="number" min="0" max={puzzleCounts[cat.id] || 100} value={userContentAccess.puzzleAccess?.[cat.id]?.limit || 0} onChange={(e) => updatePuzzleAccess(cat.id, 'limit', parseInt(e.target.value) || 0)} className="w-20 h-8" disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled} />
+                                  <span className="text-sm text-muted-foreground">/ {puzzleCounts[cat.id] || 0} available</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Label className="text-sm text-muted-foreground">Range:</Label>
+                                  <Input type="number" min="1" max={puzzleCounts[cat.id] || 100} placeholder="Start" value={userContentAccess.puzzleAccess?.[cat.id]?.rangeStart || ''} onChange={(e) => updatePuzzleAccess(cat.id, 'rangeStart', e.target.value ? parseInt(e.target.value) : null)} className="w-16 h-8" disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled} />
+                                  <span className="text-sm text-muted-foreground">to</span>
+                                  <Input type="number" min="1" max={puzzleCounts[cat.id] || 100} placeholder="End" value={userContentAccess.puzzleAccess?.[cat.id]?.rangeEnd || ''} onChange={(e) => updatePuzzleAccess(cat.id, 'rangeEnd', e.target.value ? parseInt(e.target.value) : null)} className="w-16 h-8" disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled} />
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Label className="text-sm text-muted-foreground whitespace-nowrap">Specific #s:</Label>
+                                  <Input type="text" placeholder="e.g. 11,12,16,18" value={specificPuzzlesInputs[cat.id] ?? (userContentAccess.puzzleAccess?.[cat.id]?.specificPuzzles || []).join(', ')} onChange={(e) => setSpecificPuzzlesInputs(prev => ({ ...prev, [cat.id]: e.target.value }))} onBlur={(e) => { const nums = e.target.value.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0); updatePuzzleAccess(cat.id, 'specificPuzzles', nums); setSpecificPuzzlesInputs(prev => ({ ...prev, [cat.id]: nums.join(', ') })); }} className="h-8 flex-1" disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled} />
+                                </div>
+                                {userContentAccess.puzzleAccess?.[cat.id]?.enabled && <p className="text-xs text-amber-600">Range + Specific #s are combined (union)</p>}
                               </div>
-                              <div className="flex items-center gap-2">
-                                <Label className="text-sm text-muted-foreground whitespace-nowrap">Specific #s:</Label>
-                                <Input
-                                  type="text"
-                                  placeholder="e.g. 11,12,16,18"
-                                  value={specificPuzzlesInputs[cat.id] ?? (userContentAccess.puzzleAccess?.[cat.id]?.specificPuzzles || []).join(', ')}
-                                  onChange={(e) => {
-                                    setSpecificPuzzlesInputs(prev => ({ ...prev, [cat.id]: e.target.value }));
-                                  }}
-                                  onBlur={(e) => {
-                                    const nums = e.target.value
-                                      .split(',')
-                                      .map(s => parseInt(s.trim()))
-                                      .filter(n => !isNaN(n) && n > 0);
-                                    updatePuzzleAccess(cat.id, 'specificPuzzles', nums);
-                                    setSpecificPuzzlesInputs(prev => ({ ...prev, [cat.id]: nums.join(', ') }));
-                                  }}
-                                  className="h-8 flex-1"
-                                  disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled}
-                                />
+                              <div className="text-xs mt-2">
+                                {userContentAccess.puzzleAccess?.[cat.id]?.enabled ? <p className="text-muted-foreground">✓ Access settings can be adjusted manually below.</p> : <p className="text-muted-foreground">🔒 Category locked</p>}
                               </div>
-                              {userContentAccess.puzzleAccess?.[cat.id]?.enabled && (
-                                <p className="text-xs text-amber-600">
-                                  Range + Specific #s are combined (union)
-                                </p>
-                              )}
                             </div>
-                            <div className="text-xs mt-2">
-              {userContentAccess.puzzleAccess?.[cat.id]?.enabled 
-                                ? (() => {
-                                    const acc = userContentAccess.puzzleAccess?.[cat.id];
-                                    const accHasRange = acc?.rangeStart && acc?.rangeEnd && acc.rangeEnd >= acc.rangeStart;
-                                    const accHasSpecific = acc?.specificPuzzles && acc.specificPuzzles.length > 0;
-                                    if (accHasRange || accHasSpecific) {
-                                      const numSet = new Set<number>();
-                                      if (accHasRange) {
-                                        for (let i = acc!.rangeStart!; i <= acc!.rangeEnd!; i++) numSet.add(i);
-                                      }
-                                      if (accHasSpecific) {
-                                        for (const n of acc!.specificPuzzles!) numSet.add(n);
-                                      }
-                                      const combined = Array.from(numSet).sort((a, b) => a - b);
-                                      return (
-                                        <>
-                                          <p className="text-muted-foreground mb-1">
-                                            ✓ Puzzles #{combined.join(', #')} unlocked
-                                          </p>
-                                          {incompletePuzzles.length > 0 && (
-                                            <div className="mt-2 p-2 bg-red-50 border border-red-300 rounded">
-                                              <p className="font-semibold text-red-700 mb-1">Not Completed:</p>
-                                              <ul className="space-y-0.5">
-                                                {incompletePuzzles.map((puzzle) => (
-                                                  <li key={puzzle.number} className="text-red-600">
-                                                    Puzzle #{puzzle.number} ({puzzle.name})
-                                                  </li>
-                                                ))}
-                                              </ul>
-                                            </div>
-                                          )}
-                                        </>
-                                      );
-                                    }
-                                    return acc?.limit === 0
-                                      ? <p className="text-muted-foreground">✓ All puzzles unlocked</p>
-                                      : <p className="text-muted-foreground">✓ First {acc?.limit} puzzles unlocked</p>;
-                                  })()
-                                : <p className="text-muted-foreground">🔒 Category locked</p>}
-                            </div>
-                          </div>
-                        );
+                          );
                         })}
                       </div>
                     </div>

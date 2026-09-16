@@ -346,6 +346,7 @@ app.get('/api/users/:id/puzzle-recommendations', async (req, res) => {
         category,
         completed,
         total,
+        remaining: Math.max(0, total - completed),
         progress: Number(progress.toFixed(1)),
         solvedPuzzleNumbers: (solvedNumbersByCategory[category] || []).filter(number => number > 0)
       };
@@ -373,7 +374,8 @@ app.get('/api/users/:id/puzzle-recommendations', async (req, res) => {
       };
     });
 
-    res.json({ averageProgress: roundedAverage, categories: recommendations });
+    const totalRemaining = recommendations.reduce((sum, category) => sum + category.remaining, 0);
+    res.json({ averageProgress: roundedAverage, totalRemaining, categories: recommendations });
   } catch (error) {
     console.error('Get puzzle recommendations error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -384,16 +386,12 @@ app.get('/api/users/:id/puzzle-recommendations', async (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { username, password, role = 'student' } = req.body;
-
     const existingUser = await User.findOne({ username });
-    if (existingUser) {
-      return res.status(400).json({ message: 'Username already exists' });
-    }
+    if (existingUser) return res.status(400).json({ message: 'Username already exists' });
 
-    // Store password as plain text
     const user = await User.create({
       username,
-      password: password, // Plain text password
+      password,
       role,
       isEnabled: true,
       onboardingComplete: false
