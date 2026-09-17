@@ -3592,6 +3592,7 @@ const AdminDashboard = () => {
                           <div className="text-right text-sm">
                             <p className="font-medium text-primary">Average Progress: {puzzleRecommendations.averageProgress.toFixed(1)}%</p>
                             <p className="text-muted-foreground">Total Remaining: {puzzleRecommendations.totalRemaining}</p>
+                            <p className="text-muted-foreground">Total Puzzles: {puzzles.length}</p>
                           </div>
                         )}
                       </div>
