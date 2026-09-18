@@ -3653,6 +3653,18 @@ const AdminDashboard = () => {
                               <div className="text-xs mt-2">
                                 {userContentAccess.puzzleAccess?.[cat.id]?.enabled ? <p className="text-muted-foreground">✓ Access settings can be adjusted manually below.</p> : <p className="text-muted-foreground">🔒 Category locked</p>}
                               </div>
+                              {userContentAccess.puzzleAccess?.[cat.id]?.enabled && incompletePuzzles.length > 0 && (
+                                <div className="mt-3 rounded-md border border-red-300 bg-red-50 p-2 text-xs">
+                                  <p className="mb-1 font-semibold text-red-700">Not Completed:</p>
+                                  <ul className="max-h-32 space-y-0.5 overflow-y-auto">
+                                    {incompletePuzzles.map((puzzle) => (
+                                      <li key={puzzle.number} className="text-red-600">
+                                        Puzzle #{puzzle.number} ({puzzle.name})
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
