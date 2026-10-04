@@ -30,7 +30,7 @@ Your repository: https://github.com/kanuriharsha/chess_coaching_website
    PORT=5000
    NODE_ENV=production
    MONGODB_URI=mongodb+srv://harsha:harsha@cluster0.gwmwpwl.mongodb.net/harshachess
-   JWT_SECRET=harshachess_jwt_secret_key_2024
+   JWT_SECRET=<a-unique-strong-random-secret>
    CORS_ORIGIN=https://your-app-name.vercel.app
    ```
    
@@ -140,7 +140,7 @@ VITE_API_URL=https://your-backend.onrender.com
 PORT=5000
 NODE_ENV=production
 MONGODB_URI=mongodb+srv://harsha:harsha@cluster0.gwmwpwl.mongodb.net/harshachess
-JWT_SECRET=harshachess_jwt_secret_key_2024
+JWT_SECRET=<a-unique-strong-random-secret>
 CORS_ORIGIN=https://your-app.vercel.app
 ```
 
@@ -149,7 +149,7 @@ CORS_ORIGIN=https://your-app.vercel.app
 ## 🔐 Security Notes
 
 ⚠️ **Before going to production:**
-1. Change the default JWT_SECRET to a strong random string
+1. Set JWT_SECRET to a unique strong random string; the backend will not start if it is missing
 2. Create a new MongoDB user with a strong password
 3. Update MongoDB to only allow connections from Render's IP ranges
 4. Never commit `.env` files to git (already in .gitignore)

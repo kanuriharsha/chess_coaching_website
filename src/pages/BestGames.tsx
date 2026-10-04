@@ -23,6 +23,7 @@ interface BestGame {
   highlights: number[];
   startFen?: string; // Optional custom starting position
   isEnabled?: boolean;
+  isLocked?: boolean;
 }
 
 interface ContentAccess {
@@ -94,11 +95,12 @@ const BestGames = () => {
   }, []);
 
   useEffect(() => {
+    if (!token) return;
     loadBestGames();
     if (!isAdmin) {
       loadContentAccess();
     }
-  }, [isAdmin]);
+  }, [isAdmin, token]);
 
   const loadContentAccess = async () => {
     try {
@@ -117,17 +119,14 @@ const BestGames = () => {
     }
   };
 
-  useEffect(() => {
-    loadBestGames();
-  }, []);
-
   const loadBestGames = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/bestgames`);
+      const response = await fetch(`${API_BASE_URL}/bestgames`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       if (response.ok) {
         const data: BestGame[] = await response.json();
-        const enabledGames = data.filter(g => g.isEnabled !== false);
-        setBestGames(enabledGames);
+        setBestGames(data);
       }
     } catch (error) {
       console.error('Load best games error:', error);
@@ -158,6 +157,13 @@ const BestGames = () => {
   }, [contentAccess, isAdmin, bestGames.length]);
 
   const selectGame = (bestGame: BestGame) => {
+    if (!isAdmin && bestGame.isLocked) {
+      toast.error('Content Locked', {
+        description: 'This game is locked. Contact your instructor to unlock it.',
+        icon: <Lock className="w-4 h-4" />,
+      });
+      return;
+    }
     // Check if best games are globally locked
     if (!isAdmin && isContentLocked) {
       toast.error('Content Locked', {
@@ -282,14 +288,15 @@ const BestGames = () => {
                 // Determine if this specific game is locked
                 const gameId = (bestGame._id || bestGame.id)?.toString() || '';
                 const hasGranularAccess = !isAdmin && contentAccess?.bestGamesAccess?.allowedGames?.length;
-                const isGameLocked = hasGranularAccess 
+                const isGameLocked = !isAdmin && (bestGame.isLocked ?? (hasGranularAccess
                   ? !contentAccess.bestGamesAccess.allowedGames.map(String).includes(gameId)
-                  : (!isAdmin && isContentLocked);
+                  : isContentLocked));
                 
                 return (
                 <button
                   key={bestGame.id || bestGame._id}
                   onClick={() => selectGame(bestGame)}
+                  disabled={isGameLocked}
                   className="card-premium p-5 text-left group hover:border-primary/50 relative"
                 >
                   {/* Locked Badge - Top Right Corner */}

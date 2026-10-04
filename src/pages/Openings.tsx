@@ -21,6 +21,7 @@ interface Opening {
   category: string;
   startFen?: string; // Optional custom starting position
   isEnabled?: boolean;
+  isLocked?: boolean;
 }
 
 interface ContentAccess {
@@ -107,11 +108,12 @@ const Openings = () => {
   }, []);
 
   useEffect(() => {
+    if (!token) return;
     loadOpenings();
     if (!isAdmin) {
       loadContentAccess();
     }
-  }, [isAdmin]);
+  }, [isAdmin, token]);
 
   const loadContentAccess = async () => {
     try {
@@ -132,11 +134,12 @@ const Openings = () => {
 
   const loadOpenings = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/openings`);
+      const response = await fetch(`${API_BASE_URL}/openings`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       if (response.ok) {
         const data: Opening[] = await response.json();
-        const enabledOpenings = data.filter(o => o.isEnabled !== false);
-        setOpenings(enabledOpenings);
+        setOpenings(data);
       }
     } catch (error) {
       console.error('Load openings error:', error);
@@ -167,6 +170,13 @@ const Openings = () => {
   }, [contentAccess, isAdmin, openings.length]);
 
   const selectOpening = (opening: Opening) => {
+    if (!isAdmin && opening.isLocked) {
+      toast.error('Content Locked', {
+        description: 'This opening is locked. Contact your instructor to unlock it.',
+        icon: <Lock className="w-4 h-4" />,
+      });
+      return;
+    }
     // Check if openings are globally locked
     if (!isAdmin && isContentLocked) {
       toast.error('Content Locked', {
@@ -280,14 +290,15 @@ const Openings = () => {
                 // Determine if this specific opening is locked
                 const openingId = (opening._id || opening.id)?.toString() || '';
                 const hasGranularAccess = !isAdmin && contentAccess?.openingAccess?.allowedOpenings?.length;
-                const isOpeningLocked = hasGranularAccess 
+                const isOpeningLocked = !isAdmin && (opening.isLocked ?? (hasGranularAccess
                   ? !contentAccess.openingAccess.allowedOpenings.map(String).includes(openingId)
-                  : (!isAdmin && isContentLocked);
+                  : isContentLocked));
                 
                 return (
                 <button
                   key={opening.id || opening._id}
                   onClick={() => selectOpening(opening)}
+                  disabled={isOpeningLocked}
                   className="card-premium p-5 text-left group hover:border-primary/50 relative"
                 >
                   {/* Locked Badge - Top Right Corner */}

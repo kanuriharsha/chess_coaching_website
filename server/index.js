@@ -3,8 +3,15 @@ import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
+import { Chess } from 'chess.js';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import {
+  filterVisibleItems,
+  filterVisiblePuzzles,
+  getUserContentAccessStatus
+} from './contentAccess.js';
+import { registerLiveGameValidationHandlers } from './liveGameHandlers.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -45,7 +52,10 @@ const PORT = process.env.PORT || 5000;
 
 // MongoDB Connection String (use environment variable in production)
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://harsha:harsha@cluster0.gwmwpwl.mongodb.net/harshachess?retryWrites=true&w=majority';
-const JWT_SECRET = process.env.JWT_SECRET || 'harshachess_jwt_secret_key_2024';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET?.trim()) {
+  throw new Error('Missing required environment variable: JWT_SECRET');
+}
 
 // Helper to create a loose regex that ignores spaces and case between characters
 function makeLooseRegex(input) {
@@ -126,6 +136,22 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema, 'login');
 
+async function getAuthenticatedUser(req, fields = '_id role') {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return null;
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, JWT_SECRET);
+  } catch (error) {
+    if (error instanceof jwt.JsonWebTokenError) return null;
+    throw error;
+  }
+
+  if (!decoded || typeof decoded !== 'object' || !decoded.id) return null;
+  return User.findById(decoded.id).select(fields);
+}
+
 // Puzzle Schema
 const puzzleSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -150,6 +176,142 @@ const puzzleSchema = new mongoose.Schema({
 });
 
 const Puzzle = mongoose.model('Puzzle', puzzleSchema, 'puzzles');
+
+function validatePuzzlePayload(payload) {
+  if (!payload || typeof payload.fen !== 'string' || !payload.fen.trim()) {
+    return 'A valid FEN string is required';
+  }
+
+  let initialGame;
+  try {
+    initialGame = new Chess(payload.fen);
+  } catch {
+    return 'Invalid puzzle FEN';
+  }
+
+  let solutionStart = initialGame;
+  if (payload.preloadedMove !== undefined && payload.preloadedMove !== null && payload.preloadedMove !== '') {
+    if (typeof payload.preloadedMove !== 'string' || !payload.preloadedMove.trim()) {
+      return 'Invalid preloaded move';
+    }
+
+    try {
+      const preloadedFen = initialGame.fen().split(' ');
+      preloadedFen[1] = preloadedFen[1] === 'w' ? 'b' : 'w';
+      solutionStart = new Chess(preloadedFen.join(' '));
+      if (!solutionStart.move(payload.preloadedMove.trim())) {
+        return 'Invalid preloaded move';
+      }
+    } catch {
+      return 'Invalid preloaded move';
+    }
+  }
+
+  if (payload.solution !== undefined && !Array.isArray(payload.solution)) {
+    return 'Puzzle solution must be an array of moves';
+  }
+
+  let solutionGame = new Chess(solutionStart.fen());
+  for (const [index, step] of (payload.solution || []).entries()) {
+    if (typeof step !== 'string' || !step.trim()) {
+      return `Invalid solution move at step ${index + 1}`;
+    }
+
+    const alternatives = step.split(',').map(move => move.trim()).filter(Boolean);
+    if (alternatives.length === 0) {
+      return `Invalid solution move at step ${index + 1}`;
+    }
+
+    let primaryResult = null;
+    for (const [alternativeIndex, move] of alternatives.entries()) {
+      const candidate = new Chess(solutionGame.fen());
+      try {
+        if (!candidate.move(move)) {
+          return `Illegal solution move at step ${index + 1}`;
+        }
+      } catch {
+        return `Illegal solution move at step ${index + 1}`;
+      }
+      if (alternativeIndex === 0) primaryResult = candidate;
+    }
+    solutionGame = primaryResult;
+  }
+
+  if (payload.moveTree !== undefined && payload.moveTree !== null) {
+    if (!Array.isArray(payload.moveTree)) {
+      return 'Puzzle moveTree must be an array';
+    }
+
+    const nodes = new Map();
+    for (const node of payload.moveTree) {
+      if (
+        !node ||
+        typeof node.id !== 'string' ||
+        !node.id ||
+        typeof node.move !== 'string' ||
+        !node.move.trim() ||
+        (node.parentId !== null && typeof node.parentId !== 'string')
+      ) {
+        return 'Invalid puzzle moveTree node';
+      }
+      if (nodes.has(node.id)) return 'Duplicate puzzle moveTree node id';
+      nodes.set(node.id, node);
+    }
+
+    const children = new Map();
+    for (const node of nodes.values()) {
+      if (node.parentId !== null && !nodes.has(node.parentId)) {
+        return 'Puzzle moveTree references a missing parent';
+      }
+      const siblings = children.get(node.parentId) || [];
+      siblings.push(node);
+      children.set(node.parentId, siblings);
+    }
+
+    const visited = new Set();
+    const visiting = new Set();
+    const visitNode = (node, parentGame) => {
+      if (visiting.has(node.id)) return 'Puzzle moveTree contains a cycle';
+      if (visited.has(node.id)) return null;
+      visiting.add(node.id);
+
+      const alternatives = node.move.split(',').map(move => move.trim()).filter(Boolean);
+      if (alternatives.length === 0) {
+        return `Invalid puzzle moveTree move at node ${node.id}`;
+      }
+
+      let primaryResult = null;
+      for (const [alternativeIndex, move] of alternatives.entries()) {
+        const candidate = new Chess(parentGame.fen());
+        try {
+          if (!candidate.move(move)) {
+            return `Illegal puzzle moveTree move at node ${node.id}`;
+          }
+        } catch {
+          return `Illegal puzzle moveTree move at node ${node.id}`;
+        }
+        if (alternativeIndex === 0) primaryResult = candidate;
+      }
+
+      for (const child of children.get(node.id) || []) {
+        const error = visitNode(child, primaryResult);
+        if (error) return error;
+      }
+
+      visiting.delete(node.id);
+      visited.add(node.id);
+      return null;
+    };
+
+    for (const root of children.get(null) || []) {
+      const error = visitNode(root, solutionStart);
+      if (error) return error;
+    }
+    if (visited.size !== nodes.size) return 'Puzzle moveTree contains an unreachable node or cycle';
+  }
+
+  return null;
+}
 
 // Opening Schema
 const openingSchema = new mongoose.Schema({
@@ -250,6 +412,26 @@ const contentAccessSchema = new mongoose.Schema({
 });
 
 const ContentAccess = mongoose.model('ContentAccess', contentAccessSchema, 'contentaccess');
+
+async function getContentAccessForUser(userId) {
+  return ContentAccess.findOne({ userId }).lean();
+}
+
+async function getVisiblePuzzles(viewer, category) {
+  const query = category ? { category } : {};
+  if (viewer.role !== 'admin') query.isEnabled = true;
+
+  const [puzzles, access, categorySettings] = await Promise.all([
+    Puzzle.find(query).sort({ order: 1, createdAt: 1 }),
+    viewer.role === 'admin' ? null : getContentAccessForUser(viewer._id),
+    viewer.role === 'admin' ? [] : PuzzleCategoryOrder.find(
+      category ? { categoryId: category } : {}
+    ).lean()
+  ]);
+
+  if (viewer.role === 'admin') return puzzles;
+  return filterVisiblePuzzles(puzzles, access, categorySettings, viewer);
+}
 
 // User Activity Schema - Tracks all user activity with timestamps
 const userActivitySchema = new mongoose.Schema({
@@ -385,14 +567,14 @@ app.get('/api/users/:id/puzzle-recommendations', async (req, res) => {
 // Register new user
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { username, password, role = 'student' } = req.body;
+    const { username, password } = req.body;
     const existingUser = await User.findOne({ username });
     if (existingUser) return res.status(400).json({ message: 'Username already exists' });
 
     const user = await User.create({
       username,
       password,
-      role,
+      role: 'student',
       isEnabled: true,
       onboardingComplete: false
     });
@@ -715,9 +897,13 @@ app.post('/api/users/:id/attendance', async (req, res) => {
 // Get attendance for a user
 app.get('/api/users/:id/attendance', async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
+    const requestingUser = await getAuthenticatedUser(req);
+    if (!requestingUser) {
+      return res.status(401).json({ message: 'Invalid or missing token' });
+    }
+
+    if (requestingUser.role !== 'admin' && requestingUser._id.toString() !== req.params.id) {
+      return res.status(403).json({ message: 'Access denied' });
     }
 
     const user = await User.findById(req.params.id).select('attendance');
@@ -1407,24 +1593,13 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
 
 // ============ PUZZLE ROUTES ============
 
-// Resolve the authenticated user when a puzzle request includes a token.
-const getPuzzleViewer = async (req) => {
-  const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return null;
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    return await User.findById(decoded.id).select('role groupId');
-  } catch {
-    return null;
-  }
-};
-
 // Get all puzzles
 app.get('/api/puzzles', async (req, res) => {
   try {
-    const viewer = await getPuzzleViewer(req);
-    const query = viewer?.role === 'admin' ? {} : { isEnabled: true };
-    const puzzles = await Puzzle.find(query).sort({ order: 1, createdAt: 1 });
+    const viewer = await getAuthenticatedUser(req, '_id role groupId');
+    if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
+
+    const puzzles = await getVisiblePuzzles(viewer);
     res.json(puzzles);
   } catch (error) {
     console.error('Get puzzles error:', error);
@@ -1435,18 +1610,10 @@ app.get('/api/puzzles', async (req, res) => {
 // Get puzzles by category
 app.get('/api/puzzles/category/:category', async (req, res) => {
   try {
-    const viewer = await getPuzzleViewer(req);
-    if (viewer?.role !== 'admin') {
-      const categorySettings = await PuzzleCategoryOrder.findOne({ categoryId: req.params.category });
-      const allowedGroups = categorySettings?.allowedGroups || [];
-      const categoryIsVisible = categorySettings?.isEnabled !== false &&
-        (!categorySettings?.groupsConfigured || (viewer?.groupId && allowedGroups.some(id => id.toString() === viewer.groupId.toString())));
-      if (!categoryIsVisible) return res.json([]);
-    }
-    const query = viewer?.role === 'admin'
-      ? { category: req.params.category }
-      : { category: req.params.category, isEnabled: true };
-    const puzzles = await Puzzle.find(query).sort({ order: 1, createdAt: 1 });
+    const viewer = await getAuthenticatedUser(req, '_id role groupId');
+    if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
+
+    const puzzles = await getVisiblePuzzles(viewer, req.params.category);
     res.json(puzzles);
   } catch (error) {
     console.error('Get puzzles by category error:', error);
@@ -1463,6 +1630,9 @@ app.post('/api/puzzles', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
     if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+
+    const validationError = validatePuzzlePayload(req.body);
+    if (validationError) return res.status(400).json({ message: validationError });
 
     // Find the maximum order value in this category
     const maxOrderPuzzle = await Puzzle.findOne({ category: req.body.category })
@@ -1497,6 +1667,15 @@ app.put('/api/puzzles/:id', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
     if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+
+    const existingPuzzle = await Puzzle.findById(req.params.id);
+    if (!existingPuzzle) return res.status(404).json({ message: 'Puzzle not found' });
+
+    const validationError = validatePuzzlePayload({
+      ...existingPuzzle.toObject(),
+      ...req.body
+    });
+    if (validationError) return res.status(400).json({ message: validationError });
 
     const puzzle = await Puzzle.findByIdAndUpdate(
       req.params.id,
@@ -1558,8 +1737,20 @@ app.post('/api/puzzles/reorder', async (req, res) => {
 // Get all openings
 app.get('/api/openings', async (req, res) => {
   try {
+    const viewer = await getAuthenticatedUser(req);
+    if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
+
     const openings = await Opening.find().sort({ createdAt: -1 });
-    res.json(openings);
+    const visibleOpenings = viewer.role === 'admin'
+      ? openings
+      : filterVisibleItems(
+        openings,
+        await getContentAccessForUser(viewer._id),
+        'openingAccess',
+        'allowedOpenings',
+        true
+      );
+    res.json(visibleOpenings);
   } catch (error) {
     console.error('Get openings error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -1629,8 +1820,20 @@ app.delete('/api/openings/:id', async (req, res) => {
 // Get all famous mates
 app.get('/api/famous-mates', async (req, res) => {
   try {
+    const viewer = await getAuthenticatedUser(req);
+    if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
+
     const famousMates = await FamousMate.find().sort({ createdAt: -1 });
-    res.json(famousMates);
+    const visibleMates = viewer.role === 'admin'
+      ? famousMates
+      : filterVisibleItems(
+        famousMates,
+        await getContentAccessForUser(viewer._id),
+        'famousMatesAccess',
+        'allowedMates',
+        true
+      );
+    res.json(visibleMates);
   } catch (error) {
     console.error('Get famous mates error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -1640,8 +1843,22 @@ app.get('/api/famous-mates', async (req, res) => {
 // Get single famous mate by ID
 app.get('/api/famous-mates/:id', async (req, res) => {
   try {
+    const viewer = await getAuthenticatedUser(req);
+    if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
+
     const famousMate = await FamousMate.findById(req.params.id);
     if (!famousMate) return res.status(404).json({ message: 'Famous mate not found' });
+    if (viewer.role !== 'admin') {
+      const access = await getContentAccessForUser(viewer._id);
+      if (!filterVisibleItems(
+        [famousMate],
+        access,
+        'famousMatesAccess',
+        'allowedMates'
+      ).length) {
+        return res.status(404).json({ message: 'Famous mate not found' });
+      }
+    }
     res.json(famousMate);
   } catch (error) {
     console.error('Get famous mate error:', error);
@@ -1712,8 +1929,20 @@ app.delete('/api/famous-mates/:id', async (req, res) => {
 // Get all best games
 app.get('/api/bestgames', async (req, res) => {
   try {
+    const viewer = await getAuthenticatedUser(req);
+    if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
+
     const games = await BestGame.find().sort({ createdAt: -1 });
-    res.json(games);
+    const visibleGames = viewer.role === 'admin'
+      ? games
+      : filterVisibleItems(
+        games,
+        await getContentAccessForUser(viewer._id),
+        'bestGamesAccess',
+        'allowedGames',
+        true
+      );
+    res.json(visibleGames);
   } catch (error) {
     console.error('Get best games error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -1816,10 +2045,11 @@ app.get('/api/stats', async (req, res) => {
 // Get content access for a user
 app.get('/api/content-access/:userId', async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'No token provided' });
-
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const requestingUser = await getAuthenticatedUser(req);
+    const accessStatus = getUserContentAccessStatus(requestingUser, req.params.userId);
+    if (accessStatus !== 200) {
+      return res.status(accessStatus).json({ message: accessStatus === 401 ? 'Unauthorized' : 'Access denied' });
+    }
 
     let access = await ContentAccess.findOne({ userId: req.params.userId });
 
@@ -2436,76 +2666,7 @@ io.on('connection', (socket) => {
   });
 
   // ---- GAME EVENTS ----
-
-  // Make a move
-  socket.on('game:make-move', (data) => {
-    console.log(`\n♟️ ========== MOVE: ${data.from}→${data.to} from ${socket.user.username} ==========`);
-
-    const game = activeGames.get(data.gameId);
-    if (!game || game.status !== 'active') {
-      console.log(`❌ Game not found or not active: ${data.gameId}`);
-      socket.emit('error', { message: 'Game not found or not active' });
-      return;
-    }
-
-    // Check if it's this player's turn
-    const isWhite = game.white.id === userId;
-    const isBlack = game.black.id === userId;
-    const isPlayerTurn = (game.turn === 'w' && isWhite) || (game.turn === 'b' && isBlack);
-
-    console.log(`   Game: ${game.id} | White: ${game.white.username} | Black: ${game.black.username}`);
-    console.log(`   Player: ${socket.user.username} (${isWhite ? 'WHITE' : 'BLACK'}) | Turn: ${game.turn === 'w' ? 'WHITE' : 'BLACK'}`);
-
-    if (!isPlayerTurn) {
-      console.log(`❌ Not player's turn!`);
-      socket.emit('error', { message: 'Not your turn' });
-      return;
-    }
-
-    const previousTurn = game.turn;
-
-    // Validate and make the move
-    const move = `${data.from}${data.to}${data.promotion || ''}`;
-    game.moves.push(move);
-    game.fen = data.fen || game.fen;
-    game.turn = game.turn === 'w' ? 'b' : 'w';
-    game.lastMoveAt = new Date().toISOString();
-
-    console.log(`   ✅ Move accepted: ${move} | Turn: ${previousTurn} → ${game.turn}`);
-
-    // Determine opponent
-    const opponentId = isWhite ? game.black.id : game.white.id;
-    const opponentSockets = userSockets.get(opponentId);
-
-    console.log(`   📡 Opponent ID: ${opponentId}`);
-    console.log(`   📡 Opponent sockets: ${JSON.stringify(opponentSockets)}`);
-
-    const moveData = {
-      gameId: game.id,
-      move,
-      fen: game.fen,
-      whiteTime: game.whiteTime,
-      blackTime: game.blackTime,
-      turn: game.turn
-    };
-
-    // Send to current player
-    socket.emit('game:move', moveData);
-    console.log(`   ✅ Sent to ${socket.user.username}`);
-
-    // Send to all opponent sockets
-    if (opponentSockets && opponentSockets.length > 0) {
-      opponentSockets.forEach(socketId => {
-        io.to(socketId).emit('game:move', moveData);
-        console.log(`   ✅ Sent to opponent socket: ${socketId}`);
-      });
-      console.log(`========== MOVE COMPLETE ==========\n`);
-    } else {
-      console.log(`   ❌ ERROR: No opponent sockets found!`);
-      console.log(`   📡 All connected users:`, Array.from(userSockets.entries()));
-      console.log(`========== MOVE FAILED ==========\n`);
-    }
-  });
+  registerLiveGameValidationHandlers(socket, { userId, activeGames, userSockets, io, endGame });
 
   // Resign
   socket.on('game:resign', (data) => {
@@ -2542,23 +2703,6 @@ io.on('connection', (socket) => {
     if (!game || game.status !== 'active') return;
 
     endGame(data.gameId, 'draw', 'agreement');
-  });
-
-  // Game ended by checkmate/stalemate (client notifies)
-  socket.on('game:checkmate', (data) => {
-    const game = activeGames.get(data.gameId);
-    if (!game || game.status !== 'active') return;
-
-    // The winner is whoever's turn it is NOT (they just got checkmated)
-    const result = game.turn === 'w' ? 'black' : 'white';
-    endGame(data.gameId, result, 'checkmate');
-  });
-
-  socket.on('game:stalemate', (data) => {
-    const game = activeGames.get(data.gameId);
-    if (!game || game.status !== 'active') return;
-
-    endGame(data.gameId, 'draw', 'stalemate');
   });
 
   // Leave game

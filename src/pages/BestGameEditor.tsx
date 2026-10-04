@@ -83,7 +83,9 @@ const BestGameEditor = () => {
         setCurrentMoveIndex(bestGame.moves?.length - 1 || -1);
       } else {
         // Try fallback: fetch all best games and match by slug/id
-        const listResp = await fetch(`${API_BASE_URL}/bestgames`);
+        const listResp = await fetch(`${API_BASE_URL}/bestgames`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
         if (listResp.ok) {
           const list: any[] = await listResp.json();
           const found = list.find(g => g._id === gameId || g.id === gameId);

@@ -21,6 +21,7 @@ interface FamousMate {
   category: string;
   startFen?: string; // Optional custom starting position
   isEnabled?: boolean;
+  isLocked?: boolean;
 }
 
 interface ContentAccess {
@@ -96,11 +97,12 @@ const FamousMates = () => {
   }, []);
 
   useEffect(() => {
+    if (!token) return;
     loadFamousMates();
     if (!isAdmin) {
       loadContentAccess();
     }
-  }, [isAdmin]);
+  }, [isAdmin, token]);
 
   const loadContentAccess = async () => {
     try {
@@ -121,11 +123,12 @@ const FamousMates = () => {
 
   const loadFamousMates = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/famous-mates`);
+      const response = await fetch(`${API_BASE_URL}/famous-mates`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       if (response.ok) {
         const data: FamousMate[] = await response.json();
-        const enabledMates = data.filter(m => m.isEnabled !== false);
-        setFamousMates(enabledMates);
+        setFamousMates(data);
       }
     } catch (error) {
       console.error('Load famous mates error:', error);
@@ -158,6 +161,13 @@ const FamousMates = () => {
   }, [contentAccess, isAdmin, famousMates.length]);
 
   const selectMate = (mate: FamousMate) => {
+    if (!isAdmin && mate.isLocked) {
+      toast.error('Content Locked', {
+        description: 'This famous mate is locked. Contact your instructor to unlock it.',
+        icon: <Lock className="w-4 h-4" />,
+      });
+      return;
+    }
     // Check if famous mates are globally locked
     if (!isAdmin && isContentLocked) {
       toast.error('Content Locked', {
@@ -270,14 +280,15 @@ const FamousMates = () => {
                 // Determine if this specific mate is locked
                 const mateId = (mate._id || mate.id)?.toString() || '';
                 const hasGranularAccess = !isAdmin && contentAccess?.famousMatesAccess?.allowedMates?.length;
-                const isMateLocked = hasGranularAccess 
+                const isMateLocked = !isAdmin && (mate.isLocked ?? (hasGranularAccess
                   ? !contentAccess.famousMatesAccess.allowedMates.map(String).includes(mateId)
-                  : (!isAdmin && isContentLocked);
+                  : isContentLocked));
                 
                 return (
                 <button
                   key={mate.id || mate._id}
                   onClick={() => selectMate(mate)}
+                  disabled={isMateLocked}
                   className="card-premium p-5 text-left group hover:border-primary/50 relative"
                 >
                   {/* Locked Badge - Top Right Corner */}

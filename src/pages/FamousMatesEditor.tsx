@@ -87,7 +87,9 @@ const FamousMatesEditor = () => {
         setCurrentMoveIndex(famousMate.moves?.length - 1 || -1);
       } else {
         // Fallback: fetch list and try to match by slug/id
-        const listResp = await fetch(`${API_BASE_URL}/famous-mates`);
+        const listResp = await fetch(`${API_BASE_URL}/famous-mates`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
         if (listResp.ok) {
           const list: any[] = await listResp.json();
           const found = list.find(o => o._id === mateId || o.id === mateId);

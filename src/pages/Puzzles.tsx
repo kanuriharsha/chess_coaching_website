@@ -35,6 +35,7 @@ interface PuzzleCategory {
   icon: string;
   order_index?: number; // Admin-defined display order
   isEnabled?: boolean;
+  isLocked?: boolean;
   allowedGroups?: string[];
   groupsConfigured?: boolean;
 }
@@ -159,17 +160,18 @@ const Puzzles = () => {
   useEffect(() => {
     // Load puzzle categories from server first, then load puzzles with those categories
     const init = async () => {
+      if (!token) return;
       const cats = await loadCustomCategories();
       const orderData = await loadCategoryOrder();
       if (isAdmin) await loadGroups();
       await loadPuzzles(cats, orderData);
       if (!isAdmin) {
-        loadContentAccess();
+        await loadContentAccess();
       }
       setIsInitializing(false);
     };
     init();
-  }, [isAdmin]);
+  }, [isAdmin, token]);
 
   const loadGroups = async () => {
     try {
@@ -311,8 +313,14 @@ const Puzzles = () => {
     try {
       const response = await fetch(`${API_BASE_URL}/puzzle-categories`);
       if (response.ok) {
-        const data = await response.json();
-        const cats = data.map((c: any) => ({ id: c.categoryId, name: c.name, description: c.description, icon: c.icon }));
+        const data: Array<{ categoryId: string; name: string; description?: string; icon?: string }> =
+          await response.json();
+        const cats = data.map(c => ({
+          id: c.categoryId,
+          name: c.name,
+          description: c.description,
+          icon: c.icon
+        }));
         setCustomCategories(cats);
         return cats;
       }
@@ -379,6 +387,20 @@ const Puzzles = () => {
 
   // Reset puzzle state whenever current puzzle changes
   useEffect(() => {
+    if (currentPuzzle?.isLocked) {
+      setGame(new Chess());
+      setSolved(false);
+      setAttempts(0);
+      setLastMove(null);
+      setShowHint(false);
+      setCurrentMoveIndex(0);
+      setCurrentNodeId(null);
+      setPreloadedMoveExecuted(false);
+      setMoveHistory([]);
+      setHistoryIndex(0);
+      return;
+    }
+
     if (currentPuzzle) {
       const initialGame = new Chess(currentPuzzle.fen);
       setGame(initialGame);
@@ -438,9 +460,13 @@ const Puzzles = () => {
 
         // Count puzzles per category (including custom ones)
         const categoryCounts: { [key: string]: number } = {};
+        const unlockedPuzzleCounts: { [key: string]: number } = {};
         puzzles.forEach(p => {
           if (p.isEnabled) {
             categoryCounts[p.category] = (categoryCounts[p.category] || 0) + 1;
+            if (!p.isLocked) {
+              unlockedPuzzleCounts[p.category] = (unlockedPuzzleCounts[p.category] || 0) + 1;
+            }
           }
         });
 
@@ -451,6 +477,8 @@ const Puzzles = () => {
           description: cat.description || 'Custom puzzle category',
           count: categoryCounts[cat.id] || 0,
           unlocked: (categoryCounts[cat.id] || 0) > 0,
+          isLocked: !isAdmin && (categoryCounts[cat.id] || 0) > 0 &&
+            (unlockedPuzzleCounts[cat.id] || 0) === 0,
           accessLimit: 0,
           icon: cat.icon || '🎯'
         }));
@@ -459,7 +487,9 @@ const Puzzles = () => {
         const updatedDefault = defaultCategories.map(cat => ({
           ...cat,
           count: categoryCounts[cat.id] || 0,
-          unlocked: (categoryCounts[cat.id] || 0) > 0
+          unlocked: (categoryCounts[cat.id] || 0) > 0,
+          isLocked: !isAdmin && (categoryCounts[cat.id] || 0) > 0 &&
+            (unlockedPuzzleCounts[cat.id] || 0) === 0
         }));
 
         // Merge and apply admin-defined order
@@ -491,11 +521,17 @@ const Puzzles = () => {
     return contentAccess.puzzleAccess?.[categoryId]?.enabled || false;
   };
 
+  const getAccessLimit = (categoryId: string): number => {
+    if (isAdmin) return 0;
+    return contentAccess?.puzzleAccess?.[categoryId]?.limit || 0;
+  };
+
   const isCategoryVisibleToStudent = (category: PuzzleCategory): boolean => {
     if (category.isEnabled === false) return false;
     if (!category.groupsConfigured) return true;
     const studentGroupId = String((user as UserWithGroup | null)?.groupId || '');
-    return !!studentGroupId && category.allowedGroups.map(String).includes(studentGroupId);
+    return !!studentGroupId &&
+      (category.allowedGroups || []).map(String).includes(studentGroupId);
   };
 
   const updateCategoryVisibility = async (category: PuzzleCategory, updates: { isEnabled?: boolean; allowedGroups?: string[] }) => {
@@ -521,13 +557,6 @@ const Puzzles = () => {
     }
   };
 
-  // Get access limit for category
-  const getAccessLimit = (categoryId: string): number => {
-    if (isAdmin) return 0;
-    if (!contentAccess) return 0;
-    return contentAccess.puzzleAccess?.[categoryId]?.limit || 0;
-  };
-
   const loadCategoryPuzzles = async (category: string) => {
     try {
       const response = await fetch(`${API_BASE_URL}/puzzles/category/${category}`, {
@@ -536,42 +565,11 @@ const Puzzles = () => {
       if (response.ok) {
         let puzzles: PuzzleData[] = await response.json();
 
-        // Add original index (1-based) before any filtering/sorting
+        // The API returns only entitled puzzles and preserves their category position.
         puzzles = puzzles.map((puzzle, index) => ({
           ...puzzle,
-          originalIndex: index + 1 // Store 1-based original position
+          originalIndex: puzzle.originalIndex || index + 1
         }));
-
-        // Apply access limit or range for non-admin users
-        const limit = getAccessLimit(category);
-        const rangeCfg = contentAccess?.puzzleAccess?.[category];
-        if (!isAdmin) {
-          const hasRange = rangeCfg && rangeCfg.rangeStart && rangeCfg.rangeEnd && rangeCfg.rangeEnd >= rangeCfg.rangeStart;
-          const hasSpecific = rangeCfg && rangeCfg.specificPuzzles && rangeCfg.specificPuzzles.length > 0;
-          if (hasRange || hasSpecific) {
-            // Merge range and specific puzzles into one combined enabled set
-            const enabledSet = new Set<number>();
-            if (hasRange) {
-              for (let i = rangeCfg!.rangeStart!; i <= rangeCfg!.rangeEnd!; i++) {
-                enabledSet.add(i);
-              }
-            }
-            if (hasSpecific) {
-              for (const n of rangeCfg!.specificPuzzles!) {
-                enabledSet.add(n);
-              }
-            }
-            puzzles = puzzles.map((puzzle, index) => ({
-              ...puzzle,
-              isLocked: !enabledSet.has(index + 1) // 1-based
-            }));
-          } else if (limit > 0) {
-            puzzles = puzzles.map((puzzle, index) => ({
-              ...puzzle,
-              isLocked: index >= limit
-            }));
-          }
-        }
 
         // Ensure unlocked puzzles appear first for students
         if (!isAdmin) {
@@ -652,6 +650,7 @@ const Puzzles = () => {
   const handleMove = useCallback(
     (from: Square, to: Square): boolean => {
       if (solved || !currentPuzzle) return false;
+      if (!isAdmin && currentPuzzle.isLocked) return false;
 
       const gameCopy = new Chess(game.fen());
 
@@ -1084,8 +1083,15 @@ const Puzzles = () => {
 
   const nextPuzzle = () => {
     if (currentPuzzleIndex < categoryPuzzles.length - 1) {
-      setCurrentPuzzleIndex(prev => prev + 1);
       const nextP = categoryPuzzles[currentPuzzleIndex + 1];
+      if (!isAdmin && nextP.isLocked) {
+        toast.error('Puzzle Locked', {
+          description: 'This puzzle is locked. Contact your instructor to unlock more puzzles.',
+          icon: <Lock className="w-4 h-4" />,
+        });
+        return;
+      }
+      setCurrentPuzzleIndex(prev => prev + 1);
       setGame(new Chess(nextP.fen));
       setSolved(false);
       setAttempts(0);
@@ -1098,15 +1104,6 @@ const Puzzles = () => {
   };
 
   const handleCategoryClick = async (category: PuzzleCategory) => {
-    // Check access for non-admin users
-    if (!isAdmin && !hasAccessToCategory(category.id)) {
-      toast.error('Content Locked', {
-        description: 'This category is locked. Contact your instructor to unlock.',
-        icon: <Lock className="w-4 h-4" />,
-      });
-      return;
-    }
-
     if (category.count === 0 && !isAdmin) {
       toast.info('No puzzles available in this category yet', {
         icon: <Lock className="w-4 h-4" />,
@@ -1121,7 +1118,7 @@ const Puzzles = () => {
 
   const handlePuzzleSelect = (index: number) => {
     const puzzle = categoryPuzzles[index];
-    if (puzzle.isLocked) {
+    if (puzzle.isLocked && !isAdmin) {
       toast.error('Puzzle Locked', {
         description: 'This puzzle is locked. Contact your instructor to unlock more puzzles.',
         icon: <Lock className="w-4 h-4" />,
@@ -1248,13 +1245,13 @@ const Puzzles = () => {
                   // Hybrid sorting for students: unlocked first, locked second
                   // Within each group, preserve admin-defined order (order_index)
                   if (isAdmin) return 0; // admins: preserve admin-defined order as-is
-                  const aLocked = !hasAccessToCategory(a.id) || (a.count === 0);
-                  const bLocked = !hasAccessToCategory(b.id) || (b.count === 0);
+                  const aLocked = !hasAccessToCategory(a.id) || !!a.isLocked || (a.count === 0);
+                  const bLocked = !hasAccessToCategory(b.id) || !!b.isLocked || (b.count === 0);
                   if (aLocked !== bLocked) return aLocked ? 1 : -1; // unlocked first
                   // Within same lock group, preserve admin order
                   return (a.order_index ?? 999) - (b.order_index ?? 999);
                 }).filter(category => isAdmin || isCategoryVisibleToStudent(category)).map((category) => {
-                  const isAccessLocked = !isAdmin && !hasAccessToCategory(category.id);
+                  const isAccessLocked = !isAdmin && (!hasAccessToCategory(category.id) || category.isLocked);
                   const isEmptyLocked = category.count === 0 && !isAdmin;
                   const isLocked = isAccessLocked || isEmptyLocked;
                   const accessLimit = getAccessLimit(category.id);
@@ -1364,17 +1361,17 @@ const Puzzles = () => {
                                   #{combined.join(', #')} unlocked
                                 </div>
                               );
-                            } else if (accessCfg?.limit === 0) {
+                            } else if (accessLimit === 0) {
                               return (
                                 <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-success/20 text-success rounded-full text-xs">
                                   ✓ Full access
                                 </div>
                               );
-                            } else if (accessCfg?.limit && accessCfg.limit > 0) {
+                            } else if (accessLimit > 0) {
                               return (
                                 <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-warning/20 text-warning-foreground rounded-full text-xs">
                                   <ShieldOff className="w-3 h-3" />
-                                  First {accessCfg.limit} unlocked
+                                  First {accessLimit} unlocked
                                 </div>
                               );
                             }
@@ -1428,7 +1425,7 @@ const Puzzles = () => {
                       `}
                     >
                       {puzzle.isLocked && <Lock className="w-2.5 h-2.5 inline mr-1" />}
-                      #{index + 1}
+                      #{puzzle.originalIndex || index + 1}
                     </button>
                   ))}
                 </div>
