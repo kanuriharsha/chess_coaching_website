@@ -95,10 +95,11 @@ activity data and database/network response time can contribute to this wait.
 
 ### Admin dashboard
 
-`src/pages/AdminDashboard.tsx` starts its initial data loaders together with
-`Promise.all`: stats, users, puzzles, openings, famous mates, best games,
-custom puzzle categories, groups, and puzzle-category visibility. The main
-loading state remains active until all of them finish.
+`src/pages/AdminDashboard.tsx` initially loads stats and users. Groups and each
+content collection are fetched only when their corresponding tab is viewed;
+puzzle counts, categories, and visibility settings are fetched only when an
+admin opens an individual student's puzzle-access editor. Successfully loaded
+tab resources are retained in memory for the dashboard session.
 
 The users loader then fetches fee records for every student. Those per-student
 fee requests run concurrently with another `Promise.all`, and the users loader
@@ -106,10 +107,10 @@ does not finish until all of those requests finish. Consequently, a large
 student list creates many simultaneous requests, and one slow fee request can
 extend the overall initial loading state.
 
-Other admin actions can load fees, puzzle recommendations, or access settings
-for one or more selected students. Bulk access updates wait for their per-user
-requests to settle before showing the completion result and refreshing users
-and stats.
+Other admin actions load fees, puzzle recommendations, or access settings when
+an admin opens the relevant student view. Selective content assignment loads
+each student's access record on demand and caches it, avoiding a repeated
+read when the selected content item changes.
 
 ### Openings, Famous Mates, and Best Games
 

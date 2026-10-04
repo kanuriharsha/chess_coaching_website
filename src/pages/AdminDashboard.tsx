@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth, User, Achievement, StudentProfile } from '@/contexts/AuthContext';
 import VisualBoardEditor from '@/components/VisualBoardEditor';
@@ -71,14 +71,6 @@ interface Group {
   createdAt: string;
 }
 
-interface PuzzleCategoryVisibility {
-  categoryId: string;
-  isEnabled?: boolean;
-  allowedGroups?: string[];
-  groupsConfigured?: boolean;
-}
-
-
 interface Stats {
   totalStudents: number;
   activeStudents: number;
@@ -86,20 +78,6 @@ interface Stats {
   totalOpenings: number;
   totalFamousMates: number;
   totalBestGames: number;
-}
-
-interface PuzzleData {
-  _id?: string;
-  name: string;
-  category: string;
-  description: string;
-  fen: string;
-  solution: string[];
-  hint: string;
-  difficulty: 'easy' | 'medium' | 'hard';
-  icon: string;
-  isEnabled: boolean;
-  successMessage?: string;
 }
 
 interface OpeningData {
@@ -224,7 +202,11 @@ const AdminDashboard = () => {
   const [famousMates, setFamousMates] = useState<FamousMateData[]>([]);
   const [bestGames, setBestGames] = useState<BestGameData[]>([]);
   const [activeTab, setActiveTab] = useState('users');
-  const [isLoading, setIsLoading] = useState(true);
+  const loadedDashboardResources = useRef(new Set<string>());
+  const pendingDashboardResources = useRef(new Map<string, Promise<void>>());
+  const userContentAccessCache = useRef(new Map<string, ContentAccess>());
+  const pendingUserContentAccess = useRef(new Map<string, Promise<ContentAccess>>());
+  const puzzleRecommendationsCache = useRef(new Map<string, PuzzleRecommendations>());
 
 
   // Groups state
@@ -239,7 +221,7 @@ const AdminDashboard = () => {
   const [showGroupMembersId, setShowGroupMembersId] = useState<string | null>(null);
 
   
-  // Custom puzzle categories from localStorage
+  // Custom puzzle categories from the API
   const [customCategories, setCustomCategories] = useState<Array<{id: string, name: string, description?: string, icon?: string}>>([]);
 
   // Live Game States
@@ -360,7 +342,7 @@ const AdminDashboard = () => {
   const [specificPuzzlesInputs, setSpecificPuzzlesInputs] = useState<Record<string, string>>({});
   const [showAccessModal, setShowAccessModal] = useState(false);
   const [puzzleCounts, setPuzzleCounts] = useState<{ [key: string]: number }>({});
-  const [puzzleCategoryVisibility, setPuzzleCategoryVisibility] = useState<PuzzleCategoryVisibility[]>([]);
+  const [puzzleCategoryVisibility, setPuzzleCategoryVisibility] = useState<Array<{ categoryId: string; isEnabled?: boolean; allowedGroups?: string[]; groupsConfigured?: boolean }>>([]);
   // Bulk selective access UI state
   const [bulkSelectionType, setBulkSelectionType] = useState<'openings' | 'famousMates' | 'bestGames'>('openings');
   const [selectedContentItemId, setSelectedContentItemId] = useState<string | null>(null);
@@ -385,15 +367,11 @@ const AdminDashboard = () => {
 
   // Modal states
   const [showAddUser, setShowAddUser] = useState(false);
-  const [showAddPuzzle, setShowAddPuzzle] = useState(false);
   const [showAddOpening, setShowAddOpening] = useState(false);
   const [showAddBestGame, setShowAddBestGame] = useState(false);
 
   // Form states
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'student' as 'admin' | 'student' });
-  const [newPuzzle, setNewPuzzle] = useState<PuzzleData>({
-    name: '', category: 'mate-in-1', description: '', fen: '', solution: [], hint: '', difficulty: 'medium', icon: '♔', isEnabled: true, successMessage: 'Checkmate! Brilliant move!'
-  });
   const [newOpening, setNewOpening] = useState<OpeningData>({
     name: '', description: '', category: 'Open Games', moves: [], isEnabled: true
   });
@@ -401,21 +379,33 @@ const AdminDashboard = () => {
     title: '', players: '', description: '', category: 'best', moves: [], highlights: [], isEnabled: true
   });
 
-  // Load custom categories from API (server-side – consistent across all browsers)
-  useEffect(() => {
-    loadCustomCategoriesFromAPI();
-  }, []);
-
   const loadCustomCategoriesFromAPI = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/puzzle-categories`);
-      if (response.ok) {
-        const data = await response.json();
-        setCustomCategories(data.map((c: any) => ({ id: c.categoryId, name: c.name, description: c.description, icon: c.icon })));
-      }
+      if (!response.ok) throw new Error('Failed to load custom puzzle categories');
+      const data = await response.json();
+      setCustomCategories(data.map((c: any) => ({ id: c.categoryId, name: c.name, description: c.description, icon: c.icon })));
+      return true;
     } catch (error) {
       console.error('Failed to load custom categories:', error);
+      return false;
     }
+  };
+
+  const loadDashboardResource = async (key: string, loader: () => Promise<boolean>) => {
+    if (loadedDashboardResources.current.has(key)) return;
+    const pending = pendingDashboardResources.current.get(key);
+    if (pending) return pending;
+
+    const request = (async () => {
+      try {
+        if (await loader()) loadedDashboardResources.current.add(key);
+      } finally {
+        pendingDashboardResources.current.delete(key);
+      }
+    })();
+    pendingDashboardResources.current.set(key, request);
+    return request;
   };
 
   // Combine default and custom categories
@@ -428,36 +418,15 @@ const AdminDashboard = () => {
     return [...PUZZLE_CATEGORIES, ...customCats];
   }, [customCategories]);
 
-  useEffect(() => {
-    if (user?.role === 'admin') {
-      loadAllData();
-    }
-  }, [user]);
-
-  const loadAllData = async () => {
-    setIsLoading(true);
-    await Promise.all([
-      loadStats(),
-      loadUsers(),
-      loadPuzzles(),
-      loadOpenings(),
-      loadFamousMates(),
-      loadBestGames(),
-
-      loadCustomCategoriesFromAPI(),
-      loadGroups(),
-      loadPuzzleCategoryVisibility()
-
-    ]);
-    setIsLoading(false);
-  };
-
   const loadPuzzleCategoryVisibility = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/puzzle-category-order`);
-      if (response.ok) setPuzzleCategoryVisibility(await response.json());
+      if (!response.ok) throw new Error('Failed to load puzzle category visibility');
+      setPuzzleCategoryVisibility(await response.json());
+      return true;
     } catch (error) {
       console.error('Load puzzle category visibility error:', error);
+      return false;
     }
   };
 
@@ -477,12 +446,13 @@ const AdminDashboard = () => {
       const response = await fetch(`${API_BASE_URL}/groups`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) {
-        const data = await response.json();
-        setGroups(data);
-      }
+      if (!response.ok) throw new Error('Failed to load groups');
+      const data = await response.json();
+      setGroups(data);
+      return true;
     } catch (error) {
       console.error('Load groups error:', error);
+      return false;
     }
   };
 
@@ -587,12 +557,13 @@ const AdminDashboard = () => {
       const response = await fetch(`${API_BASE_URL}/stats`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) {
-        const data = await response.json();
-        setStats(data);
-      }
+      if (!response.ok) throw new Error('Failed to load dashboard stats');
+      const data = await response.json();
+      setStats(data);
+      return true;
     } catch (error) {
       console.error('Load stats error:', error);
+      return false;
     }
   };
 
@@ -710,12 +681,13 @@ const AdminDashboard = () => {
       const response = await fetch(`${API_BASE_URL}/puzzles`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) {
-        const data = await response.json();
-        setPuzzles(data);
-      }
+      if (!response.ok) throw new Error('Failed to load puzzles');
+      const data = await response.json();
+      setPuzzles(data);
+      return true;
     } catch (error) {
       console.error('Load puzzles error:', error);
+      return false;
     }
   };
 
@@ -724,12 +696,13 @@ const AdminDashboard = () => {
       const response = await fetch(`${API_BASE_URL}/openings`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) {
-        const data = await response.json();
-        setOpenings(data);
-      }
+      if (!response.ok) throw new Error('Failed to load openings');
+      const data = await response.json();
+      setOpenings(data);
+      return true;
     } catch (error) {
       console.error('Load openings error:', error);
+      return false;
     }
   };
 
@@ -738,12 +711,13 @@ const AdminDashboard = () => {
       const response = await fetch(`${API_BASE_URL}/famous-mates`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) {
-        const data = await response.json();
-        setFamousMates(data);
-      }
+      if (!response.ok) throw new Error('Failed to load famous mates');
+      const data = await response.json();
+      setFamousMates(data);
+      return true;
     } catch (error) {
       console.error('Load famous mates error:', error);
+      return false;
     }
   };
 
@@ -752,14 +726,68 @@ const AdminDashboard = () => {
       const response = await fetch(`${API_BASE_URL}/bestgames`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) {
-        const data = await response.json();
-        setBestGames(data);
-      }
+      if (!response.ok) throw new Error('Failed to load best games');
+      const data = await response.json();
+      setBestGames(data);
+      return true;
     } catch (error) {
       console.error('Load best games error:', error);
+      return false;
     }
   };
+
+  const dashboardLoaders = useRef({
+    loadStats,
+    loadUsers,
+    loadGroups,
+    loadOpenings,
+    loadFamousMates,
+    loadBestGames
+  });
+  dashboardLoaders.current = {
+    loadStats,
+    loadUsers,
+    loadGroups,
+    loadOpenings,
+    loadFamousMates,
+    loadBestGames
+  };
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+
+    const loadActiveTabData = async () => {
+      const loaders = dashboardLoaders.current;
+      const pendingLoads: Promise<void>[] = [];
+      if (activeTab === 'users') {
+        pendingLoads.push(loadDashboardResource('stats', loaders.loadStats));
+        pendingLoads.push(loadDashboardResource('groups', loaders.loadGroups));
+        pendingLoads.push(loadDashboardResource('users', async () => {
+          await loaders.loadUsers();
+          return true;
+        }));
+      } else if (activeTab === 'groups') {
+        pendingLoads.push(loadDashboardResource('groups', loaders.loadGroups));
+      } else if (activeTab === 'access') {
+        const resourceLoaders: Record<typeof bulkSelectionType, () => Promise<boolean>> = {
+          openings: loaders.loadOpenings,
+          famousMates: loaders.loadFamousMates,
+          bestGames: loaders.loadBestGames
+        };
+        pendingLoads.push(loadDashboardResource(bulkSelectionType, resourceLoaders[bulkSelectionType]));
+      } else if (activeTab === 'openings') {
+        pendingLoads.push(loadDashboardResource('openings', loaders.loadOpenings));
+      } else if (activeTab === 'famousmates') {
+        pendingLoads.push(loadDashboardResource('famousMates', loaders.loadFamousMates));
+      } else if (activeTab === 'bestgames') {
+        pendingLoads.push(loadDashboardResource('bestGames', loaders.loadBestGames));
+      }
+
+      await Promise.all(pendingLoads);
+    };
+
+    void loadActiveTabData();
+  }, [activeTab, bulkSelectionType, user?.role]);
 
   // Calculate puzzle counts by category
   useEffect(() => {
@@ -772,9 +800,52 @@ const AdminDashboard = () => {
     setPuzzleCounts(counts);
   }, [puzzles]);
 
+  const getUserContentAccess = async (userId: string): Promise<ContentAccess> => {
+    const cachedAccess = userContentAccessCache.current.get(userId);
+    if (cachedAccess) return cachedAccess;
+
+    const pending = pendingUserContentAccess.current.get(userId);
+    if (pending) return pending;
+
+    const request = (async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/content-access/${userId}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (!response.ok) throw new Error(`Failed to load content access for user ${userId}`);
+        const access: ContentAccess = await response.json();
+        userContentAccessCache.current.set(userId, access);
+        return access;
+      } finally {
+        pendingUserContentAccess.current.delete(userId);
+      }
+    })();
+    pendingUserContentAccess.current.set(userId, request);
+    return request;
+  };
+
+  const updateUserContentAccess = async (userId: string, update: Partial<ContentAccess>) => {
+    const currentAccess = await getUserContentAccess(userId);
+    const response = await fetch(`${API_BASE_URL}/content-access/${userId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(update)
+    });
+    if (!response.ok) throw new Error(`Failed to update content access for user ${userId}`);
+    userContentAccessCache.current.set(userId, { ...currentAccess, ...update });
+  };
+
+  const getUserContentAccessRef = useRef(getUserContentAccess);
+  getUserContentAccessRef.current = getUserContentAccess;
+
   // When an item is selected for selective bulk changes, prefill which students already have it
   useEffect(() => {
+    let cancelled = false;
     const loadPrefill = async () => {
+      if (activeTab !== 'access') return;
       if (!selectedContentItemId) {
         setSelectedStudentsForBulk({});
         return;
@@ -785,9 +856,7 @@ const AdminDashboard = () => {
 
       await Promise.all(studentList.map(async (stu) => {
         try {
-          const resp = await fetch(`${API_BASE_URL}/content-access/${stu.id}`, { headers: { 'Authorization': `Bearer ${token}` } });
-          if (!resp.ok) return;
-          const access: ContentAccess = await resp.json();
+          const access = await getUserContentAccessRef.current(stu.id);
 
           if (bulkSelectionType === 'openings') {
             const list = access.openingAccess?.allowedOpenings || [];
@@ -817,34 +886,31 @@ const AdminDashboard = () => {
             }
           }
         } catch (err) {
-          // ignore
+          console.error(`Failed to load content access for user ${stu.id}:`, err);
         }
       }));
 
-      setSelectedStudentsForBulk(map);
+      if (!cancelled) setSelectedStudentsForBulk(map);
     };
 
-    loadPrefill();
-  }, [selectedContentItemId, bulkSelectionType, users]);
+    void loadPrefill();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, selectedContentItemId, bulkSelectionType, users]);
 
   // Content Access functions
   const loadUserContentAccess = async (userId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/content-access/${userId}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setUserContentAccess(data);
-        // Initialize raw string inputs for specific puzzles
-        if (data.puzzleAccess) {
-          const rawInputs: Record<string, string> = {};
-          for (const catId of Object.keys(data.puzzleAccess)) {
-            const nums: number[] = data.puzzleAccess[catId]?.specificPuzzles || [];
-            rawInputs[catId] = nums.join(', ');
-          }
-          setSpecificPuzzlesInputs(rawInputs);
+      const data = await getUserContentAccess(userId);
+      setUserContentAccess(data);
+      if (data.puzzleAccess) {
+        const rawInputs: Record<string, string> = {};
+        for (const catId of Object.keys(data.puzzleAccess)) {
+          const nums: number[] = data.puzzleAccess[catId]?.specificPuzzles || [];
+          rawInputs[catId] = nums.join(', ');
         }
+        setSpecificPuzzlesInputs(rawInputs);
       }
     } catch (error) {
       console.error('Load content access error:', error);
@@ -857,6 +923,9 @@ const AdminDashboard = () => {
     setPuzzleRecommendations(null);
     setShowAccessModal(true);
     await Promise.all([
+      loadDashboardResource('puzzles', loadPuzzles),
+      loadDashboardResource('customPuzzleCategories', loadCustomCategoriesFromAPI),
+      loadDashboardResource('puzzleCategoryVisibility', loadPuzzleCategoryVisibility),
       loadUserContentAccess(u.id),
       loadPuzzleRecommendations(u.id)
     ]);
@@ -881,38 +950,9 @@ const AdminDashboard = () => {
       });
 
       if (response.ok) {
+        userContentAccessCache.current.set(selectedUserForAccess.id, userContentAccess);
         toast.success(`Content access updated for ${selectedUserForAccess.username}`);
         setShowAccessModal(false);
-      } else {
-        toast.error('Failed to update content access');
-      }
-    } catch (error) {
-      toast.error('Failed to update content access');
-    }
-  };
-
-  const handleBulkUpdateAccess = async (
-    puzzleAccess: ContentAccess['puzzleAccess'],
-    openingAccess: ContentAccess['openingAccess'],
-    famousMatesAccess: ContentAccess['famousMatesAccess'],
-    bestGamesAccess: ContentAccess['bestGamesAccess'],
-    userIds?: string[]
-  ) => {
-    try {
-      const body: any = { puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess };
-      if (userIds && userIds.length > 0) body.userIds = userIds;
-
-      const response = await fetch(`${API_BASE_URL}/content-access-bulk`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (response.ok) {
-        toast.success(userIds && userIds.length > 0 ? `Content access updated for ${userIds.length} users` : 'Content access updated for all students');
       } else {
         toast.error('Failed to update content access');
       }
@@ -1060,11 +1100,20 @@ const AdminDashboard = () => {
   };
 
   const loadPuzzleRecommendations = async (userId: string) => {
+    const cachedRecommendations = puzzleRecommendationsCache.current.get(userId);
+    if (cachedRecommendations) {
+      setPuzzleRecommendations(cachedRecommendations);
+      return;
+    }
+
     try {
       const response = await fetch(`${API_BASE_URL}/users/${userId}/puzzle-recommendations`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) setPuzzleRecommendations(await response.json());
+      if (!response.ok) throw new Error('Failed to load puzzle recommendations');
+      const recommendations: PuzzleRecommendations = await response.json();
+      puzzleRecommendationsCache.current.set(userId, recommendations);
+      setPuzzleRecommendations(recommendations);
     } catch (error) {
       console.error('Load puzzle recommendations error:', error);
     }
@@ -1533,72 +1582,6 @@ const AdminDashboard = () => {
     return getAttendanceForDate(u, new Date().toISOString().split('T')[0]);
   };
 
-  // Puzzle handlers
-  const handleAddPuzzle = async () => {
-    if (!newPuzzle.name || !newPuzzle.fen) {
-      toast.error('Please fill in required fields');
-      return;
-    }
-    try {
-      const response = await fetch(`${API_BASE_URL}/puzzles`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(newPuzzle)
-      });
-      if (response.ok) {
-        toast.success('Puzzle added successfully');
-        setShowAddPuzzle(false);
-        setNewPuzzle({ name: '', category: 'mate-in-1', description: '', fen: '', solution: [], hint: '', difficulty: 'medium', icon: '♔', isEnabled: true, successMessage: 'Checkmate! Brilliant move!' });
-        loadPuzzles();
-        loadStats();
-      } else {
-        toast.error('Failed to add puzzle');
-      }
-    } catch (error) {
-      toast.error('Failed to add puzzle');
-    }
-  };
-
-  const handleTogglePuzzle = async (puzzleId: string, currentStatus: boolean) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/puzzles/${puzzleId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ isEnabled: !currentStatus })
-      });
-      if (response.ok) {
-        toast.success(`Puzzle ${!currentStatus ? 'enabled' : 'disabled'}`);
-        loadPuzzles();
-      }
-    } catch (error) {
-      toast.error('Failed to update puzzle');
-    }
-  };
-
-  const handleDeletePuzzle = async (puzzleId: string) => {
-    if (confirm('Are you sure you want to delete this puzzle?')) {
-      try {
-        const response = await fetch(`${API_BASE_URL}/puzzles/${puzzleId}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (response.ok) {
-          toast.success('Puzzle deleted');
-          loadPuzzles();
-          loadStats();
-        }
-      } catch (error) {
-        toast.error('Failed to delete puzzle');
-      }
-    }
-  };
-
   // Opening handlers
   const handleAddOpening = async () => {
     if (!newOpening.name || !newOpening.category) {
@@ -1662,6 +1645,44 @@ const AdminDashboard = () => {
       } catch (error) {
         toast.error('Failed to delete opening');
       }
+    }
+  };
+
+  const handleToggleFamousMate = async (mateId: string, currentStatus: boolean) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/famous-mates/${mateId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ isEnabled: !currentStatus })
+      });
+      if (!response.ok) throw new Error('Failed to update famous mate');
+      setFamousMates(mates => mates.map(mate =>
+        mate._id === mateId ? { ...mate, isEnabled: !currentStatus } : mate
+      ));
+      toast.success(`Famous mate ${!currentStatus ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      console.error('Update famous mate error:', error);
+      toast.error('Failed to update famous mate');
+    }
+  };
+
+  const handleDeleteFamousMate = async (mateId: string) => {
+    if (!confirm('Are you sure you want to delete this famous mate?')) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/famous-mates/${mateId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Failed to delete famous mate');
+      setFamousMates(mates => mates.filter(mate => mate._id !== mateId));
+      toast.success('Famous mate deleted');
+      void loadStats();
+    } catch (error) {
+      console.error('Delete famous mate error:', error);
+      toast.error('Failed to delete famous mate');
     }
   };
 
@@ -3004,11 +3025,11 @@ const AdminDashboard = () => {
             <TabsTrigger value="access" className="flex items-center gap-2 flex-1 min-w-[60px]">
               <Settings className="w-4 h-4" /> <span className="hidden sm:inline">Content Access</span>
             </TabsTrigger>
-            <TabsTrigger value="puzzles" className="flex items-center gap-2 flex-1 min-w-[60px]">
-              <Puzzle className="w-4 h-4" /> <span className="hidden sm:inline">Puzzles</span>
-            </TabsTrigger>
             <TabsTrigger value="openings" className="flex items-center gap-2 flex-1 min-w-[60px]">
               <BookOpen className="w-4 h-4" /> <span className="hidden sm:inline">Openings</span>
+            </TabsTrigger>
+            <TabsTrigger value="famousmates" className="flex items-center gap-2 flex-1 min-w-[60px]">
+              <Crown className="w-4 h-4" /> <span className="hidden sm:inline">Famous Mates</span>
             </TabsTrigger>
             <TabsTrigger value="bestgames" className="flex items-center gap-2 flex-1 min-w-[60px]">
               <Trophy className="w-4 h-4" /> <span className="hidden sm:inline">Best Games</span>
@@ -3851,208 +3872,9 @@ const AdminDashboard = () => {
             </Dialog>
           </TabsContent>
 
-          {/* Content Access Tab - Bulk Management */}
+          {/* Selective Access Assignment */}
           <TabsContent value="access">
             <div className="card-premium p-6">
-              <div className="mb-6">
-                <h2 className="font-serif text-xl font-semibold mb-2">Bulk Content Access Control</h2>
-                <p className="text-muted-foreground">
-                  Manage content access for all students at once. Changes apply to all student accounts.
-                </p>
-              </div>
-
-              <div className="space-y-8">
-                {/* Puzzle Categories */}
-                <div>
-                  <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                    <Puzzle className="w-5 h-5 text-primary" /> Puzzle Categories
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {allPuzzleCategories.map((cat) => (
-                      <div key={cat.id} className="p-5 bg-secondary/30 rounded-xl border border-border">
-                        <div className="flex items-center gap-3 mb-4">
-                          <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
-                            <span className="text-2xl">{cat.icon}</span>
-                          </div>
-                          <div>
-                            <h4 className="font-semibold">{cat.name}</h4>
-                            <p className="text-sm text-muted-foreground">
-                              {puzzleCounts[cat.id] || 0} puzzles available
-                            </p>
-                          </div>
-                        </div>
-                        <div className="space-y-3">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-start"
-                            onClick={() => handleBulkUpdateAccess(
-                              { [cat.id]: { enabled: true, limit: 0 } },
-                              { enabled: false, allowedOpenings: [] },
-                              { enabled: false, allowedMates: [] },
-                              { enabled: false, allowedGames: [] }
-                            )}
-                          >
-                            <Unlock className="w-4 h-4 mr-2 text-success" />
-                            Unlock All for Everyone
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-start"
-                            onClick={() => handleBulkUpdateAccess(
-                              { [cat.id]: { enabled: true, limit: 5 } },
-                              { enabled: false, allowedOpenings: [] },
-                              { enabled: false, allowedMates: [] },
-                              { enabled: false, allowedGames: [] }
-                            )}
-                          >
-                            <Eye className="w-4 h-4 mr-2 text-warning" />
-                            Unlock First 5 for Everyone
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full justify-start"
-                            onClick={() => handleBulkUpdateAccess(
-                              { [cat.id]: { enabled: false, limit: 0 } },
-                              { enabled: false, allowedOpenings: [] },
-                              { enabled: false, allowedMates: [] },
-                              { enabled: false, allowedGames: [] }
-                            )}
-                          >
-                            <Lock className="w-4 h-4 mr-2 text-destructive" />
-                            Lock for Everyone
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Openings */}
-                <div>
-                  <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                    <BookOpen className="w-5 h-5 text-primary" /> Openings
-                  </h3>
-                  <div className="p-5 bg-secondary/30 rounded-xl border border-border">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <h4 className="font-semibold">All Openings</h4>
-                        <p className="text-sm text-muted-foreground">{openings.length} openings available</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => handleBulkUpdateAccess(
-                          {},
-                          { enabled: true, allowedOpenings: [] },
-                          { enabled: false, allowedMates: [] },
-                          { enabled: false, allowedGames: [] }
-                        )}
-                      >
-                        <Unlock className="w-4 h-4 mr-2 text-success" />
-                        Unlock for All Students
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleBulkUpdateAccess(
-                          {},
-                          { enabled: false, allowedOpenings: [] },
-                          { enabled: false, allowedMates: [] },
-                          { enabled: false, allowedGames: [] }
-                        )}
-                      >
-                        <Lock className="w-4 h-4 mr-2 text-destructive" />
-                        Lock for All Students
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Best Games */}
-                <div>
-                  <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                    <Trophy className="w-5 h-5 text-primary" /> Best Games
-                  </h3>
-                  <div className="p-5 bg-secondary/30 rounded-xl border border-border">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <h4 className="font-semibold">All Best Games</h4>
-                        <p className="text-sm text-muted-foreground">{bestGames.length} games available</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => handleBulkUpdateAccess(
-                          {},
-                          { enabled: false, allowedOpenings: [] },
-                          { enabled: false, allowedMates: [] },
-                          { enabled: true, allowedGames: [] }
-                        )}
-                      >
-                        <Unlock className="w-4 h-4 mr-2 text-success" />
-                        Unlock for All Students
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleBulkUpdateAccess(
-                          {},
-                          { enabled: false, allowedOpenings: [] },
-                          { enabled: false, allowedMates: [] },
-                          { enabled: false, allowedGames: [] }
-                        )}
-                      >
-                        <Lock className="w-4 h-4 mr-2 text-destructive" />
-                        Lock for All Students
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Famous Mates */}
-                <div>
-                  <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                    <Crown className="w-5 h-5 text-primary" /> Famous Mates
-                  </h3>
-                  <div className="p-5 bg-secondary/30 rounded-xl border border-border">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <h4 className="font-semibold">All Famous Mates</h4>
-                        <p className="text-sm text-muted-foreground">{famousMates.length} famous mates available</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <Button
-                        variant="outline"
-                        onClick={() => handleBulkUpdateAccess(
-                          {},
-                          { enabled: false, allowedOpenings: [] },
-                          { enabled: true, allowedMates: [] },
-                          { enabled: false, allowedGames: [] }
-                        )}
-                      >
-                        <Unlock className="w-4 h-4 mr-2 text-success" />
-                        Unlock for All Students
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => handleBulkUpdateAccess(
-                          {},
-                          { enabled: false, allowedOpenings: [] },
-                          { enabled: false, allowedMates: [] },
-                          { enabled: false, allowedGames: [] }
-                        )}
-                      >
-                        <Lock className="w-4 h-4 mr-2 text-destructive" />
-                        Lock for All Students
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
               {/* Selective Access */}
               <div className="mt-6 p-5 bg-secondary/20 rounded-xl border border-border">
                 <h3 className="font-semibold text-lg mb-3">Selective Access Assignment</h3>
@@ -4136,22 +3958,22 @@ const AdminDashboard = () => {
 
                     const results = await Promise.allSettled(studentList.map(async (stu) => {
                       try {
-                        const resp = await fetch(`${API_BASE_URL}/content-access/${stu.id}`, {
-                          headers: { 'Authorization': `Bearer ${token}` }
-                        });
-                        if (!resp.ok) throw new Error('Failed to load access');
-                        const access: ContentAccess = await resp.json();
+                        const access = await getUserContentAccess(stu.id);
 
                         // compute new access per user
                         if (bulkSelectionType === 'openings') {
                           let openingAccess = access.openingAccess || { enabled: false, allowedOpenings: [] };
-                          const currentlyHas = openingAccess.allowedOpenings?.includes(selectedContentItemId!);
+                          let accessChanged = false;
+                          const currentlyHas = openingAccess.enabled &&
+                            ((openingAccess.allowedOpenings?.length || 0) === 0 ||
+                              openingAccess.allowedOpenings.includes(selectedContentItemId!));
                           const shouldHave = !!selectedStudentsForBulk[stu.id];
 
                           if (shouldHave && !currentlyHas) {
                             // add
                             const newAllowed = Array.from(new Set([...(openingAccess.allowedOpenings || []), selectedContentItemId!]));
                             openingAccess = { enabled: true, allowedOpenings: newAllowed };
+                            accessChanged = true;
                           } else if (!shouldHave && currentlyHas) {
                             // remove
                             // if allowedOpenings empty means "all unlocked" — convert to explicit list then remove
@@ -4161,23 +3983,24 @@ const AdminDashboard = () => {
                             }
                             const newAllowed = currentList.filter(id => id !== selectedContentItemId);
                             openingAccess = { enabled: newAllowed.length === 0 ? false : true, allowedOpenings: newAllowed };
+                            accessChanged = true;
                           }
 
-                          await fetch(`${API_BASE_URL}/content-access/${stu.id}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                            body: JSON.stringify({ openingAccess })
-                          });
+                          if (accessChanged) await updateUserContentAccess(stu.id, { openingAccess });
                         }
 
                         if (bulkSelectionType === 'famousMates') {
                           let famousMatesAccess = access.famousMatesAccess || { enabled: false, allowedMates: [] };
-                          const currentlyHas = famousMatesAccess.allowedMates?.includes(selectedContentItemId!);
+                          let accessChanged = false;
+                          const currentlyHas = famousMatesAccess.enabled &&
+                            ((famousMatesAccess.allowedMates?.length || 0) === 0 ||
+                              famousMatesAccess.allowedMates.includes(selectedContentItemId!));
                           const shouldHave = !!selectedStudentsForBulk[stu.id];
 
                           if (shouldHave && !currentlyHas) {
                             const newAllowed = Array.from(new Set([...(famousMatesAccess.allowedMates || []), selectedContentItemId!]));
                             famousMatesAccess = { enabled: true, allowedMates: newAllowed };
+                            accessChanged = true;
                           } else if (!shouldHave && currentlyHas) {
                             let currentList = famousMatesAccess.allowedMates || [];
                             if (famousMatesAccess.enabled && currentList.length === 0) {
@@ -4185,23 +4008,24 @@ const AdminDashboard = () => {
                             }
                             const newAllowed = currentList.filter(id => id !== selectedContentItemId);
                             famousMatesAccess = { enabled: newAllowed.length === 0 ? false : true, allowedMates: newAllowed };
+                            accessChanged = true;
                           }
 
-                          await fetch(`${API_BASE_URL}/content-access/${stu.id}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                            body: JSON.stringify({ famousMatesAccess })
-                          });
+                          if (accessChanged) await updateUserContentAccess(stu.id, { famousMatesAccess });
                         }
 
                         if (bulkSelectionType === 'bestGames') {
                           let bestGamesAccess = access.bestGamesAccess || { enabled: false, allowedGames: [] };
-                          const currentlyHas = bestGamesAccess.allowedGames?.includes(selectedContentItemId!);
+                          let accessChanged = false;
+                          const currentlyHas = bestGamesAccess.enabled &&
+                            ((bestGamesAccess.allowedGames?.length || 0) === 0 ||
+                              bestGamesAccess.allowedGames.includes(selectedContentItemId!));
                           const shouldHave = !!selectedStudentsForBulk[stu.id];
 
                           if (shouldHave && !currentlyHas) {
                             const newAllowed = Array.from(new Set([...(bestGamesAccess.allowedGames || []), selectedContentItemId!]));
                             bestGamesAccess = { enabled: true, allowedGames: newAllowed };
+                            accessChanged = true;
                           } else if (!shouldHave && currentlyHas) {
                             let currentList = bestGamesAccess.allowedGames || [];
                             if (bestGamesAccess.enabled && currentList.length === 0) {
@@ -4209,13 +4033,10 @@ const AdminDashboard = () => {
                             }
                             const newAllowed = currentList.filter(id => id !== selectedContentItemId);
                             bestGamesAccess = { enabled: newAllowed.length === 0 ? false : true, allowedGames: newAllowed };
+                            accessChanged = true;
                           }
 
-                          await fetch(`${API_BASE_URL}/content-access/${stu.id}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                            body: JSON.stringify({ bestGamesAccess })
-                          });
+                          if (accessChanged) await updateUserContentAccess(stu.id, { bestGamesAccess });
                         }
 
                         return { ok: true, userId: stu.id };
@@ -4226,173 +4047,16 @@ const AdminDashboard = () => {
 
                     const succeeded = results.filter(r => (r as any).status === 'fulfilled' && (r as any).value.ok).length;
                     toast.dismiss();
-                    toast.success(`Updated access for ${succeeded}/${studentList.length} students`);
-                    // refresh users/content if needed
-                    await Promise.all([loadUsers(), loadStats()]);
+                    if (succeeded === studentList.length) {
+                      toast.success(`Updated access for ${succeeded} students`);
+                    } else {
+                      toast.error(`Updated access for ${succeeded}/${studentList.length} students`);
+                    }
                   }}>
                     <Save className="w-4 h-4 mr-2" /> Save Selected
                   </Button>
                   <Button variant="outline" onClick={() => { setSelectedContentItemId(null); setSelectedStudentsForBulk({}); }}>Cancel</Button>
                 </div>
-              </div>
-            </div>
-          </TabsContent>
-
-          {/* Puzzles Tab */}
-          <TabsContent value="puzzles">
-            <div className="card-premium p-6">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="font-serif text-xl font-semibold">Puzzle Management</h2>
-                <Dialog open={showAddPuzzle} onOpenChange={setShowAddPuzzle}>
-                  <DialogTrigger asChild>
-                    <Button className="flex items-center gap-2">
-                      <Plus className="w-4 h-4" /> Add Puzzle
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-4xl max-h-[95vh] overflow-y-auto">
-                    <DialogHeader>
-                      <DialogTitle>Add New Puzzle - Visual Board Editor</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-4 mt-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <Label>Name *</Label>
-                          <Input
-                            value={newPuzzle.name}
-                            onChange={(e) => setNewPuzzle({ ...newPuzzle, name: e.target.value })}
-                            placeholder="e.g., Mate in 1 - Puzzle 1"
-                          />
-                        </div>
-                        <div>
-                          <Label>Category *</Label>
-                          <Select value={newPuzzle.category} onValueChange={(value) => setNewPuzzle({ ...newPuzzle, category: value })}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="mate-in-1">Mate in 1</SelectItem>
-                              <SelectItem value="mate-in-2">Mate in 2</SelectItem>
-                              <SelectItem value="mate-in-3">Mate in 3</SelectItem>
-                              <SelectItem value="pins">Pins</SelectItem>
-                              <SelectItem value="forks">Forks</SelectItem>
-                              <SelectItem value="traps">Traps</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                      <div>
-                        <Label>Description</Label>
-                        <Textarea
-                          value={newPuzzle.description}
-                          onChange={(e) => setNewPuzzle({ ...newPuzzle, description: e.target.value })}
-                          placeholder="Describe the puzzle"
-                        />
-                      </div>
-                      
-                      {/* Visual Board Editor */}
-                      <div className="border rounded-lg p-4 bg-secondary/20">
-                        <Label className="text-base font-medium mb-3 block">Set Position & Solution Visually</Label>
-                        <p className="text-sm text-muted-foreground mb-4">
-                          1. Click a piece on the left, then click the board to place it.<br/>
-                          2. Set whose turn it is (White/Black to move).<br/>
-                          3. Click "Next: Record Solution" when position is ready.<br/>
-                          4. Make the correct move(s) on the board.<br/>
-                          5. Click "Save Position & Solution".
-                        </p>
-                        <VisualBoardEditor
-                          onPositionSave={(fen, solution) => {
-                            setNewPuzzle({ ...newPuzzle, fen, solution });
-                          }}
-                        />
-                        {newPuzzle.fen && (
-                          <div className="mt-3 p-2 bg-success/10 border border-success/20 rounded text-sm">
-                            <strong>✓ Position & Solution saved!</strong><br/>
-                            Solution moves: <span className="font-medium">{newPuzzle.solution.join(' → ') || 'None'}</span>
-                          </div>
-                        )}
-                      </div>
-                      
-                      <div>
-                        <Label>Hint</Label>
-                        <Input
-                          value={newPuzzle.hint}
-                          onChange={(e) => setNewPuzzle({ ...newPuzzle, hint: e.target.value })}
-                          placeholder="e.g., Look at the weak f7 square"
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <Label>Difficulty</Label>
-                          <Select value={newPuzzle.difficulty} onValueChange={(value: 'easy' | 'medium' | 'hard') => setNewPuzzle({ ...newPuzzle, difficulty: value })}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="easy">Easy</SelectItem>
-                              <SelectItem value="medium">Medium</SelectItem>
-                              <SelectItem value="hard">Hard</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div>
-                          <Label>Icon</Label>
-                          <Select value={newPuzzle.icon} onValueChange={(value) => setNewPuzzle({ ...newPuzzle, icon: value })}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="♔">♔ King</SelectItem>
-                              <SelectItem value="♕">♕ Queen</SelectItem>
-                              <SelectItem value="♖">♖ Rook</SelectItem>
-                              <SelectItem value="♗">♗ Bishop</SelectItem>
-                              <SelectItem value="♘">♘ Knight</SelectItem>
-                              <SelectItem value="♙">♙ Pawn</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-                      <Button onClick={handleAddPuzzle} className="w-full" disabled={!newPuzzle.fen}>
-                        <Save className="w-4 h-4 mr-2" /> Add Puzzle
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-              </div>
-
-              <div className="grid gap-4">
-                {puzzles.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    No puzzles yet. Add your first puzzle!
-                  </div>
-                ) : (
-                  puzzles.map((puzzle) => (
-                    <div key={puzzle._id} className="flex items-center justify-between p-4 bg-secondary/50 rounded-lg">
-                      <div className="flex items-center gap-4">
-                        <span className="text-2xl">{puzzle.icon}</span>
-                        <div>
-                          <p className="font-medium text-foreground">{puzzle.name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {puzzle.category} • {puzzle.difficulty}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            checked={puzzle.isEnabled}
-                            onCheckedChange={() => handleTogglePuzzle(puzzle._id!, puzzle.isEnabled)}
-                          />
-                          <span className={`text-sm ${puzzle.isEnabled ? 'text-success' : 'text-muted-foreground'}`}>
-                            {puzzle.isEnabled ? 'Enabled' : 'Disabled'}
-                          </span>
-                        </div>
-                        <Button variant="destructive" size="sm" onClick={() => handleDeletePuzzle(puzzle._id!)}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))
-                )}
               </div>
             </div>
           </TabsContent>
@@ -4494,6 +4158,61 @@ const AdminDashboard = () => {
                           </span>
                         </div>
                         <Button variant="destructive" size="sm" onClick={() => handleDeleteOpening(opening._id!)}>
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* Famous Mates Tab */}
+          <TabsContent value="famousmates">
+            <div className="card-premium p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="font-serif text-xl font-semibold">Famous Mates Management</h2>
+                <Button asChild>
+                  <Link to="/famous-mates/create">
+                    <Plus className="w-4 h-4 mr-2" /> Add Famous Mate
+                  </Link>
+                </Button>
+              </div>
+
+              <div className="grid gap-4">
+                {famousMates.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No famous mates yet. Add your first famous mate!
+                  </div>
+                ) : (
+                  famousMates.map((mate) => (
+                    <div key={mate._id} className="flex items-center justify-between p-4 bg-secondary/50 rounded-lg">
+                      <div className="flex items-center gap-4">
+                        <Crown className="w-6 h-6 text-primary" />
+                        <div>
+                          <p className="font-medium text-foreground">{mate.name}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {mate.category} • {mate.moves?.length || 0} moves
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={mate.isEnabled}
+                            onCheckedChange={() => handleToggleFamousMate(mate._id!, mate.isEnabled)}
+                          />
+                          <span className={`text-sm ${mate.isEnabled ? 'text-success' : 'text-muted-foreground'}`}>
+                            {mate.isEnabled ? 'Enabled' : 'Disabled'}
+                          </span>
+                        </div>
+                        <Button asChild variant="outline" size="sm">
+                          <Link to={`/famous-mates/edit/${mate._id}`}>
+                            <Edit className="w-4 h-4" />
+                          </Link>
+                        </Button>
+                        <Button variant="destructive" size="sm" onClick={() => handleDeleteFamousMate(mate._id!)}>
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>

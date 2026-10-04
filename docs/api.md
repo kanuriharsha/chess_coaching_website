@@ -73,28 +73,27 @@ This document describes the Express and Socket.IO interfaces implemented in `ser
 
 ### Learning content and access
 
-The `GET` routes for openings, famous mates, and best games do not verify a token or filter records by `isEnabled` in the server handlers. Their create/update/delete routes require an admin token. Student-facing UI separately loads content-access settings.
+The content-list routes require authentication. Admins receive enabled and disabled records so they can manage visibility; student responses omit disabled records and apply the relevant content-access settings. Disabled content is not returned as a locked card.
 
 | Method and path | Access | Purpose and result |
 |---|---|---|
-| `GET /openings` | No token | Lists openings, newest first. |
+| `GET /openings` | Any valid token | Lists enabled openings for students, filtered by access; admins receive all openings. |
 | `POST /openings` | Admin token | Creates an opening; body follows the [Opening schema](schema.md#opening). |
 | `PUT /openings/:id` | Admin token | Updates an opening. |
 | `DELETE /openings/:id` | Admin token | Deletes an opening. |
-| `GET /famous-mates` | No token | Lists famous mates, newest first. |
-| `GET /famous-mates/:id` | No token | Returns one famous mate or `404`. |
+| `GET /famous-mates` | Any valid token | Lists enabled famous mates for students, filtered by access; admins receive all famous mates. |
+| `GET /famous-mates/:id` | Any valid token | Returns an accessible famous mate or `404`. |
 | `POST /famous-mates` | Admin token | Creates a famous mate; body follows the [FamousMate schema](schema.md#famousmate). |
 | `PUT /famous-mates/:id` | Admin token | Updates a famous mate. |
 | `DELETE /famous-mates/:id` | Admin token | Deletes a famous mate. |
-| `GET /bestgames` | No token | Lists best games, newest first. |
+| `GET /bestgames` | Any valid token | Lists enabled best games for students, filtered by access; admins receive all best games. |
 | `POST /bestgames` | Admin token | Creates a best game; body follows the [BestGame schema](schema.md#bestgame). |
 | `PUT /bestgames/:id` | Admin token | Updates a best game. |
 | `DELETE /bestgames/:id` | Admin token | Deletes a best game. |
 | `GET /stats` | Admin token | Returns student and content totals. |
-| `GET /content-access/:userId` | Any valid token | Gets/creates the specified user's access record. The handler validates the token but does not restrict reads to admins or the matching user. |
+| `GET /content-access/:userId` | Admin or matching user | Gets/creates the specified user's access record. |
 | `GET /my-content-access` | Any valid token | Gets/creates the caller's access record. |
 | `PUT /content-access/:userId` | Admin token | Creates or updates a user's puzzle, opening, famous-mate, and best-game access configuration. |
-| `PUT /content-access-bulk` | Admin token | Applies supplied access settings to `userIds`, or all students if `userIds` is omitted. |
 
 ### Live-game request fallback
 

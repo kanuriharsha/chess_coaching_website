@@ -1747,8 +1747,7 @@ app.get('/api/openings', async (req, res) => {
         openings,
         await getContentAccessForUser(viewer._id),
         'openingAccess',
-        'allowedOpenings',
-        true
+        'allowedOpenings'
       );
     res.json(visibleOpenings);
   } catch (error) {
@@ -1830,8 +1829,7 @@ app.get('/api/famous-mates', async (req, res) => {
         famousMates,
         await getContentAccessForUser(viewer._id),
         'famousMatesAccess',
-        'allowedMates',
-        true
+        'allowedMates'
       );
     res.json(visibleMates);
   } catch (error) {
@@ -1939,8 +1937,7 @@ app.get('/api/bestgames', async (req, res) => {
         games,
         await getContentAccessForUser(viewer._id),
         'bestGamesAccess',
-        'allowedGames',
-        true
+        'allowedGames'
       );
     res.json(visibleGames);
   } catch (error) {
@@ -2148,52 +2145,6 @@ app.put('/api/content-access/:userId', async (req, res) => {
     res.json({ success: true, access });
   } catch (error) {
     console.error('Update content access error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Bulk update content access for all students (admin only)
-app.put('/api/content-access-bulk', async (req, res) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'No token provided' });
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
-
-    const { puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess, userIds } = req.body;
-
-    // Get all students or specific users
-    const targetUserIds = userIds || (await User.find({ role: 'student' }).select('_id')).map(u => u._id);
-
-    for (const userId of targetUserIds) {
-      let access = await ContentAccess.findOne({ userId });
-
-      if (!access) {
-        await ContentAccess.create({
-          userId,
-          puzzleAccess: puzzleAccess || {},
-          openingAccess: openingAccess || { enabled: false, allowedOpenings: [] },
-          famousMatesAccess: famousMatesAccess || { enabled: false, allowedMates: [] },
-          bestGamesAccess: bestGamesAccess || { enabled: false, allowedGames: [] }
-        });
-      } else {
-        if (puzzleAccess) {
-          access.puzzleAccess = puzzleAccess;
-          access.markModified('puzzleAccess');
-        }
-        if (openingAccess) access.openingAccess = openingAccess;
-        if (famousMatesAccess) access.famousMatesAccess = famousMatesAccess;
-        if (bestGamesAccess) access.bestGamesAccess = bestGamesAccess;
-        access.updatedAt = new Date();
-        await access.save();
-      }
-    }
-
-    res.json({ success: true, message: `Updated access for ${targetUserIds.length} users` });
-  } catch (error) {
-    console.error('Bulk update content access error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

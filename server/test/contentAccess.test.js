@@ -47,14 +47,13 @@ test('opening, famous-mate, and best-game entitlements require enabled access an
     }, 'openingAccess', 'allowedOpenings'),
     items.slice(0, 2)
   );
-  const disabledLocked = filterVisibleItems(
+  const hiddenDisabledItem = filterVisibleItems(
     [{ _id: 'disabled', name: 'Disabled record', isEnabled: false, moves: ['private'] }],
     { famousMatesAccess: { enabled: true, allowedMates: ['disabled'] } },
     'famousMatesAccess',
     'allowedMates',
-    true
   );
-  assert.deepEqual(disabledLocked, [{ _id: 'disabled', name: 'Disabled record', isEnabled: false, isLocked: true }]);
+  assert.deepEqual(hiddenDisabledItem, []);
 
   for (const [section, allowedIdsField] of [
     ['openingAccess', 'allowedOpenings'],

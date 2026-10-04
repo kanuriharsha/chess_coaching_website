@@ -9,12 +9,11 @@ export function getUserContentAccessStatus(requester, requestedUserId) {
   return canReadUserContentAccess(requester, requestedUserId) ? 200 : 403;
 }
 
-export function filterVisibleItems(items, access, section, allowedIdsField, includeDisabled = false) {
+export function filterVisibleItems(items, access, section, allowedIdsField) {
   const settings = access?.[section];
   const allowedIds = (settings?.[allowedIdsField] || []).map(String);
-  return items.filter(item => includeDisabled || item.isEnabled !== false).map(item => {
-    const isLocked = item.isEnabled === false ||
-      settings?.enabled !== true ||
+  return items.filter(item => item.isEnabled !== false).map(item => {
+    const isLocked = settings?.enabled !== true ||
       (allowedIds.length > 0 && !allowedIds.includes(String(item._id ?? item.id)));
     if (!isLocked) return item;
 
