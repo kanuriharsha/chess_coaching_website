@@ -7,9 +7,12 @@ import { Chess } from 'chess.js';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import {
+  canManageStudent,
   filterVisibleItems,
   filterVisiblePuzzles,
-  getUserContentAccessStatus
+  getContentOwnerId,
+  getUserContentAccessStatus,
+  isAdminRole
 } from './contentAccess.js';
 import { registerLiveGameValidationHandlers } from './liveGameHandlers.js';
 
@@ -79,17 +82,20 @@ mongoose.connect(MONGODB_URI)
 
 // Group Schema - for grouping students
 const groupSchema = new mongoose.Schema({
-  name: { type: String, required: true, unique: true, trim: true },
+  name: { type: String, required: true, trim: true },
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   description: { type: String, default: '' },
   createdAt: { type: Date, default: Date.now }
 });
+groupSchema.index({ adminId: 1, name: 1 }, { unique: true });
 const Group = mongoose.model('Group', groupSchema, 'groups');
 
 // User Schema
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
-  role: { type: String, enum: ['admin', 'student'], default: 'student' },
+  role: { type: String, enum: ['admin', 'superadmin', 'student'], default: 'student' },
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   isEnabled: { type: Boolean, default: true },
   onboardingComplete: { type: Boolean, default: false },
   joiningDate: { type: Date },
@@ -134,6 +140,7 @@ const userSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now }
 });
 
+userSchema.index({ role: 1 }, { unique: true, partialFilterExpression: { role: 'superadmin' } });
 const User = mongoose.model('User', userSchema, 'login');
 
 async function getAuthenticatedUser(req, fields = '_id role') {
@@ -152,8 +159,71 @@ async function getAuthenticatedUser(req, fields = '_id role') {
   return User.findById(decoded.id).select(fields);
 }
 
+function requireRole(...roles) {
+  return async (req, res, next) => {
+    try {
+      const user = await getAuthenticatedUser(req, '_id role adminId isEnabled');
+      if (!user || user.isEnabled === false) {
+        return res.status(401).json({ message: 'Unauthorized' });
+      }
+      if (!roles.includes(user.role)) {
+        return res.status(403).json({ message: 'Access denied' });
+      }
+      req.authUser = user;
+      next();
+    } catch (error) {
+      console.error('Authorization error:', error);
+      res.status(401).json({ message: 'Invalid token' });
+    }
+  };
+}
+
+app.use('/api', async (req, res, next) => {
+  if (!req.headers.authorization) return next();
+  try {
+    const user = await getAuthenticatedUser(req, '_id role adminId isEnabled');
+    if (!user || user.isEnabled === false) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    req.authUser = user;
+    next();
+  } catch (error) {
+    console.error('API authentication error:', error);
+    res.status(401).json({ message: 'Invalid token' });
+  }
+});
+
+app.use('/api/users/:id', async (req, res, next) => {
+  try {
+    const requestingUser = await getAuthenticatedUser(req, '_id role adminId isEnabled');
+    if (!requestingUser || requestingUser.isEnabled === false) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid user id' });
+    }
+    const targetUser = await User.findById(req.params.id).select('_id role adminId');
+    if (!targetUser) return res.status(404).json({ message: 'User not found' });
+
+    const isSelf = requestingUser._id.equals(targetUser._id);
+    const ownsStudent = canManageStudent(requestingUser, targetUser);
+    if (!isSelf && !ownsStudent) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    req.authUser = requestingUser;
+    req.targetUser = targetUser;
+    next();
+  } catch (error) {
+    console.error('User ownership check error:', error);
+    res.status(401).json({ message: 'Invalid token' });
+  }
+});
+
 // Puzzle Schema
 const puzzleSchema = new mongoose.Schema({
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   name: { type: String, required: true },
   category: { type: String, required: true },
   description: { type: String },
@@ -315,6 +385,7 @@ function validatePuzzlePayload(payload) {
 
 // Opening Schema
 const openingSchema = new mongoose.Schema({
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   name: { type: String, required: true },
   description: { type: String },
   category: { type: String, required: true },
@@ -333,6 +404,7 @@ const Opening = mongoose.model('Opening', openingSchema, 'openings');
 
 // Famous Mates Schema
 const famousMateSchema = new mongoose.Schema({
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   name: { type: String, required: true },
   description: { type: String },
   category: { type: String, required: true, default: 'Famous Mates' },
@@ -351,6 +423,7 @@ const FamousMate = mongoose.model('FamousMate', famousMateSchema, 'famousmates')
 
 // Best Game Schema
 const bestGameSchema = new mongoose.Schema({
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   title: { type: String, required: true },
   players: { type: String, required: true },
   description: { type: String },
@@ -367,23 +440,27 @@ const BestGame = mongoose.model('BestGame', bestGameSchema, 'bestgames');
 
 // Puzzle Category Schema - stores custom puzzle categories server-side
 const puzzleCategorySchema = new mongoose.Schema({
-  categoryId: { type: String, required: true, unique: true }, // slug e.g. 'gain-a-queen'
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  categoryId: { type: String, required: true }, // slug e.g. 'gain-a-queen'
   name: { type: String, required: true },
   description: { type: String, default: 'Custom puzzle category' },
   icon: { type: String, default: '\u265F' },
   order_index: { type: Number, default: 999 }, // Admin-defined display order
   createdAt: { type: Date, default: Date.now }
 });
+puzzleCategorySchema.index({ adminId: 1, categoryId: 1 }, { unique: true });
 const PuzzleCategory = mongoose.model('PuzzleCategory', puzzleCategorySchema, 'puzzlecategories');
 
 // Puzzle Category Order Schema - stores display order for ALL categories (default + custom)
 const puzzleCategoryOrderSchema = new mongoose.Schema({
-  categoryId: { type: String, required: true, unique: true },
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  categoryId: { type: String, required: true },
   order_index: { type: Number, required: true, default: 0 },
   isEnabled: { type: Boolean, default: true },
   allowedGroups: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Group' }],
   groupsConfigured: { type: Boolean, default: false }
 });
+puzzleCategoryOrderSchema.index({ adminId: 1, categoryId: 1 }, { unique: true });
 const PuzzleCategoryOrder = mongoose.model('PuzzleCategoryOrder', puzzleCategoryOrderSchema, 'puzzlecategoryorder');
 
 // Content Access Schema - Controls what content users can access
@@ -417,19 +494,28 @@ async function getContentAccessForUser(userId) {
   return ContentAccess.findOne({ userId }).lean();
 }
 
+async function belongToAdminGroups(groupIds, adminId) {
+  if (!Array.isArray(groupIds) || groupIds.some(id => !mongoose.isValidObjectId(id))) return false;
+  const uniqueIds = [...new Set(groupIds.map(String))];
+  const ownedGroups = await Group.countDocuments({ _id: { $in: uniqueIds }, adminId });
+  return ownedGroups === uniqueIds.length;
+}
+
 async function getVisiblePuzzles(viewer, category) {
-  const query = category ? { category } : {};
-  if (viewer.role !== 'admin') query.isEnabled = true;
+  const adminId = getContentOwnerId(viewer);
+  const query = { adminId };
+  if (category) query.category = category;
+  if (!isAdminRole(viewer)) query.isEnabled = true;
 
   const [puzzles, access, categorySettings] = await Promise.all([
     Puzzle.find(query).sort({ order: 1, createdAt: 1 }),
-    viewer.role === 'admin' ? null : getContentAccessForUser(viewer._id),
-    viewer.role === 'admin' ? [] : PuzzleCategoryOrder.find(
-      category ? { categoryId: category } : {}
+    isAdminRole(viewer) ? null : getContentAccessForUser(viewer._id),
+    isAdminRole(viewer) ? [] : PuzzleCategoryOrder.find(
+      category ? { adminId, categoryId: category } : { adminId }
     ).lean()
   ]);
 
-  if (viewer.role === 'admin') return puzzles;
+  if (isAdminRole(viewer)) return puzzles;
   return filterVisiblePuzzles(puzzles, access, categorySettings, viewer);
 }
 
@@ -470,7 +556,7 @@ app.get('/api/users/:id/puzzle-recommendations', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id).select('role');
-    if (!requestingUser || requestingUser.role !== 'admin') {
+    if (!requestingUser || !isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -479,9 +565,15 @@ app.get('/api/users/:id/puzzle-recommendations', async (req, res) => {
     }
 
     const userId = new mongoose.Types.ObjectId(req.params.id);
+    const student = await User.findOne({
+      _id: userId,
+      role: 'student',
+      adminId: requestingUser._id
+    }).select('_id');
+    if (!student) return res.status(404).json({ message: 'Student not found' });
     const [categoryTotals, solvedGroups] = await Promise.all([
       Puzzle.aggregate([
-        { $match: { isEnabled: true } },
+        { $match: { isEnabled: true, adminId: requestingUser._id } },
         { $group: { _id: '$category', total: { $sum: 1 } } },
         { $sort: { _id: 1 } }
       ]),
@@ -508,7 +600,7 @@ app.get('/api/users/:id/puzzle-recommendations', async (req, res) => {
       .map(id => new mongoose.Types.ObjectId(id));
 
     const solvedPuzzles = solvedObjectIds.length > 0
-      ? await Puzzle.find({ _id: { $in: solvedObjectIds }, isEnabled: true })
+      ? await Puzzle.find({ _id: { $in: solvedObjectIds }, isEnabled: true, adminId: requestingUser._id })
           .select('_id category order')
           .lean()
       : [];
@@ -565,16 +657,20 @@ app.get('/api/users/:id/puzzle-recommendations', async (req, res) => {
 });
 
 // Register new user
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', requireRole('admin', 'superadmin'), async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password } = req.body || {};
+    if (typeof username !== 'string' || !username.trim() || typeof password !== 'string' || !password.trim()) {
+      return res.status(400).json({ message: 'Username and password are required' });
+    }
     const existingUser = await User.findOne({ username });
     if (existingUser) return res.status(400).json({ message: 'Username already exists' });
 
     const user = await User.create({
-      username,
-      password,
+      username: username.trim(),
+      password: password.trim(),
       role: 'student',
+      adminId: req.authUser._id,
       isEnabled: true,
       onboardingComplete: false
     });
@@ -717,23 +813,20 @@ app.put('/api/auth/onboarding', async (req, res) => {
 // Get all users (admin only)
 app.get('/api/users', async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
+    const requestingUser = await getAuthenticatedUser(req, '_id role adminId isEnabled');
+    if (!requestingUser || requestingUser.isEnabled === false) {
+      return res.status(401).json({ message: 'Unauthorized' });
     }
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const requestingUser = await User.findById(decoded.id);
-
-    if (requestingUser.role !== 'admin') {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-
-    const users = await User.find().select('-password').populate('groupId', 'name');
+    const users = await User.find({ role: 'student', adminId: requestingUser._id })
+      .select('-password')
+      .populate('groupId', 'name');
     res.json(users.map(user => ({
       id: user._id,
       username: user.username,
       role: user.role,
+      adminId: user.adminId,
       isEnabled: user.isEnabled,
       onboardingComplete: user.onboardingComplete,
       joiningDate: user.joiningDate,
@@ -751,16 +844,119 @@ app.get('/api/users', async (req, res) => {
   }
 });
 
-// Get available coaches (public endpoint for students to see coaches)
+// Return only the current user's coach account.
 app.get('/api/coaches', async (req, res) => {
   try {
-    const coaches = await User.find({ role: 'admin', isEnabled: true }).select('_id username');
-    res.json(coaches.map(coach => ({
+    const requestingUser = await getAuthenticatedUser(req, '_id role adminId isEnabled');
+    if (!requestingUser || requestingUser.isEnabled === false) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    const coachId = isAdminRole(requestingUser) ? requestingUser._id : requestingUser.adminId;
+    if (!coachId) return res.json([]);
+
+    const coach = await User.findOne({ _id: coachId, role: { $in: ['admin', 'superadmin'] }, isEnabled: true })
+      .select('_id username role isEnabled');
+    res.json(coach ? [{
       _id: coach._id.toString(),
-      username: coach.username
-    })));
+      username: coach.username,
+      role: coach.role,
+      isEnabled: coach.isEnabled
+    }] : []);
   } catch (error) {
     console.error('Get coaches error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.get('/api/superadmin/admins', requireRole('superadmin'), async (req, res) => {
+  try {
+    const admins = await User.find({ role: 'admin' }).select('_id username isEnabled createdAt').sort({ createdAt: 1 });
+    res.json(admins.map(admin => ({
+      id: admin._id,
+      username: admin.username,
+      role: admin.role,
+      isEnabled: admin.isEnabled,
+      createdAt: admin.createdAt
+    })));
+  } catch (error) {
+    console.error('Get admins error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/superadmin/admins', requireRole('superadmin'), async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (typeof username !== 'string' || !username.trim() || typeof password !== 'string' || !password.trim()) {
+      return res.status(400).json({ message: 'Username and password are required' });
+    }
+    if (await User.exists({ username: username.trim() })) {
+      return res.status(409).json({ message: 'Username already exists' });
+    }
+
+    const admin = await User.create({
+      username: username.trim(),
+      password: password.trim(),
+      role: 'admin',
+      isEnabled: true,
+      onboardingComplete: true
+    });
+    res.status(201).json({
+      id: admin._id,
+      username: admin.username,
+      role: admin.role,
+      isEnabled: admin.isEnabled,
+      createdAt: admin.createdAt
+    });
+  } catch (error) {
+    console.error('Create admin error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.put('/api/superadmin/admins/:id', requireRole('superadmin'), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid admin id' });
+    }
+    const admin = await User.findOne({ _id: req.params.id, role: 'admin' });
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+
+    const { username, password, isEnabled } = req.body || {};
+    if (typeof username === 'string') {
+      if (!username.trim()) return res.status(400).json({ message: 'Username cannot be empty' });
+      const existing = await User.findOne({ username: username.trim(), _id: { $ne: admin._id } });
+      if (existing) return res.status(409).json({ message: 'Username already exists' });
+      admin.username = username.trim();
+    }
+    if (typeof password === 'string' && password.trim()) admin.password = password.trim();
+    if (typeof isEnabled === 'boolean') admin.isEnabled = isEnabled;
+    admin.updatedAt = new Date();
+    await admin.save();
+
+    res.json({
+      id: admin._id,
+      username: admin.username,
+      role: admin.role,
+      isEnabled: admin.isEnabled,
+      createdAt: admin.createdAt
+    });
+  } catch (error) {
+    console.error('Update admin error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.delete('/api/superadmin/admins/:id', requireRole('superadmin'), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid admin id' });
+    }
+    const deletedAdmin = await User.findOneAndDelete({ _id: req.params.id, role: 'admin' });
+    if (!deletedAdmin) return res.status(404).json({ message: 'Admin not found' });
+    res.json({ success: true, message: 'Admin deleted' });
+  } catch (error) {
+    console.error('Delete admin error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -776,17 +972,19 @@ app.put('/api/users/:id', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
 
-    if (requestingUser.role !== 'admin') {
+    if (!isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    const { username, password, role, isEnabled, joiningDate, profile, achievements, commonNote } = req.body;
+    const { username, password, isEnabled, joiningDate, profile, achievements, commonNote } = req.body;
 
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
+    if (user.role !== 'student' && !user._id.equals(requestingUser._id)) {
+      return res.status(404).json({ message: 'User not found' });
+    }
 
     if (username) user.username = username;
-    if (role) user.role = role;
     if (typeof isEnabled === 'boolean') user.isEnabled = isEnabled;
     if (password && password.trim().length > 0) user.password = password;
     if (joiningDate) user.joiningDate = new Date(joiningDate);
@@ -829,11 +1027,13 @@ app.delete('/api/users/:id', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
 
-    if (requestingUser.role !== 'admin') {
+    if (!isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    await User.findByIdAndDelete(req.params.id);
+    const user = await User.findOne({ _id: req.params.id, role: 'student', adminId: requestingUser._id });
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    await user.deleteOne();
     res.json({ success: true, message: 'User deleted' });
   } catch (error) {
     console.error('Delete user error:', error);
@@ -852,7 +1052,7 @@ app.post('/api/users/:id/attendance', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
 
-    if (requestingUser.role !== 'admin') {
+    if (!isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -902,7 +1102,7 @@ app.get('/api/users/:id/attendance', async (req, res) => {
       return res.status(401).json({ message: 'Invalid or missing token' });
     }
 
-    if (requestingUser.role !== 'admin' && requestingUser._id.toString() !== req.params.id) {
+    if (!isAdminRole(requestingUser) && requestingUser._id.toString() !== req.params.id) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -927,7 +1127,7 @@ app.delete('/api/users/:id/attendance', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
     // Allow admins or the user themself to delete attendance
-    if (decoded.id !== req.params.id && requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (decoded.id !== req.params.id && !isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const { date, daysBefore } = req.query;
     let targetDate = null;
@@ -984,7 +1184,7 @@ app.get('/api/users/:id/fees', async (req, res) => {
     const requestingUser = await User.findById(decoded.id);
 
     // Only the user themselves or admin can view fees
-    if (decoded.id !== req.params.id && requestingUser.role !== 'admin') {
+    if (decoded.id !== req.params.id && !isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -1006,7 +1206,7 @@ app.post('/api/users/:id/fees', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const { month, year, paid = false } = req.body;
     if (!month || !year) return res.status(400).json({ message: 'month and year are required' });
@@ -1034,7 +1234,7 @@ app.put('/api/users/:id/fees/:feeId', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const { paid, secretNote, secretVisible } = req.body;
 
@@ -1070,7 +1270,7 @@ app.delete('/api/users/:id/fees/:feeId', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
@@ -1106,32 +1306,44 @@ app.post('/api/attendance/bulk', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
 
-    if (requestingUser.role !== 'admin') {
+    if (!isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
     const { date, attendanceRecords } = req.body; // attendanceRecords: [{userId, status, note}]
+    if (!Array.isArray(attendanceRecords) || attendanceRecords.length === 0 ||
+        attendanceRecords.some(record => !mongoose.isValidObjectId(record.userId))) {
+      return res.status(400).json({ message: 'Valid attendance records are required' });
+    }
+    const studentIds = [...new Set(attendanceRecords.map(record => String(record.userId)))];
+    const students = await User.find({
+      _id: { $in: studentIds },
+      role: 'student',
+      adminId: requestingUser._id
+    });
+    if (students.length !== studentIds.length) {
+      return res.status(404).json({ message: 'One or more students were not found' });
+    }
+    const studentById = new Map(students.map(student => [student._id.toString(), student]));
     const attendanceDate = new Date(date);
     attendanceDate.setHours(0, 0, 0, 0);
 
     for (const record of attendanceRecords) {
-      const user = await User.findById(record.userId);
-      if (user) {
-        const existingIndex = user.attendance?.findIndex(a => {
-          const existingDate = new Date(a.date);
-          existingDate.setHours(0, 0, 0, 0);
-          return existingDate.getTime() === attendanceDate.getTime();
-        });
+      const user = studentById.get(String(record.userId));
+      const existingIndex = user.attendance?.findIndex(a => {
+        const existingDate = new Date(a.date);
+        existingDate.setHours(0, 0, 0, 0);
+        return existingDate.getTime() === attendanceDate.getTime();
+      });
 
-        if (existingIndex >= 0) {
-          user.attendance[existingIndex] = { date: attendanceDate, status: record.status, note: record.note };
-        } else {
-          if (!user.attendance) user.attendance = [];
-          user.attendance.push({ date: attendanceDate, status: record.status, note: record.note });
-        }
-        user.updatedAt = new Date();
-        await user.save();
+      if (existingIndex >= 0) {
+        user.attendance[existingIndex] = { date: attendanceDate, status: record.status, note: record.note };
+      } else {
+        if (!user.attendance) user.attendance = [];
+        user.attendance.push({ date: attendanceDate, status: record.status, note: record.note });
       }
+      user.updatedAt = new Date();
+      await user.save();
     }
 
     res.json({ success: true, message: 'Attendance updated for all users' });
@@ -1150,12 +1362,12 @@ app.get('/api/groups', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    const groups = await Group.find().sort({ createdAt: 1 });
+    const groups = await Group.find({ adminId: requestingUser._id }).sort({ createdAt: 1 });
     // Attach member counts
     const memberCounts = await User.aggregate([
-      { $match: { groupId: { $ne: null } } },
+      { $match: { groupId: { $ne: null }, role: 'student', adminId: requestingUser._id } },
       { $group: { _id: '$groupId', count: { $sum: 1 } } }
     ]);
     const countMap = {};
@@ -1181,15 +1393,19 @@ app.post('/api/groups', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const { name, description } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ message: 'Group name is required' });
 
-    const existing = await Group.findOne({ name: name.trim() });
+    const existing = await Group.findOne({ name: name.trim(), adminId: requestingUser._id });
     if (existing) return res.status(400).json({ message: 'A group with this name already exists' });
 
-    const group = await Group.create({ name: name.trim(), description: description || '' });
+    const group = await Group.create({
+      name: name.trim(),
+      description: description || '',
+      adminId: requestingUser._id
+    });
     res.status(201).json({ success: true, group: { _id: group._id, name: group.name, description: group.description, memberCount: 0, createdAt: group.createdAt } });
   } catch (error) {
     console.error('Create group error:', error);
@@ -1204,10 +1420,10 @@ app.put('/api/groups/:id', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const { name, description } = req.body;
-    const group = await Group.findById(req.params.id);
+    const group = await Group.findOne({ _id: req.params.id, adminId: requestingUser._id });
     if (!group) return res.status(404).json({ message: 'Group not found' });
 
     if (name && name.trim()) group.name = name.trim();
@@ -1228,13 +1444,16 @@ app.delete('/api/groups/:id', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    const group = await Group.findByIdAndDelete(req.params.id);
+    const group = await Group.findOneAndDelete({ _id: req.params.id, adminId: requestingUser._id });
     if (!group) return res.status(404).json({ message: 'Group not found' });
 
     // Unassign all members of this group
-    await User.updateMany({ groupId: req.params.id }, { $set: { groupId: null } });
+    await User.updateMany(
+      { groupId: req.params.id, role: 'student', adminId: requestingUser._id },
+      { $set: { groupId: null } }
+    );
 
     res.json({ success: true, message: 'Group deleted' });
   } catch (error) {
@@ -1250,14 +1469,17 @@ app.put('/api/users/:id/group', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const { groupId } = req.body; // null to unassign
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: 'User not found' });
+    if (user.role !== 'student' || !user.adminId?.equals(requestingUser._id)) {
+      return res.status(404).json({ message: 'Student not found' });
+    }
 
     if (groupId) {
-      const group = await Group.findById(groupId);
+      const group = await Group.findOne({ _id: groupId, adminId: requestingUser._id });
       if (!group) return res.status(404).json({ message: 'Group not found' });
       user.groupId = groupId;
     } else {
@@ -1293,7 +1515,7 @@ app.post('/api/users/:id/activity', async (req, res) => {
 
     // Users can only record their own activity, or admin can record for anyone
     const requestingUser = await User.findById(decoded.id);
-    if (decoded.id !== req.params.id && requestingUser.role !== 'admin') {
+    if (decoded.id !== req.params.id && !isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -1324,6 +1546,10 @@ app.post('/api/users/:id/activity/beacon', async (req, res) => {
     }
 
     const decoded = jwt.verify(_token, JWT_SECRET);
+    const requestingUser = await User.findById(decoded.id).select('_id isEnabled role');
+    if (!requestingUser || requestingUser.isEnabled === false) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
 
     // Users can only record their own activity
     if (decoded.id !== req.params.id) {
@@ -1359,7 +1585,7 @@ app.get('/api/users/:id/activity', async (req, res) => {
     const requestingUser = await User.findById(decoded.id);
 
     // Only the user themselves or admin can view activity
-    if (decoded.id !== req.params.id && requestingUser.role !== 'admin') {
+    if (decoded.id !== req.params.id && !isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -1401,7 +1627,7 @@ app.get('/api/users/:id/activity/summary', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
 
-    if (decoded.id !== req.params.id && requestingUser.role !== 'admin') {
+    if (decoded.id !== req.params.id && !isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -1469,7 +1695,7 @@ app.delete('/api/activity/cleanup', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
 
-    if (requestingUser.role !== 'admin') {
+    if (!isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -1477,7 +1703,9 @@ app.delete('/api/activity/cleanup', async (req, res) => {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - parseInt(daysOld));
 
+    const ownedStudents = await User.find({ role: 'student', adminId: requestingUser._id }).select('_id');
     const result = await UserActivity.deleteMany({
+      userId: { $in: ownedStudents.map(student => student._id) },
       timestamp: { $lt: cutoffDate }
     });
 
@@ -1502,8 +1730,12 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
 
-    if (decoded.id !== req.params.id && requestingUser.role !== 'admin') {
+    if (decoded.id !== req.params.id && !isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
+    }
+    const student = await User.findOne({ _id: req.params.id, role: 'student' }).select('_id adminId');
+    if (!student || (isAdminRole(requestingUser) && !student.adminId?.equals(requestingUser._id))) {
+      return res.status(404).json({ message: 'Student not found' });
     }
 
     // Get all puzzle activities for the user
@@ -1513,7 +1745,7 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
     }).sort({ timestamp: -1 });
 
     // Get all puzzles to know total counts
-    const allPuzzles = await Puzzle.find({ isEnabled: true });
+    const allPuzzles = await Puzzle.find({ isEnabled: true, adminId: student.adminId });
 
     // Group puzzles by category
     const puzzlesByCategory = {};
@@ -1596,7 +1828,7 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
 // Get all puzzles
 app.get('/api/puzzles', async (req, res) => {
   try {
-    const viewer = await getAuthenticatedUser(req, '_id role groupId');
+    const viewer = await getAuthenticatedUser(req, '_id role groupId adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
     const puzzles = await getVisiblePuzzles(viewer);
@@ -1610,7 +1842,7 @@ app.get('/api/puzzles', async (req, res) => {
 // Get puzzles by category
 app.get('/api/puzzles/category/:category', async (req, res) => {
   try {
-    const viewer = await getAuthenticatedUser(req, '_id role groupId');
+    const viewer = await getAuthenticatedUser(req, '_id role groupId adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
     const puzzles = await getVisiblePuzzles(viewer, req.params.category);
@@ -1629,24 +1861,31 @@ app.post('/api/puzzles', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const validationError = validatePuzzlePayload(req.body);
     if (validationError) return res.status(400).json({ message: validationError });
 
     // Find the maximum order value in this category
-    const maxOrderPuzzle = await Puzzle.findOne({ category: req.body.category })
+    const maxOrderPuzzle = await Puzzle.findOne({
+      category: req.body.category,
+      adminId: requestingUser._id
+    })
       .sort({ order: -1 })
       .select('order');
 
     const newOrder = maxOrderPuzzle ? (maxOrderPuzzle.order + 1) : 1;
     const allowedGroups = Array.isArray(req.body.allowedGroups)
       ? req.body.allowedGroups
-      : await Group.distinct('_id');
+      : await Group.distinct('_id', { adminId: requestingUser._id });
+    if (!await belongToAdminGroups(allowedGroups, requestingUser._id)) {
+      return res.status(400).json({ message: 'Puzzle groups must belong to your admin account' });
+    }
 
     // Create puzzle with the new order value
     const puzzle = await Puzzle.create({
       ...req.body,
+      adminId: requestingUser._id,
       allowedGroups,
       order: newOrder
     });
@@ -1666,9 +1905,9 @@ app.put('/api/puzzles/:id', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    const existingPuzzle = await Puzzle.findById(req.params.id);
+    const existingPuzzle = await Puzzle.findOne({ _id: req.params.id, adminId: requestingUser._id });
     if (!existingPuzzle) return res.status(404).json({ message: 'Puzzle not found' });
 
     const validationError = validatePuzzlePayload({
@@ -1676,10 +1915,14 @@ app.put('/api/puzzles/:id', async (req, res) => {
       ...req.body
     });
     if (validationError) return res.status(400).json({ message: validationError });
+    if (req.body.allowedGroups !== undefined &&
+        !await belongToAdminGroups(req.body.allowedGroups, requestingUser._id)) {
+      return res.status(400).json({ message: 'Puzzle groups must belong to your admin account' });
+    }
 
-    const puzzle = await Puzzle.findByIdAndUpdate(
-      req.params.id,
-      { ...req.body, updatedAt: new Date() },
+    const puzzle = await Puzzle.findOneAndUpdate(
+      { _id: req.params.id, adminId: requestingUser._id },
+      { ...req.body, adminId: requestingUser._id, updatedAt: new Date() },
       { new: true }
     );
     res.json({ success: true, puzzle });
@@ -1697,9 +1940,10 @@ app.delete('/api/puzzles/:id', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    await Puzzle.findByIdAndDelete(req.params.id);
+    const deletedPuzzle = await Puzzle.findOneAndDelete({ _id: req.params.id, adminId: requestingUser._id });
+    if (!deletedPuzzle) return res.status(404).json({ message: 'Puzzle not found' });
     res.json({ success: true, message: 'Puzzle deleted' });
   } catch (error) {
     console.error('Delete puzzle error:', error);
@@ -1715,13 +1959,24 @@ app.post('/api/puzzles/reorder', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const { puzzleOrders } = req.body; // Array of { id, order }
+    if (!Array.isArray(puzzleOrders) || puzzleOrders.some(item => !mongoose.isValidObjectId(item.id))) {
+      return res.status(400).json({ message: 'Valid puzzle orders are required' });
+    }
+    const puzzleIds = [...new Set(puzzleOrders.map(item => String(item.id)))];
+    const ownedPuzzles = await Puzzle.find({
+      _id: { $in: puzzleIds },
+      adminId: requestingUser._id
+    }).select('_id');
+    if (ownedPuzzles.length !== puzzleIds.length) {
+      return res.status(404).json({ message: 'One or more puzzles were not found' });
+    }
 
     // Update each puzzle's order
     const updatePromises = puzzleOrders.map(({ id, order }) =>
-      Puzzle.findByIdAndUpdate(id, { order, updatedAt: new Date() })
+      Puzzle.updateOne({ _id: id, adminId: requestingUser._id }, { order, updatedAt: new Date() })
     );
 
     await Promise.all(updatePromises);
@@ -1737,13 +1992,11 @@ app.post('/api/puzzles/reorder', async (req, res) => {
 // Get all openings
 app.get('/api/openings', async (req, res) => {
   try {
-    const viewer = await getAuthenticatedUser(req);
+    const viewer = await getAuthenticatedUser(req, '_id role adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
-    const openings = await Opening.find().sort({ createdAt: -1 });
-    const visibleOpenings = viewer.role === 'admin'
-      ? openings
-      : filterVisibleItems(
+    const openings = await Opening.find({ adminId: getContentOwnerId(viewer) }).sort({ createdAt: -1 });
+    const visibleOpenings = isAdminRole(viewer) ? openings : filterVisibleItems(
         openings,
         await getContentAccessForUser(viewer._id),
         'openingAccess',
@@ -1764,9 +2017,9 @@ app.post('/api/openings', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    const opening = await Opening.create(req.body);
+    const opening = await Opening.create({ ...req.body, adminId: requestingUser._id });
     res.status(201).json({ success: true, opening });
   } catch (error) {
     console.error('Create opening error:', error);
@@ -1782,13 +2035,14 @@ app.put('/api/openings/:id', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    const opening = await Opening.findByIdAndUpdate(
-      req.params.id,
-      { ...req.body, updatedAt: new Date() },
+    const opening = await Opening.findOneAndUpdate(
+      { _id: req.params.id, adminId: requestingUser._id },
+      { ...req.body, adminId: requestingUser._id, updatedAt: new Date() },
       { new: true }
     );
+    if (!opening) return res.status(404).json({ message: 'Opening not found' });
     res.json({ success: true, opening });
   } catch (error) {
     console.error('Update opening error:', error);
@@ -1804,9 +2058,10 @@ app.delete('/api/openings/:id', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    await Opening.findByIdAndDelete(req.params.id);
+    const deletedOpening = await Opening.findOneAndDelete({ _id: req.params.id, adminId: requestingUser._id });
+    if (!deletedOpening) return res.status(404).json({ message: 'Opening not found' });
     res.json({ success: true, message: 'Opening deleted' });
   } catch (error) {
     console.error('Delete opening error:', error);
@@ -1819,11 +2074,11 @@ app.delete('/api/openings/:id', async (req, res) => {
 // Get all famous mates
 app.get('/api/famous-mates', async (req, res) => {
   try {
-    const viewer = await getAuthenticatedUser(req);
+    const viewer = await getAuthenticatedUser(req, '_id role adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
-    const famousMates = await FamousMate.find().sort({ createdAt: -1 });
-    const visibleMates = viewer.role === 'admin'
+    const famousMates = await FamousMate.find({ adminId: getContentOwnerId(viewer) }).sort({ createdAt: -1 });
+    const visibleMates = isAdminRole(viewer)
       ? famousMates
       : filterVisibleItems(
         famousMates,
@@ -1841,12 +2096,12 @@ app.get('/api/famous-mates', async (req, res) => {
 // Get single famous mate by ID
 app.get('/api/famous-mates/:id', async (req, res) => {
   try {
-    const viewer = await getAuthenticatedUser(req);
+    const viewer = await getAuthenticatedUser(req, '_id role adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
-    const famousMate = await FamousMate.findById(req.params.id);
+    const famousMate = await FamousMate.findOne({ _id: req.params.id, adminId: getContentOwnerId(viewer) });
     if (!famousMate) return res.status(404).json({ message: 'Famous mate not found' });
-    if (viewer.role !== 'admin') {
+    if (!isAdminRole(viewer)) {
       const access = await getContentAccessForUser(viewer._id);
       if (!filterVisibleItems(
         [famousMate],
@@ -1872,9 +2127,9 @@ app.post('/api/famous-mates', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    const famousMate = await FamousMate.create(req.body);
+    const famousMate = await FamousMate.create({ ...req.body, adminId: requestingUser._id });
     res.status(201).json({ success: true, famousMate });
   } catch (error) {
     console.error('Create famous mate error:', error);
@@ -1890,13 +2145,14 @@ app.put('/api/famous-mates/:id', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    const famousMate = await FamousMate.findByIdAndUpdate(
-      req.params.id,
-      { ...req.body, updatedAt: new Date() },
+    const famousMate = await FamousMate.findOneAndUpdate(
+      { _id: req.params.id, adminId: requestingUser._id },
+      { ...req.body, adminId: requestingUser._id, updatedAt: new Date() },
       { new: true }
     );
+    if (!famousMate) return res.status(404).json({ message: 'Famous mate not found' });
     res.json({ success: true, famousMate });
   } catch (error) {
     console.error('Update famous mate error:', error);
@@ -1912,9 +2168,10 @@ app.delete('/api/famous-mates/:id', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    await FamousMate.findByIdAndDelete(req.params.id);
+    const deletedMate = await FamousMate.findOneAndDelete({ _id: req.params.id, adminId: requestingUser._id });
+    if (!deletedMate) return res.status(404).json({ message: 'Famous mate not found' });
     res.json({ success: true, message: 'Famous mate deleted' });
   } catch (error) {
     console.error('Delete famous mate error:', error);
@@ -1927,11 +2184,11 @@ app.delete('/api/famous-mates/:id', async (req, res) => {
 // Get all best games
 app.get('/api/bestgames', async (req, res) => {
   try {
-    const viewer = await getAuthenticatedUser(req);
+    const viewer = await getAuthenticatedUser(req, '_id role adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
-    const games = await BestGame.find().sort({ createdAt: -1 });
-    const visibleGames = viewer.role === 'admin'
+    const games = await BestGame.find({ adminId: getContentOwnerId(viewer) }).sort({ createdAt: -1 });
+    const visibleGames = isAdminRole(viewer)
       ? games
       : filterVisibleItems(
         games,
@@ -1954,9 +2211,9 @@ app.post('/api/bestgames', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    const game = await BestGame.create(req.body);
+    const game = await BestGame.create({ ...req.body, adminId: requestingUser._id });
     res.status(201).json({ success: true, game });
   } catch (error) {
     console.error('Create best game error:', error);
@@ -1972,13 +2229,14 @@ app.put('/api/bestgames/:id', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    const game = await BestGame.findByIdAndUpdate(
-      req.params.id,
-      { ...req.body, updatedAt: new Date() },
+    const game = await BestGame.findOneAndUpdate(
+      { _id: req.params.id, adminId: requestingUser._id },
+      { ...req.body, adminId: requestingUser._id, updatedAt: new Date() },
       { new: true }
     );
+    if (!game) return res.status(404).json({ message: 'Best game not found' });
     res.json({ success: true, game });
   } catch (error) {
     console.error('Update best game error:', error);
@@ -1994,9 +2252,10 @@ app.delete('/api/bestgames/:id', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    await BestGame.findByIdAndDelete(req.params.id);
+    const deletedGame = await BestGame.findOneAndDelete({ _id: req.params.id, adminId: requestingUser._id });
+    if (!deletedGame) return res.status(404).json({ message: 'Best game not found' });
     res.json({ success: true, message: 'Best game deleted' });
   } catch (error) {
     console.error('Delete best game error:', error);
@@ -2014,14 +2273,14 @@ app.get('/api/stats', async (req, res) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    const totalStudents = await User.countDocuments({ role: 'student' });
-    const activeStudents = await User.countDocuments({ role: 'student', isEnabled: true });
-    const totalPuzzles = await Puzzle.countDocuments();
-    const totalOpenings = await Opening.countDocuments();
-    const totalFamousMates = await FamousMate.countDocuments();
-    const totalBestGames = await BestGame.countDocuments();
+    const totalStudents = await User.countDocuments({ role: 'student', adminId: requestingUser._id });
+    const activeStudents = await User.countDocuments({ role: 'student', adminId: requestingUser._id, isEnabled: true });
+    const totalPuzzles = await Puzzle.countDocuments({ adminId: requestingUser._id });
+    const totalOpenings = await Opening.countDocuments({ adminId: requestingUser._id });
+    const totalFamousMates = await FamousMate.countDocuments({ adminId: requestingUser._id });
+    const totalBestGames = await BestGame.countDocuments({ adminId: requestingUser._id });
 
     res.json({
       totalStudents,
@@ -2042,8 +2301,20 @@ app.get('/api/stats', async (req, res) => {
 // Get content access for a user
 app.get('/api/content-access/:userId', async (req, res) => {
   try {
-    const requestingUser = await getAuthenticatedUser(req);
-    const accessStatus = getUserContentAccessStatus(requestingUser, req.params.userId);
+    if (!mongoose.isValidObjectId(req.params.userId)) {
+      return res.status(400).json({ message: 'Invalid user id' });
+    }
+    const requestingUser = await getAuthenticatedUser(req, '_id role adminId isEnabled');
+    if (!requestingUser || requestingUser.isEnabled === false) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    const targetStudent = await User.findOne({ _id: req.params.userId, role: 'student' }).select('_id adminId');
+    const ownsTarget = canManageStudent(requestingUser, targetStudent);
+    const isSelf = requestingUser._id.equals(req.params.userId);
+    if (!targetStudent || (!ownsTarget && !isSelf)) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    const accessStatus = getUserContentAccessStatus(requestingUser, req.params.userId, targetStudent);
     if (accessStatus !== 200) {
       return res.status(accessStatus).json({ message: accessStatus === 401 ? 'Unauthorized' : 'Access denied' });
     }
@@ -2111,12 +2382,21 @@ app.get('/api/my-content-access', async (req, res) => {
 // Update content access for a user (admin only)
 app.put('/api/content-access/:userId', async (req, res) => {
   try {
+    if (!mongoose.isValidObjectId(req.params.userId)) {
+      return res.status(400).json({ message: 'Invalid user id' });
+    }
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ message: 'No token provided' });
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
+    const targetStudent = await User.findOne({
+      _id: req.params.userId,
+      role: 'student',
+      adminId: requestingUser._id
+    }).select('_id');
+    if (!targetStudent) return res.status(404).json({ message: 'User not found' });
 
     const { puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess } = req.body;
 
@@ -2150,10 +2430,14 @@ app.put('/api/content-access/:userId', async (req, res) => {
 });
 
 // ===== PUZZLE CATEGORIES API =====
-// Get all custom puzzle categories (public)
+// Get custom puzzle categories owned by the current user's admin.
 app.get('/api/puzzle-categories', async (req, res) => {
   try {
-    const categories = await PuzzleCategory.find().sort({ order_index: 1, createdAt: 1 });
+    const viewer = await getAuthenticatedUser(req, '_id role adminId isEnabled');
+    if (!viewer || viewer.isEnabled === false) return res.status(401).json({ message: 'Unauthorized' });
+    const adminId = getContentOwnerId(viewer);
+    if (!adminId) return res.json([]);
+    const categories = await PuzzleCategory.find({ adminId }).sort({ order_index: 1, createdAt: 1 });
     res.json(categories);
   } catch (error) {
     console.error('Get puzzle categories error:', error);
@@ -2161,10 +2445,14 @@ app.get('/api/puzzle-categories', async (req, res) => {
   }
 });
 
-// Get display order for ALL categories (default + custom) - public
+// Get display order for categories owned by the current user's admin.
 app.get('/api/puzzle-category-order', async (req, res) => {
   try {
-    const orders = await PuzzleCategoryOrder.find().sort({ order_index: 1 });
+    const viewer = await getAuthenticatedUser(req, '_id role adminId isEnabled');
+    if (!viewer || viewer.isEnabled === false) return res.status(401).json({ message: 'Unauthorized' });
+    const adminId = getContentOwnerId(viewer);
+    if (!adminId) return res.json([]);
+    const orders = await PuzzleCategoryOrder.find({ adminId }).sort({ order_index: 1 });
     res.json(orders);
   } catch (error) {
     console.error('Get puzzle category order error:', error);
@@ -2179,17 +2467,28 @@ app.put('/api/puzzle-category-order', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const { order } = req.body; // Array of { categoryId, order_index, isEnabled, allowedGroups }
     if (!Array.isArray(order)) return res.status(400).json({ message: 'order must be an array' });
+    if (order.some(item => !item || typeof item.categoryId !== 'string' ||
+        (item.allowedGroups !== undefined && !Array.isArray(item.allowedGroups)))) {
+      return res.status(400).json({ message: 'Invalid category order entry' });
+    }
+    const groupLists = order.filter(item => Array.isArray(item.allowedGroups)).map(item => item.allowedGroups);
+    for (const allowedGroups of groupLists) {
+      if (!await belongToAdminGroups(allowedGroups, requestingUser._id)) {
+        return res.status(400).json({ message: 'Category groups must belong to your admin account' });
+      }
+    }
 
     // Upsert each category order
     const bulkOps = order.map(item => ({
       updateOne: {
-        filter: { categoryId: item.categoryId },
+        filter: { categoryId: item.categoryId, adminId: requestingUser._id },
         update: { $set: {
           categoryId: item.categoryId,
+          adminId: requestingUser._id,
           order_index: item.order_index,
           ...(typeof item.isEnabled === 'boolean' ? { isEnabled: item.isEnabled } : {}),
           ...(Array.isArray(item.allowedGroups) ? { allowedGroups: item.allowedGroups } : {})
@@ -2203,12 +2502,12 @@ app.put('/api/puzzle-category-order', async (req, res) => {
     // Also update order_index on custom PuzzleCategory docs (for backward compat)
     for (const item of order) {
       await PuzzleCategory.updateOne(
-        { categoryId: item.categoryId },
+        { categoryId: item.categoryId, adminId: requestingUser._id },
         { $set: { order_index: item.order_index } }
       );
     }
 
-    const updated = await PuzzleCategoryOrder.find().sort({ order_index: 1 });
+    const updated = await PuzzleCategoryOrder.find({ adminId: requestingUser._id }).sort({ order_index: 1 });
     res.json(updated);
   } catch (error) {
     console.error('Set puzzle category order error:', error);
@@ -2223,18 +2522,24 @@ app.put('/api/puzzle-category-visibility/:categoryId', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const { isEnabled, allowedGroups } = req.body;
     const update = {};
     if (typeof isEnabled === 'boolean') update.isEnabled = isEnabled;
     if (Array.isArray(allowedGroups)) {
+      if (!await belongToAdminGroups(allowedGroups, requestingUser._id)) {
+        return res.status(400).json({ message: 'Category groups must belong to your admin account' });
+      }
       update.allowedGroups = allowedGroups;
       update.groupsConfigured = true;
     }
     const settings = await PuzzleCategoryOrder.findOneAndUpdate(
-      { categoryId: req.params.categoryId },
-      { $set: update, $setOnInsert: { categoryId: req.params.categoryId, order_index: 999 } },
+      { categoryId: req.params.categoryId, adminId: requestingUser._id },
+      {
+        $set: update,
+        $setOnInsert: { categoryId: req.params.categoryId, adminId: requestingUser._id, order_index: 999 }
+      },
       { new: true, upsert: true }
     );
     res.json(settings);
@@ -2251,15 +2556,21 @@ app.post('/api/puzzle-categories', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
     const { categoryId, name, description, icon } = req.body;
     if (!categoryId || !name) return res.status(400).json({ message: 'categoryId and name are required' });
 
-    const existing = await PuzzleCategory.findOne({ categoryId });
+    const existing = await PuzzleCategory.findOne({ categoryId, adminId: requestingUser._id });
     if (existing) return res.status(409).json({ message: 'Category already exists' });
 
-    const category = await PuzzleCategory.create({ categoryId, name, description, icon });
+    const category = await PuzzleCategory.create({
+      categoryId,
+      name,
+      description,
+      icon,
+      adminId: requestingUser._id
+    });
     res.json(category);
   } catch (error) {
     console.error('Create puzzle category error:', error);
@@ -2274,11 +2585,17 @@ app.delete('/api/puzzle-categories/:categoryId', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
     const decoded = jwt.verify(token, JWT_SECRET);
     const requestingUser = await User.findById(decoded.id);
-    if (requestingUser.role !== 'admin') return res.status(403).json({ message: 'Access denied' });
+    if (!isAdminRole(requestingUser)) return res.status(403).json({ message: 'Access denied' });
 
-    // Cascade-delete all puzzles in this category, then delete the category
-    await Puzzle.deleteMany({ category: req.params.categoryId });
-    await PuzzleCategory.deleteOne({ categoryId: req.params.categoryId });
+    const category = await PuzzleCategory.findOne({
+      categoryId: req.params.categoryId,
+      adminId: requestingUser._id
+    });
+    if (!category) return res.status(404).json({ message: 'Category not found' });
+
+    await Puzzle.deleteMany({ category: req.params.categoryId, adminId: requestingUser._id });
+    await PuzzleCategoryOrder.deleteOne({ categoryId: req.params.categoryId, adminId: requestingUser._id });
+    await category.deleteOne();
     res.json({ success: true });
   } catch (error) {
     console.error('Delete puzzle category error:', error);
@@ -2341,8 +2658,8 @@ io.use(async (socket, next) => {
 
     const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.id).select('-password');
-    if (!user) {
-      return next(new Error('Authentication error: User not found'));
+    if (!user || user.isEnabled === false) {
+      return next(new Error('Authentication error: User not found or disabled'));
     }
 
     socket.user = user;
@@ -2369,7 +2686,10 @@ io.on('connection', (socket) => {
 
   // Notify admins about online students
   if (socket.user.role === 'student') {
-    socket.broadcast.emit('user:online', { userId, username: socket.user.username });
+    const ownerSockets = userSockets.get(socket.user.adminId?.toString());
+    ownerSockets?.forEach(socketId => {
+      io.to(socketId).emit('user:online', { userId, username: socket.user.username });
+    });
   }
 
   // If this user has an active game, immediately reattach and send the latest state
@@ -2406,6 +2726,23 @@ io.on('connection', (socket) => {
     console.log(`📤 Received game request from ${socket.user.username}, mode: ${data.mode}, targetAdmin: ${data.targetAdminId}`);
 
     const requestId = generateId();
+    if (socket.user.role === 'student') {
+      const ownerAdminId = socket.user.adminId?.toString();
+      if (!ownerAdminId || (data.targetAdminId && String(data.targetAdminId) !== ownerAdminId)) {
+        socket.emit('game:request-sent', { requestId, status: 'no_admin_found' });
+        return;
+      }
+      const ownerAdmin = await User.findOne({
+        _id: ownerAdminId,
+        role: { $in: ['admin', 'superadmin'] },
+        isEnabled: true
+      }).select('_id');
+      if (!ownerAdmin) {
+        socket.emit('game:request-sent', { requestId, status: 'no_admin_found' });
+        return;
+      }
+      data.targetAdminId = ownerAdminId;
+    }
     const request = {
       id: requestId,
       from: {
@@ -2419,8 +2756,8 @@ io.on('connection', (socket) => {
 
     // If target admin specified, add to request
     if (data.targetAdminId) {
-      const targetAdmin = await User.findById(data.targetAdminId).select('_id username');
-      if (targetAdmin && targetAdmin.role === 'admin') {
+      const targetAdmin = await User.findById(data.targetAdminId).select('_id username role isEnabled');
+      if (targetAdmin && isAdminRole(targetAdmin) && targetAdmin.isEnabled !== false) {
         request.to = {
           id: targetAdmin._id.toString(),
           username: targetAdmin.username
@@ -2450,7 +2787,7 @@ io.on('connection', (socket) => {
       adminUsers = [targetAdmin];
       console.log(`🎯 Sending request to specific admin: ${request.to.username}`);
     } else {
-      const allAdmins = await User.find({ role: 'admin' }).select('_id username');
+      const allAdmins = await User.find({ role: { $in: ['admin', 'superadmin'] }, isEnabled: true }).select('_id username');
       console.log(`👥 Found ${allAdmins.length} admin users in database`);
       // Filter to only connected admins who are not currently in an active game
       adminUsers = allAdmins.filter(a => {
@@ -2486,15 +2823,19 @@ io.on('connection', (socket) => {
     const request = gameRequests.get(data.requestId);
     if (request && request.from.id === userId) {
       gameRequests.delete(data.requestId);
-      // Notify all admins
-      socket.broadcast.emit('game:request-cancelled', { requestId: data.requestId });
+      if (request.to) {
+        const targetSockets = userSockets.get(request.to.id);
+        targetSockets?.forEach(socketId => {
+          io.to(socketId).emit('game:request-cancelled', { requestId: data.requestId });
+        });
+      }
       console.log(`❌ Game request cancelled: ${data.requestId}`);
     }
   });
 
   // Admin accepts game request
   socket.on('game:request-accept', async (data) => {
-    if (socket.user.role !== 'admin') {
+    if (!isAdminRole(socket.user)) {
       socket.emit('error', { message: 'Only admins can accept game requests' });
       return;
     }
@@ -2595,9 +2936,10 @@ io.on('connection', (socket) => {
 
   // Admin declines game request
   socket.on('game:request-decline', (data) => {
-    if (socket.user.role !== 'admin') return;
+    if (!isAdminRole(socket.user)) return;
 
     const request = gameRequests.get(data.requestId);
+    if (request?.to && request.to.id !== userId) return;
     if (request) {
       gameRequests.delete(data.requestId);
 
@@ -2686,7 +3028,10 @@ io.on('connection', (socket) => {
 
     // Notify about offline status
     if (socket.user.role === 'student') {
-      socket.broadcast.emit('user:offline', { userId, username: socket.user.username });
+      const ownerSockets = userSockets.get(socket.user.adminId?.toString());
+      ownerSockets?.forEach(socketId => {
+        io.to(socketId).emit('user:offline', { userId, username: socket.user.username });
+      });
     }
 
     // Handle active games: mark player offline but do NOT end the game. Clocks keep running server-side.
@@ -2849,7 +3194,7 @@ app.get('/api/game-requests', async (req, res) => {
     const decoded = jwt.verify(token, JWT_SECRET);
     const user = await User.findById(decoded.id);
 
-    if (user.role !== 'admin') {
+    if (!isAdminRole(user)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
@@ -2861,45 +3206,24 @@ app.get('/api/game-requests', async (req, res) => {
   }
 });
 
-// Initialize some default users (if missing) to help local/dev runs
-async function initializeDefaultUsers() {
-  try {
-    const admin = await User.findOne({ role: 'admin' });
-    if (!admin) {
-      await User.create({ username: 'admin', password: 'admin', role: 'admin', isEnabled: true });
-      console.log('✅ Created default admin user: admin');
-    }
-
-    const student = await User.findOne({ role: 'student' });
-    if (!student) {
-      await User.create({ username: 'student', password: 'student', role: 'student', isEnabled: true });
-      console.log('✅ Created default student user: student');
-    }
-  } catch (err) {
-    console.error('Error initializing default users:', err);
-  }
-}
-
 // One-time migration to fix puzzle order values
 async function migratePuzzleOrders() {
   try {
-    // Get all puzzles grouped by category
+    // Keep puzzle order independent for each admin and category.
     const allPuzzles = await Puzzle.find().sort({ createdAt: 1 });
-
-    // Group puzzles by category
-    const puzzlesByCategory = {};
+    const puzzlesByOwnerAndCategory = new Map();
     allPuzzles.forEach(puzzle => {
-      if (!puzzlesByCategory[puzzle.category]) {
-        puzzlesByCategory[puzzle.category] = [];
+      const key = `${puzzle.adminId?.toString() || 'unowned'}:${puzzle.category}`;
+      if (!puzzlesByOwnerAndCategory.has(key)) {
+        puzzlesByOwnerAndCategory.set(key, []);
       }
-      puzzlesByCategory[puzzle.category].push(puzzle);
+      puzzlesByOwnerAndCategory.get(key).push(puzzle);
     });
 
     let totalUpdated = 0;
 
     // For each category, reassign sequential order values
-    for (const category in puzzlesByCategory) {
-      const categoryPuzzles = puzzlesByCategory[category];
+    for (const categoryPuzzles of puzzlesByOwnerAndCategory.values()) {
 
       // Sort by existing order (ascending) then by createdAt
       categoryPuzzles.sort((a, b) => {
@@ -2923,7 +3247,7 @@ async function migratePuzzleOrders() {
     }
 
     if (totalUpdated > 0) {
-      console.log(`✅ Migration completed: Updated order for ${totalUpdated} puzzles across ${Object.keys(puzzlesByCategory).length} categories`);
+      console.log(`✅ Migration completed: Updated order for ${totalUpdated} puzzles across ${puzzlesByOwnerAndCategory.size} admin/category groups`);
     } else {
       console.log('✅ Migration check: All puzzle orders are already correct');
     }
@@ -2936,6 +3260,5 @@ async function migratePuzzleOrders() {
 httpServer.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🔌 Socket.IO enabled for real-time games`);
-  await initializeDefaultUsers();
   await migratePuzzleOrders();
 });

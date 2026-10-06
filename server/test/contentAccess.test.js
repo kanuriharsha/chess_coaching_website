@@ -1,20 +1,41 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  canManageStudent,
   canReadUserContentAccess,
   filterVisibleItems,
   filterVisiblePuzzles,
-  getUserContentAccessStatus
+  getUserContentAccessStatus,
+  getContentOwnerId
 } from '../contentAccess.js';
 
 test('content-access records are readable only by their owner or an admin', () => {
+  const student = { _id: 'student-b', role: 'student', adminId: 'coach' };
   assert.equal(canReadUserContentAccess({ _id: 'student-a', role: 'student' }, 'student-a'), true);
-  assert.equal(canReadUserContentAccess({ _id: 'student-a', role: 'student' }, 'student-b'), false);
-  assert.equal(canReadUserContentAccess({ _id: 'coach', role: 'admin' }, 'student-b'), true);
+  assert.equal(canReadUserContentAccess({ _id: 'student-a', role: 'student' }, 'student-b', student), false);
+  assert.equal(canReadUserContentAccess({ _id: 'coach', role: 'admin' }, 'student-b', student), true);
+  assert.equal(canReadUserContentAccess({ _id: 'other-coach', role: 'admin' }, 'student-b', student), false);
   assert.equal(getUserContentAccessStatus(null, 'student-a'), 401);
   assert.equal(getUserContentAccessStatus({ _id: 'student-a', role: 'student' }, 'student-a'), 200);
   assert.equal(getUserContentAccessStatus({ _id: 'student-a', role: 'student' }, 'student-b'), 403);
-  assert.equal(getUserContentAccessStatus({ _id: 'coach', role: 'admin' }, 'student-b'), 200);
+  assert.equal(getUserContentAccessStatus({ _id: 'coach', role: 'admin' }, 'student-b', student), 200);
+  assert.equal(getUserContentAccessStatus({ _id: 'other-coach', role: 'admin' }, 'student-b', student), 403);
+});
+
+test('admin ownership is enforced for students, including superadmins', () => {
+  const student = { _id: 'student-a', role: 'student', adminId: 'admin-a' };
+  assert.equal(canManageStudent({ _id: 'admin-a', role: 'admin' }, student), true);
+  assert.equal(canManageStudent({ _id: 'admin-a', role: 'superadmin' }, student), true);
+  assert.equal(canManageStudent({ _id: 'admin-b', role: 'admin' }, student), false);
+  assert.equal(canManageStudent({ _id: 'admin-b', role: 'superadmin' }, student), false);
+  assert.equal(canManageStudent({ _id: 'student-a', role: 'student' }, student), false);
+});
+
+test('content owner resolution uses the student’s admin and each admin’s own id', () => {
+  assert.equal(getContentOwnerId({ _id: 'coach-a', role: 'admin' }), 'coach-a');
+  assert.equal(getContentOwnerId({ _id: 'owner', role: 'superadmin' }), 'owner');
+  assert.equal(getContentOwnerId({ _id: 'student-a', role: 'student', adminId: 'coach-a' }), 'coach-a');
+  assert.equal(getContentOwnerId({ _id: 'student-b', role: 'student' }), undefined);
 });
 
 test('opening, famous-mate, and best-game entitlements require enabled access and filter IDs', () => {

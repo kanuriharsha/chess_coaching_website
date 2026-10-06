@@ -1,12 +1,31 @@
-export function canReadUserContentAccess(requester, requestedUserId) {
-  if (requester?.role === 'admin') return true;
-  return Boolean(requester?._id && requestedUserId &&
-    String(requester._id) === String(requestedUserId));
+export function isAdminRole(user) {
+  return user?.role === 'admin' || user?.role === 'superadmin';
 }
 
-export function getUserContentAccessStatus(requester, requestedUserId) {
+export function getContentOwnerId(user) {
+  return user?.role === 'student' ? user.adminId : user?._id;
+}
+
+export function canManageStudent(requester, student) {
+  return Boolean(
+    isAdminRole(requester) &&
+    student?.role === 'student' &&
+    requester?._id &&
+    student?.adminId &&
+    String(requester._id) === String(student.adminId)
+  );
+}
+
+export function canReadUserContentAccess(requester, requestedUserId, targetStudent) {
+  if (requester?._id && requestedUserId && String(requester._id) === String(requestedUserId)) {
+    return true;
+  }
+  return canManageStudent(requester, targetStudent);
+}
+
+export function getUserContentAccessStatus(requester, requestedUserId, targetStudent) {
   if (!requester) return 401;
-  return canReadUserContentAccess(requester, requestedUserId) ? 200 : 403;
+  return canReadUserContentAccess(requester, requestedUserId, targetStudent) ? 200 : 403;
 }
 
 export function filterVisibleItems(items, access, section, allowedIdsField) {
@@ -58,7 +77,7 @@ function isPuzzleAllowedByAccess(access, category, position) {
 }
 
 export function filterVisiblePuzzles(puzzles, access, categorySettings, viewer) {
-  if (viewer.role === 'admin') return puzzles;
+  if (viewer.role === 'admin' || viewer.role === 'superadmin') return puzzles;
 
   const settingsByCategory = new Map(categorySettings.map(settings => [settings.categoryId, settings]));
   const positionsByCategory = new Map();
