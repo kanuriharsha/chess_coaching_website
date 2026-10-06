@@ -1,5 +1,6 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { isAdminRole } from '@/lib/roles';
 import {
   Crown,
   Puzzle,
@@ -23,10 +24,10 @@ const Navigation = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
-    ...(user?.role === 'admin'
+    ...(isAdminRole(user?.role)
     ? [{ to: '/admin', icon: LayoutDashboard, label: 'Dashboard' }]
     : []),
-    ...(user?.role !== 'admin'
+    ...(!isAdminRole(user?.role)
     ? [{ to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' }]
     : []),
     { to: '/puzzles', icon: Puzzle, label: 'Puzzles' },

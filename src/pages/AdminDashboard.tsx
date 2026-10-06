@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import AppLayout from '@/components/AppLayout';
 import { useAuth, User, Achievement, StudentProfile } from '@/contexts/AuthContext';
+import { isAdminRole } from '@/lib/roles';
 import VisualBoardEditor from '@/components/VisualBoardEditor';
 import LiveChessGame from '@/components/LiveChessGame';
 import { useLiveGame, GameRequest, LiveGame } from '@/hooks/useLiveGame';
@@ -69,6 +70,14 @@ interface Group {
   description: string;
   memberCount: number;
   createdAt: string;
+}
+
+interface ManagedAdmin {
+  id: string;
+  username: string;
+  role: 'admin';
+  isEnabled: boolean;
+  createdAt?: string;
 }
 
 interface Stats {
@@ -371,7 +380,13 @@ const AdminDashboard = () => {
   const [showAddBestGame, setShowAddBestGame] = useState(false);
 
   // Form states
-  const [newUser, setNewUser] = useState({ username: '', password: '', role: 'student' as 'admin' | 'student' });
+  const [newUser, setNewUser] = useState({ username: '', password: '', role: 'student' as const });
+  const [admins, setAdmins] = useState<ManagedAdmin[]>([]);
+  const [adminDialogOpen, setAdminDialogOpen] = useState(false);
+  const [editingAdmin, setEditingAdmin] = useState<ManagedAdmin | null>(null);
+  const [adminUsername, setAdminUsername] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminEnabled, setAdminEnabled] = useState(true);
   const [newOpening, setNewOpening] = useState<OpeningData>({
     name: '', description: '', category: 'Open Games', moves: [], isEnabled: true
   });
@@ -381,7 +396,9 @@ const AdminDashboard = () => {
 
   const loadCustomCategoriesFromAPI = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/puzzle-categories`);
+      const response = await fetch(`${API_BASE_URL}/puzzle-categories`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       if (!response.ok) throw new Error('Failed to load custom puzzle categories');
       const data = await response.json();
       setCustomCategories(data.map((c: any) => ({ id: c.categoryId, name: c.name, description: c.description, icon: c.icon })));
@@ -420,7 +437,9 @@ const AdminDashboard = () => {
 
   const loadPuzzleCategoryVisibility = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/puzzle-category-order`);
+      const response = await fetch(`${API_BASE_URL}/puzzle-category-order`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       if (!response.ok) throw new Error('Failed to load puzzle category visibility');
       setPuzzleCategoryVisibility(await response.json());
       return true;
@@ -573,6 +592,88 @@ const AdminDashboard = () => {
     // Load fees for all students
     await loadAllUsersFees(data);
     return data;
+  };
+
+  const loadAdmins = async (): Promise<boolean> => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/superadmin/admins`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Failed to load admin accounts');
+      setAdmins(await response.json());
+      return true;
+    } catch (error) {
+      console.error('Load admin accounts error:', error);
+      toast.error('Failed to load admin accounts');
+      return false;
+    }
+  };
+
+  const openAdminDialog = (admin?: ManagedAdmin) => {
+    setEditingAdmin(admin || null);
+    setAdminUsername(admin?.username || '');
+    setAdminPassword('');
+    setAdminEnabled(admin?.isEnabled ?? true);
+    setAdminDialogOpen(true);
+  };
+
+  const saveAdmin = async () => {
+    if (!adminUsername.trim() || (!editingAdmin && !adminPassword.trim())) {
+      toast.error('Username and password are required');
+      return;
+    }
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/superadmin/admins${editingAdmin ? `/${editingAdmin.id}` : ''}`,
+        {
+          method: editingAdmin ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            username: adminUsername.trim(),
+            ...(adminPassword.trim() ? { password: adminPassword.trim() } : {}),
+            ...(editingAdmin ? { isEnabled: adminEnabled } : {})
+          })
+        }
+      );
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to save admin');
+      }
+      toast.success(editingAdmin ? 'Admin updated successfully' : 'Admin created successfully');
+      setAdminDialogOpen(false);
+      await loadAdmins();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to save admin');
+    }
+  };
+
+  const toggleAdminEnabled = async (admin: ManagedAdmin) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/superadmin/admins/${admin.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ isEnabled: !admin.isEnabled })
+      });
+      if (!response.ok) throw new Error('Failed to update admin');
+      await loadAdmins();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update admin');
+    }
+  };
+
+  const removeAdmin = async (admin: ManagedAdmin) => {
+    if (!confirm(`Delete admin "${admin.username}"? Their students will not be deleted.`)) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/superadmin/admins/${admin.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Failed to delete admin');
+      toast.success('Admin deleted');
+      await loadAdmins();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to delete admin');
+    }
   };
 
   // Load fees for all students
@@ -739,6 +840,7 @@ const AdminDashboard = () => {
   const dashboardLoaders = useRef({
     loadStats,
     loadUsers,
+    loadAdmins,
     loadGroups,
     loadOpenings,
     loadFamousMates,
@@ -747,6 +849,7 @@ const AdminDashboard = () => {
   dashboardLoaders.current = {
     loadStats,
     loadUsers,
+    loadAdmins,
     loadGroups,
     loadOpenings,
     loadFamousMates,
@@ -754,7 +857,7 @@ const AdminDashboard = () => {
   };
 
   useEffect(() => {
-    if (user?.role !== 'admin') return;
+    if (!isAdminRole(user?.role)) return;
 
     const loadActiveTabData = async () => {
       const loaders = dashboardLoaders.current;
@@ -781,6 +884,8 @@ const AdminDashboard = () => {
         pendingLoads.push(loadDashboardResource('famousMates', loaders.loadFamousMates));
       } else if (activeTab === 'bestgames') {
         pendingLoads.push(loadDashboardResource('bestGames', loaders.loadBestGames));
+      } else if (activeTab === 'admins' && user?.role === 'superadmin') {
+        pendingLoads.push(loadDashboardResource('admins', loaders.loadAdmins));
       }
 
       await Promise.all(pendingLoads);
@@ -1752,7 +1857,7 @@ const AdminDashboard = () => {
     }
   };
 
-  if (user?.role !== 'admin') {
+  if (!isAdminRole(user?.role)) {
     return (
       <AppLayout>
         <div className="text-center py-12">
@@ -1839,7 +1944,7 @@ const AdminDashboard = () => {
                   {profile?.fullName || selectedUserForDetail.username}
                 </h2>
                 <p className="text-sm text-muted-foreground capitalize mt-1">
-                  {selectedUserForDetail.role === 'admin' ? 'Coach / Admin' : 'Student'}
+                  {isAdminRole(selectedUserForDetail.role) ? 'Coach / Admin' : 'Student'}
                 </p>
                 {profile?.classDesignation && (
                   <p className="text-sm text-primary mt-2">{profile.classDesignation}</p>
@@ -3014,7 +3119,7 @@ const AdminDashboard = () => {
         {/* Tabs for Management */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
 
-          <TabsList className="w-full mb-6 h-auto flex-wrap md:grid md:grid-cols-6">
+          <TabsList className={`w-full mb-6 h-auto flex-wrap md:grid ${user?.role === 'superadmin' ? 'md:grid-cols-7' : 'md:grid-cols-6'}`}>
             <TabsTrigger value="users" className="flex items-center gap-2 flex-1 min-w-[60px]">
               <Users className="w-4 h-4" /> <span className="hidden sm:inline">Users</span>
             </TabsTrigger>
@@ -3034,6 +3139,11 @@ const AdminDashboard = () => {
             <TabsTrigger value="bestgames" className="flex items-center gap-2 flex-1 min-w-[60px]">
               <Trophy className="w-4 h-4" /> <span className="hidden sm:inline">Best Games</span>
             </TabsTrigger>
+            {user?.role === 'superadmin' && (
+              <TabsTrigger value="admins" className="flex items-center gap-2 flex-1 min-w-[60px]">
+                <UserCheck className="w-4 h-4" /> <span className="hidden sm:inline">Admin Management</span>
+              </TabsTrigger>
+            )}
           </TabsList>
 
           {/* Users Tab */}
@@ -3048,13 +3158,13 @@ const AdminDashboard = () => {
                   <Dialog open={showAddUser} onOpenChange={setShowAddUser}>
                     <DialogTrigger asChild>
                       <Button className="flex items-center justify-center gap-2 text-sm">
-                        <Plus className="w-4 h-4" /> Add User
+                        <Plus className="w-4 h-4" /> Add Student
                       </Button>
                     </DialogTrigger>
 
                     <DialogContent>
                       <DialogHeader>
-                        <DialogTitle>Add New User</DialogTitle>
+                        <DialogTitle>Add New Student</DialogTitle>
                       </DialogHeader>
                       <div className="space-y-4 mt-4">
                         <div>
@@ -3074,20 +3184,8 @@ const AdminDashboard = () => {
                             placeholder="Enter password"
                           />
                         </div>
-                        <div>
-                          <Label>Role</Label>
-                          <Select value={newUser.role} onValueChange={(value: 'admin' | 'student') => setNewUser({ ...newUser, role: value })}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="student">Student</SelectItem>
-                              <SelectItem value="admin">Admin</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
                         <Button onClick={handleAddUser} className="w-full">
-                          <Save className="w-4 h-4 mr-2" /> Add User
+                          <Save className="w-4 h-4 mr-2" /> Add Student
                         </Button>
                       </div>
                     </DialogContent>
@@ -3871,6 +3969,96 @@ const AdminDashboard = () => {
               </DialogContent>
             </Dialog>
           </TabsContent>
+
+          {user?.role === 'superadmin' && (
+            <TabsContent value="admins">
+              <div className="card-premium p-4 md:p-6">
+                <div className="flex items-center justify-between gap-3 mb-5">
+                  <div>
+                    <h2 className="font-serif text-xl font-semibold">Admin Management</h2>
+                    <p className="text-sm text-muted-foreground mt-1">Create, update, disable, or remove admin accounts.</p>
+                  </div>
+                  <Button onClick={() => openAdminDialog()}>
+                    <Plus className="w-4 h-4 mr-2" /> Add Admin
+                  </Button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="text-left text-sm text-muted-foreground border-b border-border">
+                        <th className="pb-3 font-medium">Username</th>
+                        <th className="pb-3 font-medium">Access</th>
+                        <th className="pb-3 font-medium">Created</th>
+                        <th className="pb-3 font-medium">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {admins.map(admin => (
+                        <tr key={admin.id} className="border-b last:border-0">
+                          <td className="py-4 font-medium">{admin.username}</td>
+                          <td className="py-4">
+                            <div className="flex items-center gap-3">
+                              <Switch checked={admin.isEnabled} onCheckedChange={() => toggleAdminEnabled(admin)} />
+                              <span className={admin.isEnabled ? 'text-success' : 'text-destructive'}>
+                                {admin.isEnabled ? 'Enabled' : 'Disabled'}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-4 text-sm text-muted-foreground">
+                            {admin.createdAt ? new Date(admin.createdAt).toLocaleDateString() : '—'}
+                          </td>
+                          <td className="py-4">
+                            <div className="flex gap-2">
+                              <Button variant="outline" size="sm" onClick={() => openAdminDialog(admin)}>
+                                <Edit className="w-4 h-4 mr-1" /> Edit / Reset Password
+                              </Button>
+                              <Button variant="destructive" size="sm" onClick={() => removeAdmin(admin)}>
+                                <Trash2 className="w-4 h-4 mr-1" /> Delete
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {admins.length === 0 && (
+                        <tr><td colSpan={4} className="py-8 text-center text-muted-foreground">No admin accounts yet.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <Dialog open={adminDialogOpen} onOpenChange={setAdminDialogOpen}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{editingAdmin ? 'Edit Admin' : 'Create Admin'}</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4 mt-4">
+                    <div>
+                      <Label>Username</Label>
+                      <Input value={adminUsername} onChange={event => setAdminUsername(event.target.value)} />
+                    </div>
+                    <div>
+                      <Label>{editingAdmin ? 'Reset Password (optional)' : 'Password'}</Label>
+                      <Input
+                        type="password"
+                        value={adminPassword}
+                        onChange={event => setAdminPassword(event.target.value)}
+                        placeholder={editingAdmin ? 'Leave blank to keep current password' : 'Enter password'}
+                      />
+                    </div>
+                    {editingAdmin && (
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="admin-enabled">Account enabled</Label>
+                        <Switch id="admin-enabled" checked={adminEnabled} onCheckedChange={setAdminEnabled} />
+                      </div>
+                    )}
+                    <Button onClick={saveAdmin} className="w-full">
+                      <Save className="w-4 h-4 mr-2" /> Save Admin
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </TabsContent>
+          )}
 
           {/* Selective Access Assignment */}
           <TabsContent value="access">

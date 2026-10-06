@@ -141,7 +141,9 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
   // Load custom categories from API (server-side - consistent across all browsers)
   const loadCustomCategories = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/puzzle-categories`);
+      const response = await fetch(`${API_BASE_URL}/puzzle-categories`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       if (response.ok) {
         const data = await response.json();
         // Map server response (uses categoryId field) to the {id, name, ...} shape

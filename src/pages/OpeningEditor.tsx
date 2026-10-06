@@ -5,6 +5,7 @@ import ChessBoard from '@/components/ChessBoard';
 import VisualBoardEditor from '@/components/VisualBoardEditor';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { isAdminRole } from '@/lib/roles';
 import { Button } from '@/components/ui/button';
 import PromotionDialog from '@/components/PromotionDialog';
 import { Input } from '@/components/ui/input';
@@ -49,7 +50,7 @@ const OpeningEditor = () => {
     }
   }, [id, isEditMode]);
 
-  if (user?.role !== 'admin') {
+  if (!isAdminRole(user?.role)) {
     return (
       <AppLayout>
         <div className="flex items-center justify-center h-[60vh]">

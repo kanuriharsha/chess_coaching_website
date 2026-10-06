@@ -1,6 +1,7 @@
 import AppLayout from '@/components/AppLayout';
 import PuzzleCreator from '@/components/PuzzleCreator';
 import { useAuth } from '@/contexts/AuthContext';
+import { isAdminRole } from '@/lib/roles';
 import { useLocation } from 'react-router-dom';
 
 const PuzzleManager = () => {
@@ -8,7 +9,7 @@ const PuzzleManager = () => {
   const location = useLocation();
   const editPuzzleId = (location.state as any)?.editPuzzleId as string | undefined;
 
-  if (user?.role !== 'admin') {
+  if (!isAdminRole(user?.role)) {
     return (
       <AppLayout>
         <div className="flex items-center justify-center h-[60vh]">

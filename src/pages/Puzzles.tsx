@@ -6,6 +6,7 @@ import PromotionDialog from '@/components/PromotionDialog';
 import { isPromotionMove } from '@/lib/chess';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { isAdminRole } from '@/lib/roles';
 import { Lock, CheckCircle, Puzzle as PuzzleIcon, ArrowRight, ArrowLeft, RotateCcw, Lightbulb, ShieldOff, Plus, Edit3, GripVertical, Save, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -135,7 +136,7 @@ const Puzzles = () => {
   const [categoryOrder, setCategoryOrder] = useState<CategoryOrder[]>([]);
   const [savingOrder, setSavingOrder] = useState(false);
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminRole(user?.role);
   const currentPuzzle = categoryPuzzles[currentPuzzleIndex];
   const getPuzzleDisplayNumber = (p: PuzzleData | undefined, idx: number) => {
     if (!p) return `#${idx + 1}`;
@@ -187,7 +188,9 @@ const Puzzles = () => {
   // Load category display order from API
   const loadCategoryOrder = async (): Promise<CategoryOrder[]> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/puzzle-category-order`);
+      const response = await fetch(`${API_BASE_URL}/puzzle-category-order`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       if (response.ok) {
         const data: CategoryOrder[] = await response.json();
         setCategoryOrder(data);
@@ -311,7 +314,9 @@ const Puzzles = () => {
   // Load custom categories from API (server-side – consistent for all users)
   const loadCustomCategories = async (): Promise<Array<{ id: string, name: string, description?: string, icon?: string }>> => {
     try {
-      const response = await fetch(`${API_BASE_URL}/puzzle-categories`);
+      const response = await fetch(`${API_BASE_URL}/puzzle-categories`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       if (response.ok) {
         const data: Array<{ categoryId: string; name: string; description?: string; icon?: string }> =
           await response.json();

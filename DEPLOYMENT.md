@@ -96,11 +96,27 @@ After both are deployed:
 ## ✅ Test Your Deployment
 
 1. Visit your Vercel frontend URL
-2. Try to login (default users if created):
-   - Admin: `admin` / `admin`
-   - Student: `student` / `student`
+2. Sign in with an existing account
 3. Test the live game functionality
 4. Check browser console for any errors
+
+## 👑 Super Admin Setup
+
+Promote the existing account that should be the Super Admin in MongoDB; the application does not create an account or choose a password automatically. Keep exactly one document with `role: "superadmin"` in the `login` collection.
+
+```javascript
+const account = db.login.findOne({ username: "your-existing-username" });
+if (!account) throw new Error("Account not found");
+const existingSuperAdmin = db.login.findOne({ role: "superadmin" });
+if (existingSuperAdmin && !existingSuperAdmin._id.equals(account._id)) {
+  throw new Error("A Super Admin already exists");
+}
+db.login.updateOne({ _id: account._id }, { $set: { role: "superadmin" } });
+```
+
+After promoting the account, run `node server/scripts/map-existing-students-to-superadmin.js` once from the repository root. It maps existing students, groups, puzzles, openings, famous mates, best games, and puzzle-category settings to the Super Admin; it also migrates legacy unique indexes so each admin can create matching group/category names. The script refuses to run unless exactly one Super Admin exists.
+
+New students, groups, and content created from an admin account are assigned to that account through `adminId`. Each admin (including the Super Admin) can see and manage only their own students, groups, and content. Do not assign students or content to another admin; the application does not provide reassignment or cross-admin sharing.
 
 ---
 

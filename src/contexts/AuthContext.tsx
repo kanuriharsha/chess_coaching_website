@@ -19,7 +19,8 @@ export interface Achievement {
 export interface User {
   id: string;
   username: string;
-  role: 'admin' | 'student';
+  role: 'admin' | 'superadmin' | 'student';
+  adminId?: string | null;
   groupId?: string | null;
   groupName?: string | null;
   isEnabled: boolean;
@@ -53,7 +54,7 @@ interface AuthContextType {
   completeOnboarding: (profile: StudentProfile) => Promise<void>;
   isLoading: boolean;
   token: string | null;
-  register: (username: string, password: string, role?: 'admin' | 'student') => Promise<boolean>;
+  register: (username: string, password: string, role?: 'student') => Promise<boolean>;
   getAllUsers: () => Promise<User[]>;
   updateUser: (id: string, data: Partial<User & { password?: string }>) => Promise<boolean>;
   deleteUser: (id: string) => Promise<boolean>;
@@ -144,12 +145,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const register = async (username: string, password: string, role: 'admin' | 'student' = 'student'): Promise<boolean> => {
+  const register = async (username: string, password: string, role: 'student' = 'student'): Promise<boolean> => {
     try {
       const response = await fetch(`${API_BASE_URL}/auth/register`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({ username, password, role })
       });

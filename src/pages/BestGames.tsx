@@ -4,6 +4,7 @@ import { Chess } from 'chess.js';
 import ChessBoard from '@/components/ChessBoard';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { isAdminRole } from '@/lib/roles';
 import { Trophy, Star, AlertTriangle, ChevronLeft, ChevronRight, SkipBack, SkipForward, Lock, Plus, Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -87,7 +88,7 @@ const BestGames = () => {
   const { playSound } = useChessSound();
   const sortedRef = useRef(false);
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = isAdminRole(user?.role);
 
   // Track page visit
   useEffect(() => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { isAdminRole } from '@/lib/roles';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -27,7 +28,7 @@ export const useActivityTracker = () => {
 
   // Track page visit
   const trackPageVisit = useCallback(async (pageName: string) => {
-    if (!user || !token || user.role === 'admin') return;
+    if (!user || !token || isAdminRole(user.role)) return;
 
     // Record time spent on previous page
     if (pageStartTime.current && currentPage.current) {
@@ -60,7 +61,7 @@ export const useActivityTracker = () => {
     attemptNumber: number,
     puzzleNumber?: number // Optional puzzle number (1-based index)
   ) => {
-    if (!user || !token || user.role === 'admin') return;
+    if (!user || !token || isAdminRole(user.role)) return;
 
     const now = new Date();
     const type = result === 'passed' ? 'puzzle_solved' : 'puzzle_failed';
@@ -88,7 +89,7 @@ export const useActivityTracker = () => {
 
   // Track opening viewed
   const trackOpeningViewed = useCallback(async (openingName: string, category: string) => {
-    if (!user || !token || user.role === 'admin') return;
+    if (!user || !token || isAdminRole(user.role)) return;
 
     await recordActivity({
       type: 'opening_viewed',
@@ -103,7 +104,7 @@ export const useActivityTracker = () => {
 
   // Track best game viewed
   const trackGameViewed = useCallback(async (gameTitle: string, category: string) => {
-    if (!user || !token || user.role === 'admin') return;
+    if (!user || !token || isAdminRole(user.role)) return;
 
     await recordActivity({
       type: 'game_viewed',

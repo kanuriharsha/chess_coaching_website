@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import AppLayout from '@/components/AppLayout';
 import { useAuth, AttendanceRecord, Achievement, User, StudentProfile } from '@/contexts/AuthContext';
+import { isAdminRole } from '@/lib/roles';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -50,11 +51,11 @@ const Profile = () => {
 
   const displayUser = targetUser || user;
   const profile = displayUser?.profile;
-  const isViewingAsAdmin = user?.role === 'admin' && userIdParam;
+  const isViewingAsAdmin = isAdminRole(user?.role) && userIdParam;
 
   useEffect(() => {
     const loadTarget = async () => {
-      if (userIdParam && user?.role === 'admin') {
+      if (userIdParam && isAdminRole(user?.role)) {
         try {
           const resp = await fetch(`${API_BASE_URL}/users/${userIdParam}`, {
             headers: { 'Authorization': `Bearer ${token}` }
@@ -207,7 +208,7 @@ const Profile = () => {
     if (!displayUser) return;
     try {
       const updateData: any = { profile: editProfile };
-      if (user?.role === 'admin') {
+      if (isAdminRole(user?.role)) {
         updateData.username = editUsername;
         updateData.email = editEmail;
         if (editJoiningDate) updateData.joiningDate = new Date(editJoiningDate);
@@ -339,7 +340,7 @@ const Profile = () => {
           </p>
         </div>
 
-        {user?.role === 'admin' && displayUser && (
+        {isAdminRole(user?.role) && displayUser && (
           <div className="flex justify-end mb-4 gap-2">
             {!isEditing ? (
               <Button onClick={() => setIsEditing(true)}>
@@ -377,7 +378,7 @@ const Profile = () => {
                 {profile?.fullName || displayUser?.username}
               </h2>
               <p className="text-sm text-muted-foreground capitalize mt-1">
-                {displayUser?.role === 'admin' ? 'Coach / Admin' : 'Student'}
+                {isAdminRole(displayUser?.role) ? 'Coach / Admin' : 'Student'}
               </p>
               {profile?.classDesignation && (
                 <p className="text-sm text-primary mt-2">{profile.classDesignation}</p>
@@ -409,7 +410,7 @@ const Profile = () => {
                   {!isEditing ? (
                     <div className="font-medium">{displayUser?.joiningDate ? new Date(displayUser.joiningDate).toLocaleDateString() : 'Not set'}</div>
                   ) : (
-                    user?.role === 'admin' && (
+                    isAdminRole(user?.role) && (
                       <input
                         type="date"
                         value={editJoiningDate}
@@ -420,7 +421,7 @@ const Profile = () => {
                   )}
                 </div>
 
-                {user?.role === 'admin' && (
+                {isAdminRole(user?.role) && (
                   <div>
                     <div className="text-sm text-muted-foreground mb-2">Mark Attendance</div>
                     <div className="flex items-center gap-2">
@@ -468,7 +469,7 @@ const Profile = () => {
                           )}
                         </div>
                         <div className="flex items-center gap-2">
-                          {(user?.role === 'admin' || (displayUser && user && displayUser.id === user.id)) && (
+                          {(isAdminRole(user?.role) || (displayUser && user && displayUser.id === user.id)) && (
                             isEditingRec ? (
                               <>
                                 <Button size="sm" onClick={saveEditedAttendance}>Save</Button>
@@ -488,7 +489,7 @@ const Profile = () => {
                 )}
               </div>
 
-              {user?.role === 'admin' && (
+              {isAdminRole(user?.role) && (
                 <div className="mt-3 flex items-center gap-2">
                   <Button variant="outline" onClick={() => handleDeleteAttendance()}>Delete selected date</Button>
                   <Button variant="ghost" onClick={() => {
@@ -958,7 +959,7 @@ const Profile = () => {
                                 }`}>
                                   {record.status}
                                 </span>
-                                {(user?.role === 'admin' || (displayUser && user && displayUser.id === user.id)) && (
+                                {(isAdminRole(user?.role) || (displayUser && user && displayUser.id === user.id)) && (
                                   <>
                                     <Button variant="ghost" size="sm" onClick={() => startEditAttendance(record)}>Edit</Button>
                                     <Button variant="ghost" size="sm" onClick={() => handleDeleteAttendance(key)}>Delete</Button>
@@ -986,4 +987,3 @@ const Profile = () => {
 };
 
 export default Profile;
-

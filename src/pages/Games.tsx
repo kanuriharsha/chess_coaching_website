@@ -58,7 +58,9 @@ const Games = () => {
     if (opponent === 'coach') {
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
       console.log('📡 Fetching coaches from:', `${apiUrl}/coaches`);
-      fetch(`${apiUrl}/coaches`)
+      fetch(`${apiUrl}/coaches`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
         .then(res => {
           console.log('📡 Coaches response status:', res.status);
           return res.json();
@@ -70,7 +72,7 @@ const Games = () => {
         })
         .catch(err => console.error('Failed to fetch coaches:', err));
     }
-  }, [opponent]);
+  }, [opponent, token]);
 
   // const handlePromotionSelect = (piece: 'q' | 'r' | 'b' | 'n') => {
   //   if (!pendingPromotion) return;
