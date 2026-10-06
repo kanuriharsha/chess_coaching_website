@@ -347,6 +347,7 @@ const AdminDashboard = () => {
   // Content Access states
   const [selectedUserForAccess, setSelectedUserForAccess] = useState<User | null>(null);
   const [userContentAccess, setUserContentAccess] = useState<ContentAccess | null>(null);
+  const [accessLoadError, setAccessLoadError] = useState<string | null>(null);
   const [puzzleRecommendations, setPuzzleRecommendations] = useState<PuzzleRecommendations | null>(null);
   const [specificPuzzlesInputs, setSpecificPuzzlesInputs] = useState<Record<string, string>>({});
   const [showAccessModal, setShowAccessModal] = useState(false);
@@ -917,7 +918,12 @@ const AdminDashboard = () => {
         const response = await fetch(`${API_BASE_URL}/content-access/${userId}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
-        if (!response.ok) throw new Error(`Failed to load content access for user ${userId}`);
+        if (!response.ok) {
+          const message = response.status === 404
+            ? 'Student not found or is not owned by your admin account'
+            : `Failed to load content access (HTTP ${response.status})`;
+          throw new Error(message);
+        }
         const access: ContentAccess = await response.json();
         userContentAccessCache.current.set(userId, access);
         return access;
@@ -1009,6 +1015,7 @@ const AdminDashboard = () => {
     try {
       const data = await getUserContentAccess(userId);
       setUserContentAccess(data);
+      setAccessLoadError(null);
       if (data.puzzleAccess) {
         const rawInputs: Record<string, string> = {};
         for (const catId of Object.keys(data.puzzleAccess)) {
@@ -1019,19 +1026,30 @@ const AdminDashboard = () => {
       }
     } catch (error) {
       console.error('Load content access error:', error);
+      const message = error instanceof Error ? error.message : 'Failed to load student access settings';
+      setAccessLoadError(message);
+      toast.error(message);
+      return false;
     }
+    return true;
   };
 
   const handleOpenAccessModal = async (u: User) => {
     setSelectedUserForAccess(u);
     setUserContentAccess(null);
+    setAccessLoadError(null);
     setPuzzleRecommendations(null);
     setShowAccessModal(true);
+
+    userContentAccessCache.current.delete(u.id);
+    puzzleRecommendationsCache.current.delete(u.id);
+    const accessLoaded = await loadUserContentAccess(u.id);
+    if (!accessLoaded) return;
+
     await Promise.all([
       loadDashboardResource('puzzles', loadPuzzles),
       loadDashboardResource('customPuzzleCategories', loadCustomCategoriesFromAPI),
       loadDashboardResource('puzzleCategoryVisibility', loadPuzzleCategoryVisibility),
-      loadUserContentAccess(u.id),
       loadPuzzleRecommendations(u.id)
     ]);
   };
@@ -3699,6 +3717,11 @@ const AdminDashboard = () => {
                   </DialogTitle>
                 </DialogHeader>
                 
+                {accessLoadError && (
+                  <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                    {accessLoadError}. Refresh the dashboard or sign in with the admin account that owns this student.
+                  </p>
+                )}
                 {userContentAccess && (
                   <div className="space-y-6 mt-4">
                     {/* Puzzle Access */}

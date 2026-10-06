@@ -82,6 +82,28 @@ sets the ownership of every record in those collections to the Super Admin.
 Do not run it again after admins have started creating their own students or
 content, or their records will be reassigned to the Super Admin.
 
+### Existing activity ownership
+
+To assign existing `UserActivity` records to the Super Admin, run this separate
+one-time script from the repository root:
+
+```powershell
+node server\scripts\map-user-activities-to-superadmin.js
+```
+
+It verifies that account `6950bc7b6beae457a17971b0` is the Super Admin, then
+sets only `adminId` on every document in `useractivities`. It does not change
+or delete any other activity field. Do not run this again after new admins
+have started recording their own activities: rerunning it would reassign all
+activity ownership to the Super Admin.
+
+New activity records are assigned server-side to the owning admin. Normal
+admins' activity queries are filtered by their `adminId`; the Super Admin can
+query all activity records, subject to the existing student ownership checks
+on student-specific dashboard pages. Puzzle progress and Manage Access
+recommendations use those same activity ownership rules. No puzzle completion
+or history fields are rewritten by the activity ownership migration.
+
 ## Use Admin Management
 
 Sign in to the existing `/admin` dashboard with the Super Admin account. The

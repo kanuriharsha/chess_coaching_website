@@ -15,6 +15,7 @@ import {
   isAdminRole
 } from './contentAccess.js';
 import { registerLiveGameValidationHandlers } from './liveGameHandlers.js';
+import { buildPuzzleProgress } from './puzzleProgress.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -195,6 +196,8 @@ app.use('/api', async (req, res, next) => {
 
 app.use('/api/users/:id', async (req, res, next) => {
   try {
+    if (req.path === '/activity/beacon') return next();
+
     const requestingUser = await getAuthenticatedUser(req, '_id role adminId isEnabled');
     if (!requestingUser || requestingUser.isEnabled === false) {
       return res.status(401).json({ message: 'Unauthorized' });
@@ -522,6 +525,7 @@ async function getVisiblePuzzles(viewer, category) {
 // User Activity Schema - Tracks all user activity with timestamps
 const userActivitySchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   type: {
     type: String,
     enum: ['page_visit', 'puzzle_attempt', 'puzzle_solved', 'puzzle_failed', 'opening_viewed', 'game_viewed', 'login', 'logout'],
@@ -545,6 +549,7 @@ const userActivitySchema = new mongoose.Schema({
 userActivitySchema.index({ userId: 1, timestamp: -1 });
 userActivitySchema.index({ userId: 1, type: 1 });
 userActivitySchema.index({ userId: 1, type: 1, 'details.puzzleId': 1 });
+userActivitySchema.index({ adminId: 1, userId: 1, timestamp: -1 });
 
 const UserActivity = mongoose.model('UserActivity', userActivitySchema, 'useractivities');
 
@@ -555,7 +560,7 @@ app.get('/api/users/:id/puzzle-recommendations', async (req, res) => {
     if (!token) return res.status(401).json({ message: 'No token provided' });
 
     const decoded = jwt.verify(token, JWT_SECRET);
-    const requestingUser = await User.findById(decoded.id).select('role');
+    const requestingUser = await User.findById(decoded.id).select('_id role');
     if (!requestingUser || !isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
@@ -582,6 +587,7 @@ app.get('/api/users/:id/puzzle-recommendations', async (req, res) => {
           $match: {
             userId,
             type: 'puzzle_solved',
+            ...(requestingUser.role === 'admin' ? { adminId: requestingUser._id } : {}),
             'details.puzzleId': { $exists: true, $nin: ['', null] }
           }
         },
@@ -1505,22 +1511,22 @@ app.put('/api/users/:id/group', async (req, res) => {
 // Record user activity
 app.post('/api/users/:id/activity', async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
     const { type, description, duration, details } = req.body;
-
-    // Users can only record their own activity, or admin can record for anyone
-    const requestingUser = await User.findById(decoded.id);
-    if (decoded.id !== req.params.id && !isAdminRole(requestingUser)) {
+    const requestingUser = req.authUser;
+    const targetUser = req.targetUser;
+    if (!requestingUser || !targetUser) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+    if (!requestingUser._id.equals(targetUser._id) && !canManageStudent(requestingUser, targetUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
+    const adminId = targetUser.role === 'student' ? targetUser.adminId : targetUser._id;
+    if (!adminId) return res.status(400).json({ message: 'Activity owner is not available' });
+
     const activity = new UserActivity({
-      userId: req.params.id,
+      userId: targetUser._id,
+      adminId,
       type,
       description,
       duration: duration || 0,
@@ -1546,18 +1552,22 @@ app.post('/api/users/:id/activity/beacon', async (req, res) => {
     }
 
     const decoded = jwt.verify(_token, JWT_SECRET);
-    const requestingUser = await User.findById(decoded.id).select('_id isEnabled role');
+    const requestingUser = await User.findById(decoded.id).select('_id isEnabled role adminId');
     if (!requestingUser || requestingUser.isEnabled === false) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
 
     // Users can only record their own activity
-    if (decoded.id !== req.params.id) {
+    if (!requestingUser._id.equals(req.params.id)) {
       return res.status(403).json({ message: 'Access denied' });
     }
 
+    const adminId = requestingUser.role === 'student' ? requestingUser.adminId : requestingUser._id;
+    if (!adminId) return res.status(400).json({ message: 'Activity owner is not available' });
+
     const activity = new UserActivity({
-      userId: req.params.id,
+      userId: requestingUser._id,
+      adminId,
       type,
       description,
       duration: duration || 0,
@@ -1576,22 +1586,13 @@ app.post('/api/users/:id/activity/beacon', async (req, res) => {
 // Get user activities (for admin dashboard)
 app.get('/api/users/:id/activity', async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const requestingUser = await User.findById(decoded.id);
-
-    // Only the user themselves or admin can view activity
-    if (decoded.id !== req.params.id && !isAdminRole(requestingUser)) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
+    const requestingUser = req.authUser;
+    if (!requestingUser) return res.status(401).json({ message: 'Unauthorized' });
 
     const { limit = 50, startDate, endDate, type } = req.query;
 
     const query = { userId: req.params.id };
+    if (requestingUser.role === 'admin') query.adminId = requestingUser._id;
 
     // Filter by date range if provided
     if (startDate || endDate) {
@@ -1619,21 +1620,13 @@ app.get('/api/users/:id/activity', async (req, res) => {
 // Get user activity summary (aggregated stats)
 app.get('/api/users/:id/activity/summary', async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const requestingUser = await User.findById(decoded.id);
-
-    if (decoded.id !== req.params.id && !isAdminRole(requestingUser)) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
+    const requestingUser = req.authUser;
+    if (!requestingUser) return res.status(401).json({ message: 'Unauthorized' });
 
     const { startDate, endDate } = req.query;
 
     const matchQuery = { userId: new mongoose.Types.ObjectId(req.params.id) };
+    if (requestingUser.role === 'admin') matchQuery.adminId = requestingUser._id;
 
     if (startDate || endDate) {
       matchQuery.timestamp = {};
@@ -1703,11 +1696,9 @@ app.delete('/api/activity/cleanup', async (req, res) => {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - parseInt(daysOld));
 
-    const ownedStudents = await User.find({ role: 'student', adminId: requestingUser._id }).select('_id');
-    const result = await UserActivity.deleteMany({
-      userId: { $in: ownedStudents.map(student => student._id) },
-      timestamp: { $lt: cutoffDate }
-    });
+    const query = { timestamp: { $lt: cutoffDate } };
+    if (requestingUser.role === 'admin') query.adminId = requestingUser._id;
+    const result = await UserActivity.deleteMany(query);
 
     res.json({
       success: true,
@@ -1728,7 +1719,7 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
     }
 
     const decoded = jwt.verify(token, JWT_SECRET);
-    const requestingUser = await User.findById(decoded.id);
+    const requestingUser = await User.findById(decoded.id).select('_id role');
 
     if (decoded.id !== req.params.id && !isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
@@ -1739,84 +1730,17 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
     }
 
     // Get all puzzle activities for the user
-    const puzzleActivities = await UserActivity.find({
+    const activityQuery = {
       userId: req.params.id,
       type: { $in: ['puzzle_solved', 'puzzle_failed'] }
-    }).sort({ timestamp: -1 });
+    };
+    if (requestingUser.role === 'admin') activityQuery.adminId = requestingUser._id;
+    const puzzleActivities = await UserActivity.find(activityQuery).sort({ timestamp: -1 });
 
     // Get all puzzles to know total counts
     const allPuzzles = await Puzzle.find({ isEnabled: true, adminId: student.adminId });
 
-    // Group puzzles by category
-    const puzzlesByCategory = {};
-    allPuzzles.forEach(puzzle => {
-      if (!puzzlesByCategory[puzzle.category]) {
-        puzzlesByCategory[puzzle.category] = [];
-      }
-      puzzlesByCategory[puzzle.category].push({
-        puzzleId: puzzle._id.toString(),
-        puzzleName: puzzle.name
-      });
-    });
-
-    // Group activities by category and puzzle
-    const progressByCategory = {};
-
-    puzzleActivities.forEach(activity => {
-      const category = activity.details?.category || 'unknown';
-      const puzzleName = activity.details?.puzzleName || 'Unknown';
-      const puzzleId = activity.details?.puzzleId || activity._id.toString();
-
-      if (!progressByCategory[category]) {
-        progressByCategory[category] = {
-          puzzles: {}
-        };
-      }
-
-      if (!progressByCategory[category].puzzles[puzzleId]) {
-        progressByCategory[category].puzzles[puzzleId] = {
-          puzzleId,
-          puzzleName,
-          solved: false,
-          attempts: 0,
-          solvedAt: null
-        };
-      }
-
-      progressByCategory[category].puzzles[puzzleId].attempts++;
-      if (activity.type === 'puzzle_solved' && !progressByCategory[category].puzzles[puzzleId].solved) {
-        progressByCategory[category].puzzles[puzzleId].solved = true;
-        progressByCategory[category].puzzles[puzzleId].solvedAt = activity.timestamp;
-      }
-    });
-
-    // Format the response
-    const result = Object.keys(puzzlesByCategory).map(category => {
-      const categoryPuzzles = puzzlesByCategory[category];
-      const progress = progressByCategory[category]?.puzzles || {};
-
-      const puzzleDetails = categoryPuzzles.map(puzzle => {
-        const progressData = progress[puzzle.puzzleId] || {
-          puzzleId: puzzle.puzzleId,
-          puzzleName: puzzle.puzzleName,
-          solved: false,
-          attempts: 0,
-          solvedAt: null
-        };
-        return progressData;
-      });
-
-      const solvedCount = puzzleDetails.filter(p => p.solved).length;
-
-      return {
-        category,
-        totalPuzzles: categoryPuzzles.length,
-        solvedPuzzles: solvedCount,
-        puzzleDetails
-      };
-    });
-
-    res.json(result);
+    res.json(buildPuzzleProgress(allPuzzles, puzzleActivities));
   } catch (error) {
     console.error('Get puzzle progress error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -2308,7 +2232,7 @@ app.get('/api/content-access/:userId', async (req, res) => {
     if (!requestingUser || requestingUser.isEnabled === false) {
       return res.status(401).json({ message: 'Unauthorized' });
     }
-    const targetStudent = await User.findOne({ _id: req.params.userId, role: 'student' }).select('_id adminId');
+    const targetStudent = await User.findOne({ _id: req.params.userId, role: 'student' }).select('_id role adminId');
     const ownsTarget = canManageStudent(requestingUser, targetStudent);
     const isSelf = requestingUser._id.equals(req.params.userId);
     if (!targetStudent || (!ownsTarget && !isSelf)) {
