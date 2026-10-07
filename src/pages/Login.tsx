@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Crown, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
@@ -21,6 +21,10 @@ const Login = () => {
     if (result.success) {
       toast.success('Welcome back!');
       navigate('/puzzles');
+    } else if (result.verificationStatus === 'under_review') {
+      localStorage.setItem('chessCoach_pendingAdminUsername', result.username || username);
+      toast.info(result.message || 'Profile is under review.');
+      navigate('/onboarding/admin');
     } else {
       toast.error(result.message || 'Invalid credentials or account disabled');
     }
@@ -98,6 +102,15 @@ const Login = () => {
               )}
             </button>
           </form>
+
+          <div className="mt-6 pt-4 border-t border-border text-center">
+            <p className="text-xs text-muted-foreground">
+              Are you a coach or administrator?{' '}
+              <Link to="/onboarding/admin" className="text-primary font-medium hover:underline">
+                Admin Onboarding
+              </Link>
+            </p>
+          </div>
         </div>
       </div>
     </div>

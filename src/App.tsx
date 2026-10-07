@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import Login from "./pages/Login";
 import Onboarding from "./pages/Onboarding";
+import AdminOnboarding from "./pages/AdminOnboarding";
 import Puzzles from "./pages/Puzzles";
 import Games from "./pages/Games";
 import Openings from "./pages/Openings";
@@ -16,6 +17,7 @@ import BestGames from "./pages/BestGames";
 import BestGameEditor from "./pages/BestGameEditor";
 import Profile from "./pages/Profile";
 import AdminDashboard from "./pages/AdminDashboard";
+import AdminManagement from "./pages/AdminManagement";
 import Dashboard from "./pages/Dashboard";
 import PuzzleManager from "./pages/PuzzleManager";
 import NotFound from "./pages/NotFound";
@@ -125,6 +127,8 @@ const AppRoutes = () => (
         </OnboardingRoute>
       }
     />
+    <Route path="/onboarding/admin" element={<AdminOnboarding />} />
+    <Route path="/admin/onboarding" element={<AdminOnboarding />} />
     <Route
       path="/puzzles"
       element={
@@ -234,6 +238,14 @@ const AppRoutes = () => (
       element={
         <ProtectedRoute>
           <AdminDashboard />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/admin-management"
+      element={
+        <ProtectedRoute>
+          <AdminManagement />
         </ProtectedRoute>
       }
     />

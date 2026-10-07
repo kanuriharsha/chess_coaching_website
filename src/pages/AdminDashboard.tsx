@@ -51,7 +51,7 @@ import {
 
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -77,6 +77,21 @@ interface ManagedAdmin {
   username: string;
   role: 'admin';
   isEnabled: boolean;
+  verificationStatus?: 'under_review' | 'verified' | 'rejected';
+  adminId?: string | null;
+  adminName?: string | null;
+  profile?: {
+    fullName?: string;
+    email?: string;
+    phone?: string;
+    gender?: string;
+    dateOfBirth?: string;
+    chessTitle?: string;
+    fideId?: string;
+    village?: string;
+    state?: string;
+    country?: string;
+  };
   createdAt?: string;
 }
 
@@ -204,13 +219,29 @@ const PUZZLE_CATEGORIES = [
 
 const AdminDashboard = () => {
   const { user, token, getAllUsers, updateUser, deleteUser, register } = useAuth();
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get('tab');
   const [stats, setStats] = useState<Stats>({ totalStudents: 0, activeStudents: 0, totalPuzzles: 0, totalOpenings: 0, totalFamousMates: 0, totalBestGames: 0 });
   const [users, setUsers] = useState<User[]>([]);
   const [puzzles, setPuzzles] = useState<PuzzleData[]>([]);
   const [openings, setOpenings] = useState<OpeningData[]>([]);
   const [famousMates, setFamousMates] = useState<FamousMateData[]>([]);
   const [bestGames, setBestGames] = useState<BestGameData[]>([]);
-  const [activeTab, setActiveTab] = useState('users');
+  const [activeTab, setActiveTab] = useState(
+    initialTab === 'admin-management' || initialTab === 'admins' ? 'admins' : 'users'
+  );
+  const [adminRequests, setAdminRequests] = useState<ManagedAdmin[]>([]);
+  const [adminSubTab, setAdminSubTab] = useState<'admins' | 'requests'>('admins');
+  const [isLoadingRequests, setIsLoadingRequests] = useState(false);
+  const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam === 'admin-management' || tabParam === 'admins') {
+      setActiveTab('admins');
+    }
+  }, [searchParams]);
+
   const loadedDashboardResources = useRef(new Set<string>());
   const pendingDashboardResources = useRef(new Map<string, Promise<void>>());
   const userContentAccessCache = useRef(new Map<string, ContentAccess>());
@@ -675,6 +706,49 @@ const AdminDashboard = () => {
     }
   };
 
+  const loadAdminRequests = async (): Promise<boolean> => {
+    setIsLoadingRequests(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/superadmin/admin-requests`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) throw new Error('Failed to load admin requests');
+      setAdminRequests(await response.json());
+      return true;
+    } catch (error) {
+      console.error('Load admin requests error:', error);
+      return false;
+    } finally {
+      setIsLoadingRequests(false);
+    }
+  };
+
+  const handleAdminRequestAction = async (requestId: string, action: 'approve' | 'reject') => {
+    setActionLoadingId(requestId);
+    try {
+      const response = await fetch(`${API_BASE_URL}/superadmin/admin-requests/${requestId}/action`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ action })
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.message || `Failed to ${action} request`);
+      }
+
+      toast.success(action === 'approve' ? 'Admin request accepted and verified!' : 'Admin request rejected');
+      await Promise.all([loadAdmins(), loadAdminRequests()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `Failed to ${action} request`);
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   // Load fees for all students
   const loadAllUsersFees = async (userList: User[]) => {
     const feesMap: { [userId: string]: any[] } = {};
@@ -840,6 +914,7 @@ const AdminDashboard = () => {
     loadStats,
     loadUsers,
     loadAdmins,
+    loadAdminRequests,
     loadGroups,
     loadOpenings,
     loadFamousMates,
@@ -849,6 +924,7 @@ const AdminDashboard = () => {
     loadStats,
     loadUsers,
     loadAdmins,
+    loadAdminRequests,
     loadGroups,
     loadOpenings,
     loadFamousMates,
@@ -885,6 +961,7 @@ const AdminDashboard = () => {
         pendingLoads.push(loadDashboardResource('bestGames', loaders.loadBestGames));
       } else if (activeTab === 'admins' && user?.role === 'superadmin') {
         pendingLoads.push(loadDashboardResource('admins', loaders.loadAdmins));
+        pendingLoads.push(loadDashboardResource('adminRequests', loaders.loadAdminRequests));
       }
 
       await Promise.all(pendingLoads);
@@ -4732,7 +4809,398 @@ const AdminDashboard = () => {
             </div>
           </TabsContent>
 
+          {/* Admin Management Tab (Superadmin only) */}
+          {user?.role === 'superadmin' && (
+            <TabsContent value="admins">
+              <div className="card-premium p-4 md:p-6">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+                  <div>
+                    <h2 className="font-serif text-xl md:text-2xl font-semibold text-foreground">
+                      Admin Management
+                    </h2>
+                    <p className="text-sm text-muted-foreground mt-0.5">
+                      Review admin onboarding requests and manage website administrators
+                    </p>
+                  </div>
+                  {adminSubTab === 'admins' && (
+                    <Button onClick={() => openAdminDialog()} className="flex items-center gap-2">
+                      <Plus className="w-4 h-4" /> Add Admin Directly
+                    </Button>
+                  )}
+                </div>
 
+                {/* Sub-tabs header */}
+                <div className="flex border-b border-border mb-6">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminSubTab('admins');
+                      loadAdmins();
+                    }}
+                    className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
+                      adminSubTab === 'admins'
+                        ? 'border-primary text-primary'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <UserCheck className="w-4 h-4" />
+                    <span>Admins</span>
+                    <span className="px-2 py-0.5 rounded-full bg-secondary text-xs font-medium text-foreground">
+                      {admins.length}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminSubTab('requests');
+                      loadAdminRequests();
+                    }}
+                    className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all relative ${
+                      adminSubTab === 'requests'
+                        ? 'border-primary text-primary'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Clock className="w-4 h-4" />
+                    <span>Admin Request</span>
+                    {adminRequests.length > 0 ? (
+                      <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-xs font-bold animate-pulse">
+                        {adminRequests.length}
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full bg-secondary text-xs font-medium text-muted-foreground">
+                        0
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                {/* SUB-TAB 1: Admins List */}
+                {adminSubTab === 'admins' && (
+                  <div>
+                    {admins.length === 0 ? (
+                      <div className="text-center py-12">
+                        <Users className="w-14 h-14 text-muted-foreground mx-auto mb-3 opacity-40" />
+                        <p className="text-muted-foreground font-medium">No verified admins yet</p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Admins who register via onboarding or are created directly will appear here
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead>
+                            <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground border-b border-border">
+                              <th className="pb-3 font-semibold">Admin</th>
+                              <th className="pb-3 font-semibold">Contact</th>
+                              <th className="pb-3 font-semibold">Chess & Location</th>
+                              <th className="pb-3 font-semibold">Accepted By</th>
+                              <th className="pb-3 font-semibold">Date</th>
+                              <th className="pb-3 font-semibold">Status</th>
+                              <th className="pb-3 font-semibold">Access</th>
+                              <th className="pb-3 font-semibold text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {admins.map((admin) => (
+                              <tr key={admin.id} className="hover:bg-secondary/30 transition-colors">
+                                <td className="py-3">
+                                  <div className="flex items-center gap-3">
+                                    <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary text-sm">
+                                      {admin.profile?.fullName?.charAt(0) || admin.username.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div>
+                                      <p className="font-semibold text-sm text-foreground">
+                                        {admin.profile?.fullName || admin.username}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">@{admin.username}</p>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                <td className="py-3">
+                                  <div className="text-xs space-y-0.5">
+                                    {admin.profile?.email ? (
+                                      <p className="text-foreground">{admin.profile.email}</p>
+                                    ) : (
+                                      <p className="text-muted-foreground italic">No email</p>
+                                    )}
+                                    {admin.profile?.phone && (
+                                      <p className="text-muted-foreground">{admin.profile.phone}</p>
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td className="py-3">
+                                  <div className="text-xs space-y-1">
+                                    {admin.profile?.chessTitle && (
+                                      <span className="inline-block px-2 py-0.5 rounded bg-primary/15 text-primary text-[10px] font-bold">
+                                        {admin.profile.chessTitle}
+                                      </span>
+                                    )}
+                                    {admin.profile?.fideId && (
+                                      <span className="ml-1 text-[11px] text-muted-foreground">
+                                        FIDE: {admin.profile.fideId}
+                                      </span>
+                                    )}
+                                    {admin.profile?.village ? (
+                                      <p className="text-muted-foreground text-[11px]">
+                                        {admin.profile.village}, {admin.profile.state}
+                                      </p>
+                                    ) : (
+                                      <p className="text-muted-foreground italic text-[11px]">—</p>
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td className="py-3">
+                                  <div className="text-xs">
+                                    {admin.adminName ? (
+                                      <span className="font-medium text-foreground">{admin.adminName}</span>
+                                    ) : admin.adminId ? (
+                                      <span className="text-muted-foreground">Superadmin</span>
+                                    ) : (
+                                      <span className="text-muted-foreground italic">Direct</span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                <td className="py-3 text-xs text-muted-foreground">
+                                  {admin.createdAt ? new Date(admin.createdAt).toLocaleDateString() : '—'}
+                                </td>
+
+                                <td className="py-3">
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                    <Check className="w-3 h-3" /> Verified
+                                  </span>
+                                </td>
+
+                                <td className="py-3">
+                                  <div className="flex items-center gap-2">
+                                    <Switch
+                                      checked={admin.isEnabled}
+                                      onCheckedChange={() => toggleAdminEnabled(admin)}
+                                    />
+                                    <span className={`text-xs ${admin.isEnabled ? 'text-success' : 'text-muted-foreground'}`}>
+                                      {admin.isEnabled ? 'Enabled' : 'Disabled'}
+                                    </span>
+                                  </div>
+                                </td>
+
+                                <td className="py-3 text-right">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => openAdminDialog(admin)}
+                                      className="h-8 w-8 p-0"
+                                      title="Edit admin"
+                                    >
+                                      <Edit className="w-4 h-4" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => removeAdmin(admin)}
+                                      className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                      title="Delete admin"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* SUB-TAB 2: Admin Requests */}
+                {adminSubTab === 'requests' && (
+                  <div>
+                    {isLoadingRequests ? (
+                      <div className="flex items-center justify-center py-16">
+                        <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
+                      </div>
+                    ) : adminRequests.length === 0 ? (
+                      <div className="text-center py-16 bg-secondary/20 rounded-xl border border-dashed border-border">
+                        <Clock className="w-14 h-14 text-muted-foreground mx-auto mb-3 opacity-30" />
+                        <h3 className="font-serif text-lg font-semibold text-foreground">
+                          No Pending Admin Requests
+                        </h3>
+                        <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
+                          When coaches register through the Admin Onboarding page (/onboarding/admin), their verification requests will appear here for your review and approval.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {adminRequests.map((req) => (
+                          <div
+                            key={req.id}
+                            className="p-5 rounded-xl border border-amber-500/30 bg-amber-500/5 hover:border-amber-500/50 transition-all shadow-sm"
+                          >
+                            {/* Card Header */}
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-border/60">
+                              <div className="flex items-center gap-3">
+                                <div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center font-bold text-amber-600 dark:text-amber-400 text-base">
+                                  {req.profile?.fullName?.charAt(0) || req.username.charAt(0).toUpperCase()}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h3 className="font-serif font-bold text-base md:text-lg text-foreground">
+                                      {req.profile?.fullName || req.username}
+                                    </h3>
+                                    <span className="px-2 py-0.5 rounded bg-secondary text-xs font-mono text-muted-foreground">
+                                      @{req.username}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground mt-0.5">
+                                    Submitted:{' '}
+                                    {req.createdAt
+                                      ? new Date(req.createdAt).toLocaleString()
+                                      : 'Recently'}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 text-xs font-semibold uppercase tracking-wider self-start sm:self-auto">
+                                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                                Under Review
+                              </div>
+                            </div>
+
+                            {/* Card Body - 2 Columns */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4 text-xs md:text-sm">
+                              {/* 1. Personal Details */}
+                              <div className="space-y-2 p-3 rounded-lg bg-secondary/30">
+                                <p className="font-semibold text-foreground text-xs uppercase tracking-wide text-primary">
+                                  1. Personal Information
+                                </p>
+                                <div className="space-y-1 text-muted-foreground">
+                                  <p className="flex justify-between">
+                                    <span>Email:</span>
+                                    <span className="font-medium text-foreground">{req.profile?.email || '—'}</span>
+                                  </p>
+                                  <p className="flex justify-between">
+                                    <span>Phone:</span>
+                                    <span className="font-medium text-foreground">{req.profile?.phone || '—'}</span>
+                                  </p>
+                                  <p className="flex justify-between">
+                                    <span>Gender:</span>
+                                    <span className="font-medium text-foreground capitalize">{req.profile?.gender || '—'}</span>
+                                  </p>
+                                  <p className="flex justify-between">
+                                    <span>Date of Birth:</span>
+                                    <span className="font-medium text-foreground">{req.profile?.dateOfBirth || '—'}</span>
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* 2. Chess & Location Details */}
+                              <div className="space-y-2 p-3 rounded-lg bg-secondary/30">
+                                <p className="font-semibold text-foreground text-xs uppercase tracking-wide text-primary">
+                                  2. Chess & Location Information
+                                </p>
+                                <div className="space-y-1 text-muted-foreground">
+                                  <p className="flex justify-between">
+                                    <span>Chess Title:</span>
+                                    <span className="font-semibold text-foreground">
+                                      {req.profile?.chessTitle || 'None'}
+                                    </span>
+                                  </p>
+                                  <p className="flex justify-between">
+                                    <span>FIDE ID:</span>
+                                    <span className="font-mono text-foreground">{req.profile?.fideId || 'None'}</span>
+                                  </p>
+                                  <p className="flex justify-between">
+                                    <span>Village / Town:</span>
+                                    <span className="font-medium text-foreground">{req.profile?.village || '—'}</span>
+                                  </p>
+                                  <p className="flex justify-between">
+                                    <span>State & Country:</span>
+                                    <span className="font-medium text-foreground">
+                                      {req.profile?.state}, {req.profile?.country}
+                                    </span>
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Card Actions Footer */}
+                            <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-3 border-t border-border/60">
+                              <Button
+                                variant="outline"
+                                onClick={() => handleAdminRequestAction(req.id, 'reject')}
+                                disabled={actionLoadingId === req.id}
+                                className="w-full sm:w-auto text-destructive border-destructive/30 hover:bg-destructive/10 hover:border-destructive text-sm"
+                              >
+                                <X className="w-4 h-4 mr-1.5" />
+                                {actionLoadingId === req.id ? 'Processing...' : 'Reject Request'}
+                              </Button>
+
+                              <Button
+                                onClick={() => handleAdminRequestAction(req.id, 'approve')}
+                                disabled={actionLoadingId === req.id}
+                                className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow-sm"
+                              >
+                                <Check className="w-4 h-4 mr-1.5" />
+                                {actionLoadingId === req.id ? 'Accepting...' : 'Accept & Verify'}
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+          )}
+
+          {/* Admin Create/Edit Dialog */}
+          <Dialog open={adminDialogOpen} onOpenChange={setAdminDialogOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <UserCheck className="w-5 h-5 text-primary" />
+                  {editingAdmin ? 'Edit Admin' : 'Add New Admin Directly'}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4 mt-4">
+                <div>
+                  <Label>Username *</Label>
+                  <Input
+                    value={adminUsername}
+                    onChange={(e) => setAdminUsername(e.target.value)}
+                    placeholder="Enter admin username"
+                  />
+                </div>
+                <div>
+                  <Label>{editingAdmin ? 'Password (leave blank to keep unchanged)' : 'Password *'}</Label>
+                  <Input
+                    type="password"
+                    value={adminPassword}
+                    onChange={(e) => setAdminPassword(e.target.value)}
+                    placeholder={editingAdmin ? 'Enter new password if changing' : 'Enter password'}
+                  />
+                </div>
+                {editingAdmin && (
+                  <div className="flex items-center justify-between py-2">
+                    <Label>Account Enabled</Label>
+                    <Switch checked={adminEnabled} onCheckedChange={setAdminEnabled} />
+                  </div>
+                )}
+                <Button onClick={saveAdmin} className="w-full">
+                  <Save className="w-4 h-4 mr-2" />
+                  {editingAdmin ? 'Save Changes' : 'Create Admin'}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </Tabs>
           </>
         )}

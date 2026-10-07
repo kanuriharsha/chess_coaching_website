@@ -20,6 +20,7 @@ export interface User {
   id: string;
   username: string;
   role: 'admin' | 'superadmin' | 'student';
+  verificationStatus?: 'under_review' | 'verified' | 'rejected';
   adminId?: string | null;
   groupId?: string | null;
   groupName?: string | null;
@@ -45,11 +46,13 @@ export interface StudentProfile {
   state: string;
   country: string;
   schoolName?: string;
+  chessTitle?: string;
+  fideId?: string;
 }
 
 interface AuthContextType {
   user: User | null;
-  login: (username: string, password: string) => Promise<{ success: boolean; message?: string }>;
+  login: (username: string, password: string) => Promise<{ success: boolean; message?: string; verificationStatus?: string; username?: string }>;
   logout: () => void;
   completeOnboarding: (profile: StudentProfile) => Promise<void>;
   isLoading: boolean;
@@ -106,7 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const login = async (username: string, password: string): Promise<{ success: boolean; message?: string }> => {
+  const login = async (username: string, password: string): Promise<{ success: boolean; message?: string; verificationStatus?: string; username?: string }> => {
     try {
       const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
@@ -125,11 +128,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { success: true };
       }
 
-      // Try to extract error message from server
+      // Try to extract error message and verification status from server
       let serverMsg = undefined;
+      let verificationStatus = undefined;
+      let returnedUsername = undefined;
       try {
         const body = await response.json();
         serverMsg = body?.message;
+        verificationStatus = body?.verificationStatus;
+        returnedUsername = body?.username;
       } catch (e) {
         try {
           serverMsg = await response.text();
@@ -138,7 +145,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      return { success: false, message: serverMsg || 'Invalid credentials or account disabled' };
+      return { 
+        success: false, 
+        message: serverMsg || 'Invalid credentials or account disabled',
+        verificationStatus,
+        username: returnedUsername
+      };
     } catch (error) {
       console.error('Login error:', error);
       return { success: false, message: 'Network or server error' };

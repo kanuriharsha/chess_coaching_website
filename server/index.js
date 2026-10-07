@@ -100,6 +100,7 @@ const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   role: { type: String, enum: ['admin', 'superadmin', 'student'], default: 'student' },
+  verificationStatus: { type: String, enum: ['under_review', 'verified', 'rejected'], default: undefined },
   adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   isEnabled: { type: Boolean, default: true },
   onboardingComplete: { type: Boolean, default: false },
@@ -128,7 +129,9 @@ const userSchema = new mongoose.Schema({
     village: String,
     state: String,
     country: String,
-    schoolName: String
+    schoolName: String,
+    chessTitle: String,
+    fideId: String
   },
   // Fees records for monthly payments
   fees: [{
@@ -802,6 +805,22 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials, please try with correct credentials' });
     }
 
+    if (foundUser.role === 'admin' && foundUser.verificationStatus === 'under_review') {
+      return res.status(403).json({
+        message: "Your profile is under review. We'll notify you once verified. This usually takes 15-20 minutes",
+        verificationStatus: 'under_review',
+        username: foundUser.username
+      });
+    }
+
+    if (foundUser.role === 'admin' && foundUser.verificationStatus === 'rejected') {
+      return res.status(403).json({
+        message: 'Your admin profile registration was rejected. Please contact administrator.',
+        verificationStatus: 'rejected',
+        username: foundUser.username
+      });
+    }
+
     if (!foundUser.isEnabled) {
       return res.status(403).json({ message: 'Account disabled' });
     }
@@ -814,6 +833,7 @@ app.post('/api/auth/login', async (req, res) => {
         id: foundUser._id,
         username: foundUser.username,
         role: foundUser.role,
+        verificationStatus: foundUser.verificationStatus || (foundUser.role === 'admin' ? 'verified' : undefined),
         isEnabled: foundUser.isEnabled,
         onboardingComplete: foundUser.onboardingComplete,
         profile: foundUser.profile,
@@ -845,6 +865,7 @@ app.get('/api/auth/me', async (req, res) => {
       id: user._id,
       username: user.username,
       role: user.role,
+      verificationStatus: user.verificationStatus || (user.role === 'admin' ? 'verified' : undefined),
       isEnabled: user.isEnabled,
       onboardingComplete: user.onboardingComplete,
       profile: user.profile,
@@ -890,6 +911,109 @@ app.put('/api/auth/onboarding', async (req, res) => {
     });
   } catch (error) {
     console.error('Onboarding error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Admin Onboarding public submission
+app.post('/api/auth/admin-onboarding', async (req, res) => {
+  try {
+    const {
+      fullName,
+      email,
+      phone,
+      gender,
+      dateOfBirth,
+      chessTitle,
+      fideId,
+      village,
+      state,
+      country,
+      username,
+      password
+    } = req.body || {};
+
+    if (!fullName?.trim() || !email?.trim() || !phone?.trim() || !gender?.trim() || !dateOfBirth?.trim()) {
+      return res.status(400).json({ message: 'Personal Information is incomplete. All marked fields (*) are required.' });
+    }
+
+    if (!village?.trim() || !state?.trim() || !country?.trim()) {
+      return res.status(400).json({ message: 'Chess & Location Information is incomplete. Village, State, and Country are required.' });
+    }
+
+    if (!username?.trim() || !password?.trim()) {
+      return res.status(400).json({ message: 'Username and password are required.' });
+    }
+
+    const trimmedUsername = username.trim();
+    const usernameRegex = makeLooseRegex(trimmedUsername);
+    const existing = usernameRegex 
+      ? await User.findOne({ username: { $regex: usernameRegex } })
+      : await User.findOne({ username: trimmedUsername });
+
+    if (existing) {
+      return res.status(400).json({ message: 'Username is already taken. Please choose another username.' });
+    }
+
+    const newAdmin = await User.create({
+      username: trimmedUsername,
+      password: password.trim(),
+      role: 'admin',
+      verificationStatus: 'under_review',
+      adminId: null, // superadmin who accepts will be assigned
+      isEnabled: true,
+      onboardingComplete: true,
+      profile: {
+        fullName: fullName.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        gender: gender.trim(),
+        dateOfBirth: dateOfBirth.trim(),
+        chessTitle: chessTitle ? chessTitle.trim() : '',
+        fideId: fideId ? fideId.trim() : '',
+        village: village.trim(),
+        state: state.trim(),
+        country: country.trim()
+      }
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Submitted for verification!',
+      username: newAdmin.username,
+      verificationStatus: 'under_review'
+    });
+  } catch (error) {
+    console.error('Admin onboarding error:', error);
+    res.status(500).json({ message: 'Failed to submit admin registration. Please try again.' });
+  }
+});
+
+// Check Admin Status (used on page refresh or poll)
+app.get('/api/auth/admin-status/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    if (!username) return res.status(400).json({ message: 'Username required' });
+
+    const usernameRegex = makeLooseRegex(username);
+    const user = usernameRegex
+      ? await User.findOne({ username: { $regex: usernameRegex }, role: 'admin' }).select('-password')
+      : await User.findOne({ username, role: 'admin' }).select('-password');
+
+    if (!user) {
+      return res.status(404).json({ message: 'Admin request not found' });
+    }
+
+    res.json({
+      username: user.username,
+      role: user.role,
+      verificationStatus: user.verificationStatus || 'verified',
+      profile: user.profile,
+      adminId: user.adminId,
+      createdAt: user.createdAt
+    });
+  } catch (error) {
+    console.error('Admin status check error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -954,16 +1078,112 @@ app.get('/api/coaches', async (req, res) => {
 
 app.get('/api/superadmin/admins', requireRole('superadmin'), async (req, res) => {
   try {
-    const admins = await User.find({ role: 'admin' }).select('_id username isEnabled createdAt').sort({ createdAt: 1 });
+    const admins = await User.find({ role: 'admin', verificationStatus: { $ne: 'under_review' } })
+      .select('-password')
+      .populate('adminId', 'username profile.fullName')
+      .sort({ createdAt: -1 });
+
     res.json(admins.map(admin => ({
       id: admin._id,
       username: admin.username,
       role: admin.role,
       isEnabled: admin.isEnabled,
+      verificationStatus: admin.verificationStatus || 'verified',
+      adminId: admin.adminId?._id || admin.adminId || null,
+      adminName: admin.adminId?.profile?.fullName || admin.adminId?.username || null,
+      profile: admin.profile,
       createdAt: admin.createdAt
     })));
   } catch (error) {
     console.error('Get admins error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get pending admin requests (superadmin only)
+app.get('/api/superadmin/admin-requests', requireRole('superadmin'), async (req, res) => {
+  try {
+    const requests = await User.find({ role: 'admin', verificationStatus: 'under_review' })
+      .select('-password')
+      .sort({ createdAt: -1 });
+
+    res.json(requests.map(reqAdmin => ({
+      id: reqAdmin._id,
+      username: reqAdmin.username,
+      role: reqAdmin.role,
+      isEnabled: reqAdmin.isEnabled,
+      verificationStatus: reqAdmin.verificationStatus,
+      adminId: reqAdmin.adminId,
+      profile: reqAdmin.profile,
+      createdAt: reqAdmin.createdAt
+    })));
+  } catch (error) {
+    console.error('Get admin requests error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Superadmin approve/reject admin request
+app.put('/api/superadmin/admin-requests/:id/action', requireRole('superadmin'), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid request ID' });
+    }
+
+    const { action } = req.body || {};
+    if (!['approve', 'accept', 'reject'].includes(action)) {
+      return res.status(400).json({ message: 'Action must be approve or reject' });
+    }
+
+    const admin = await User.findOne({ _id: req.params.id, role: 'admin' });
+    if (!admin) {
+      return res.status(404).json({ message: 'Admin request not found' });
+    }
+
+    if (action === 'approve' || action === 'accept') {
+      admin.verificationStatus = 'verified';
+      admin.adminId = req.authUser._id; // Superadmin who accepted the request
+      admin.isEnabled = true;
+      admin.onboardingComplete = true;
+      admin.updatedAt = new Date();
+      await admin.save();
+      return res.json({
+        success: true,
+        message: 'Admin request accepted successfully',
+        admin: {
+          id: admin._id,
+          username: admin.username,
+          role: admin.role,
+          verificationStatus: admin.verificationStatus,
+          adminId: admin.adminId,
+          isEnabled: admin.isEnabled,
+          profile: admin.profile,
+          createdAt: admin.createdAt
+        }
+      });
+    } else {
+      admin.verificationStatus = 'rejected';
+      admin.adminId = req.authUser._id;
+      admin.isEnabled = false;
+      admin.updatedAt = new Date();
+      await admin.save();
+      return res.json({
+        success: true,
+        message: 'Admin request rejected',
+        admin: {
+          id: admin._id,
+          username: admin.username,
+          role: admin.role,
+          verificationStatus: admin.verificationStatus,
+          adminId: admin.adminId,
+          isEnabled: admin.isEnabled,
+          profile: admin.profile,
+          createdAt: admin.createdAt
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Admin request action error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -982,6 +1202,8 @@ app.post('/api/superadmin/admins', requireRole('superadmin'), async (req, res) =
       username: username.trim(),
       password: password.trim(),
       role: 'admin',
+      verificationStatus: 'verified',
+      adminId: req.authUser._id,
       isEnabled: true,
       onboardingComplete: true
     });
@@ -990,6 +1212,7 @@ app.post('/api/superadmin/admins', requireRole('superadmin'), async (req, res) =
       username: admin.username,
       role: admin.role,
       isEnabled: admin.isEnabled,
+      verificationStatus: admin.verificationStatus,
       createdAt: admin.createdAt
     });
   } catch (error) {
@@ -1023,6 +1246,7 @@ app.put('/api/superadmin/admins/:id', requireRole('superadmin'), async (req, res
       username: admin.username,
       role: admin.role,
       isEnabled: admin.isEnabled,
+      verificationStatus: admin.verificationStatus || 'verified',
       createdAt: admin.createdAt
     });
   } catch (error) {

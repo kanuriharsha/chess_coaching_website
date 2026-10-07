@@ -15,6 +15,7 @@ import {
   LayoutDashboard,
   PlusCircle,
   Skull,
+  Users,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -27,6 +28,9 @@ const Navigation = () => {
     ...(isAdminRole(user?.role)
     ? [{ to: '/admin', icon: LayoutDashboard, label: 'Dashboard' }]
     : []),
+    ...(user?.role === 'superadmin'
+    ? [{ to: '/admin-management', icon: Users, label: 'Admin Management' }]
+    : []),
     ...(!isAdminRole(user?.role)
     ? [{ to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' }]
     : []),
@@ -37,10 +41,6 @@ const Navigation = () => {
     { to: '/best-games', icon: Trophy, label: 'Best Games' },
     { to: '/profile', icon: User, label: 'Profile' },
   ];
-// if (user?.role === 'admin') {
-//     navItems.push({ to: '/admin', icon: LayoutDashboard, label: 'Dashboard' });
-//   }
-  
 
   const isActive = (path: string) => location.pathname === path;
 
