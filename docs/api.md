@@ -47,12 +47,16 @@ This document describes the Express and Socket.IO interfaces implemented in `ser
 | `PUT /groups/:id` | Admin token | Updates a group's name and/or description. |
 | `DELETE /groups/:id` | Admin token | Deletes a group and unassigns its members. |
 | `PUT /users/:id/group` | Admin token | Body: `{ groupId }`; use `null` to unassign. Returns `{ success, groupId, groupName }`. |
-| `POST /users/:id/activity` | Owner or admin | Body: `{ type, description, duration?, details? }`; stores an activity and returns `201` with the record. |
+| `POST /users/:id/activity` | Owner or admin | Body: `{ type, description, duration?, details? }`; stores an activity and returns `201` with the record. Puzzle events require `details.puzzleId` and `details.attemptId`; the server atomically records progress and history. |
 | `POST /users/:id/activity/beacon` | Owner token in body | Unload/beacon variant of activity creation. Body includes `type`, `description`, optional `duration`/`details`, and `_token`. |
 | `GET /users/:id/activity` | Owner or admin | Returns newest-first activity records. Optional query parameters: `limit` (default 50), `startDate`, `endDate`, and `type`. |
 | `GET /users/:id/activity/summary` | Owner or admin | Optional `startDate`/`endDate`; returns `{ summary, puzzleStats }` aggregate data. |
 | `DELETE /activity/cleanup?daysOld=30` | Admin token | Deletes activities older than the specified number of days. |
-| `GET /users/:id/puzzle-progress` | Owner or admin | Derives per-category puzzle totals, solved state, and attempts from activity records. |
+| `GET /users/:id/puzzle-progress` | Owner or admin | Returns per-category puzzle totals, solved state, and persistent attempt totals from `puzzleprogress`. |
+
+## Puzzle-progress migration
+
+From the `server/` directory, `node scripts/migrate-puzzle-progress.js` prints a dry-run reconstruction and performs no writes. After reviewing the preview and pausing puzzle submissions, run `node scripts/migrate-puzzle-progress.js --apply` to create/verify the unique index and migrate progress. The script does not delete or rewrite `useractivities`; it is safe to rerun and never changes an already-completed progress record. Reconstruction counts failed events in timestamp order and includes the first success; legacy `details.attempts` is a visit-local move ordinal, so it is only used to order events with equal timestamps.
 
 ### Puzzles and categories
 

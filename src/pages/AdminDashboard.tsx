@@ -176,7 +176,7 @@ interface PuzzleRecommendations {
 }
 
 interface UserActivity {
-  type: 'page_visit' | 'puzzle_attempt' | 'puzzle_solved' | 'puzzle_failed' | 'opening_viewed' | 'game_viewed' | 'login' | 'logout';
+  type: 'puzzle_attempt' | 'puzzle_solved' | 'puzzle_failed' | 'login' | 'logout';
   description: string;
   timestamp: string;
   duration?: number;
@@ -272,7 +272,7 @@ const AdminDashboard = () => {
   const [expandedPuzzleCategories, setExpandedPuzzleCategories] = useState<Set<string>>(new Set());
   
   const [activityFilter, setActivityFilter] = useState<'all' | 'solved' | 'failed'>('all');
-  const [activityCategory, setActivityCategory] = useState<'all' | 'puzzles' | 'games' | 'openings' | 'bestgames'>('all');
+  const [activityCategory, setActivityCategory] = useState<'all' | 'puzzles' | 'bestgames'>('all');
   const [isEditingUserProfile, setIsEditingUserProfile] = useState(false);
 
   // Filtered activities and totals for admin live feed
@@ -288,8 +288,6 @@ const AdminDashboard = () => {
     return byResult.filter(a => {
       if (activityCategory === 'all') return true;
       if (activityCategory === 'puzzles') return a.type?.startsWith?.('puzzle');
-      if (activityCategory === 'games') return a.type === 'game_viewed';
-      if (activityCategory === 'openings') return a.type === 'opening_viewed';
       if (activityCategory === 'bestgames') return a.details?.category === 'bestgames';
       return true;
     });
@@ -1553,12 +1551,6 @@ const AdminDashboard = () => {
         return '❌';
       case 'puzzle_attempt':
         return '🎯';
-      case 'page_visit':
-        return '📄';
-      case 'opening_viewed':
-        return '📖';
-      case 'game_viewed':
-        return '🏆';
       case 'login':
         return '🔓';
       case 'logout':
@@ -2679,18 +2671,6 @@ const AdminDashboard = () => {
                         className={`flex-1 sm:flex-none px-2 py-1.5 text-xs rounded whitespace-nowrap ${activityCategory === 'puzzles' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'}`}
                       >
                         Puzzles
-                      </button>
-                      <button
-                        onClick={() => setActivityCategory('games')}
-                        className={`flex-1 sm:flex-none px-2 py-1.5 text-xs rounded whitespace-nowrap ${activityCategory === 'games' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'}`}
-                      >
-                        Games
-                      </button>
-                      <button
-                        onClick={() => setActivityCategory('openings')}
-                        className={`flex-1 sm:flex-none px-2 py-1.5 text-xs rounded whitespace-nowrap ${activityCategory === 'openings' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'}`}
-                      >
-                        Openings
                       </button>
                       <button
                         onClick={() => setActivityCategory('bestgames')}

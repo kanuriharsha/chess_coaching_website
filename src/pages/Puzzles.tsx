@@ -673,6 +673,7 @@ const Puzzles = () => {
       setLastMove({ from, to });
 
       const newAttempts = attempts + 1;
+      const attemptId = crypto.randomUUID();
       setAttempts(newAttempts);
 
       const categoryId = selectedCategory || '';
@@ -699,7 +700,7 @@ const Puzzles = () => {
           // Wrong move
           playSound('illegal');
           toast.error('Wrong move, try again', { description: 'Think carefully about the correct move.' });
-          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
           setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
           return true;
         }
@@ -713,7 +714,7 @@ const Puzzles = () => {
           setSolved(true);
           playSound('checkmate');
           toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
-          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
           setMoveHistory(prev => {
             const nextHist = [...prev, playerStep];
             setHistoryIndex(nextHist.length - 1);
@@ -752,7 +753,7 @@ const Puzzles = () => {
                   setSolved(true);
                   playSound('checkmate');
                   toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
-                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }
             } catch (err) { console.error('Error playing opponent move:', err); }
@@ -768,7 +769,7 @@ const Puzzles = () => {
       if (!moveMatches) {
         playSound('illegal');
         toast.error('Wrong move, try again', { description: 'Think carefully about the correct move.' });
-        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
         setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
         return true;
       }
@@ -779,7 +780,7 @@ const Puzzles = () => {
         setSolved(true);
         playSound('checkmate');
         toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
-        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
         setMoveHistory(prev => {
           const nextHist = [...prev, playerStep];
           setHistoryIndex(nextHist.length - 1);
@@ -817,7 +818,7 @@ const Puzzles = () => {
                   setSolved(true);
                   playSound('checkmate');
                   toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
-                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }
             } catch (err) { console.error('Error playing opponent move:', err); }
@@ -853,6 +854,7 @@ const Puzzles = () => {
       setShowPromotion(false);
 
       const newAttempts = attempts + 1;
+      const attemptId = crypto.randomUUID();
       setAttempts(newAttempts);
       const categoryId = selectedCategory || '';
       const isMateCategory = (currentPuzzle.category || '').startsWith('mate-in-');
@@ -876,7 +878,7 @@ const Puzzles = () => {
         if (!matchedNode) {
           playSound('illegal');
           toast.error('Wrong move, try again');
-          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
           setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
           return;
         }
@@ -888,7 +890,7 @@ const Puzzles = () => {
           setSolved(true);
           playSound('checkmate');
           toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
-          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
           setMoveHistory(prev => {
             const nextHist = [...prev, playerStep];
             setHistoryIndex(nextHist.length - 1);
@@ -924,7 +926,7 @@ const Puzzles = () => {
                   setSolved(true);
                   playSound('checkmate');
                   toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
-                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }
             } catch (err) { console.error('Error playing opponent move:', err); }
@@ -941,7 +943,7 @@ const Puzzles = () => {
       if (!moveMatches) {
         playSound('illegal');
         toast.error('Wrong move, try again');
-        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
         setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
         return;
       }
@@ -951,7 +953,7 @@ const Puzzles = () => {
         setSolved(true);
         playSound('checkmate');
         toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
-        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
         setMoveHistory(prev => {
           const nextHist = [...prev, playerStep];
           setHistoryIndex(nextHist.length - 1);
@@ -989,7 +991,7 @@ const Puzzles = () => {
                   setSolved(true);
                   playSound('checkmate');
                   toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
-                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }
             } catch (err) { console.error('Error playing opponent move:', err); }

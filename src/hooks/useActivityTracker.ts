@@ -5,7 +5,7 @@ import { isAdminRole } from '@/lib/roles';
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
 export interface ActivityRecord {
-  type: 'page_visit' | 'puzzle_attempt' | 'puzzle_solved' | 'puzzle_failed' | 'opening_viewed' | 'game_viewed' | 'login' | 'logout';
+  type: 'puzzle_attempt' | 'puzzle_solved' | 'puzzle_failed' | 'login' | 'logout';
   description: string;
   timestamp: string;
   duration?: number; // in seconds
@@ -16,6 +16,7 @@ export interface ActivityRecord {
     puzzleNumber?: number; // 1-based puzzle index
     category?: string;
     attempts?: number;
+    attemptId?: string;
     result?: 'passed' | 'failed';
     timeSpent?: number;
   };
@@ -26,31 +27,10 @@ export const useActivityTracker = () => {
   const pageStartTime = useRef<Date | null>(null);
   const currentPage = useRef<string>('');
 
-  // Track page visit
-  const trackPageVisit = useCallback(async (pageName: string) => {
-    if (!user || !token || isAdminRole(user.role)) return;
-
-    // Record time spent on previous page
-    if (pageStartTime.current && currentPage.current) {
-      const timeSpent = Math.round((new Date().getTime() - pageStartTime.current.getTime()) / 1000);
-      if (timeSpent > 5) { // Only track if spent more than 5 seconds
-        await recordActivity({
-          type: 'page_visit',
-          description: `Spent ${formatDuration(timeSpent)} on ${currentPage.current}`,
-          timestamp: pageStartTime.current.toISOString(),
-          duration: timeSpent,
-          details: {
-            page: currentPage.current,
-            timeSpent
-          }
-        });
-      }
-    }
-
-    // Start tracking new page
-    pageStartTime.current = new Date();
-    currentPage.current = pageName;
-  }, [user, token]);
+  // Page visit tracking is intentionally disabled; do not record 'page_visit' events.
+  const trackPageVisit = useCallback(async (_pageName: string) => {
+    return;
+  }, []);
 
   // Track puzzle attempt
   const trackPuzzleAttempt = useCallback(async (
@@ -59,6 +39,7 @@ export const useActivityTracker = () => {
     category: string,
     result: 'passed' | 'failed',
     attemptNumber: number,
+    attemptId?: string,
     puzzleNumber?: number // Optional puzzle number (1-based index)
   ) => {
     if (!user || !token || isAdminRole(user.role)) return;
@@ -82,47 +63,27 @@ export const useActivityTracker = () => {
         puzzleNumber,
         category,
         attempts: attemptNumber,
+        attemptId: attemptId || crypto.randomUUID(),
         result
       }
     });
   }, [user, token]);
 
-  // Track opening viewed
-  const trackOpeningViewed = useCallback(async (openingName: string, category: string) => {
-    if (!user || !token || isAdminRole(user.role)) return;
+  // Opening and best-game view tracking are intentionally disabled; do not record these activity events.
+  const trackOpeningViewed = useCallback(async (_openingName: string, _category: string) => {
+    return;
+  }, []);
 
-    await recordActivity({
-      type: 'opening_viewed',
-      description: `Studied opening: ${openingName} (${category})`,
-      timestamp: new Date().toISOString(),
-      details: {
-        page: 'Openings',
-        category
-      }
-    });
-  }, [user, token]);
-
-  // Track best game viewed
-  const trackGameViewed = useCallback(async (gameTitle: string, category: string) => {
-    if (!user || !token || isAdminRole(user.role)) return;
-
-    await recordActivity({
-      type: 'game_viewed',
-      description: `Watched best game: ${gameTitle}`,
-      timestamp: new Date().toISOString(),
-      details: {
-        page: 'Best Games',
-        category
-      }
-    });
-  }, [user, token]);
+  const trackGameViewed = useCallback(async (_gameTitle: string, _category: string) => {
+    return;
+  }, []);
 
   // Record activity to backend
   const recordActivity = async (activity: ActivityRecord) => {
     if (!user || !token) return;
 
     try {
-      await fetch(`${API_BASE_URL}/users/${user.id}/activity`, {
+      const response = await fetch(`${API_BASE_URL}/users/${user.id}/activity`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -130,6 +91,9 @@ export const useActivityTracker = () => {
         },
         body: JSON.stringify(activity)
       });
+      if (!response.ok) {
+        throw new Error(`Activity request failed with status ${response.status}`);
+      }
     } catch (error) {
       console.error('Failed to record activity:', error);
     }
@@ -146,36 +110,9 @@ export const useActivityTracker = () => {
     return `${hours} hr ${remainingMins} min`;
   };
 
-  // Track page leave
+  // Page leave tracking is intentionally disabled; do not record 'page_visit' events.
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (pageStartTime.current && currentPage.current && user && token) {
-        const timeSpent = Math.round((new Date().getTime() - pageStartTime.current.getTime()) / 1000);
-        if (timeSpent > 5) {
-          // Use sendBeacon with Blob for reliable tracking on page unload
-          // Note: sendBeacon doesn't support custom headers, so we include token in body
-          const data = JSON.stringify({
-            type: 'page_visit',
-            description: `Spent ${formatDuration(timeSpent)} on ${currentPage.current}`,
-            timestamp: pageStartTime.current.toISOString(),
-            duration: timeSpent,
-            details: {
-              page: currentPage.current,
-              timeSpent
-            },
-            _token: token // Include token in body for beacon endpoint
-          });
-          const blob = new Blob([data], { type: 'application/json' });
-          navigator.sendBeacon(
-            `${API_BASE_URL}/users/${user.id}/activity/beacon`,
-            blob
-          );
-        }
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    return undefined;
   }, [user, token]);
 
   return {

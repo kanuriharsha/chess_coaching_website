@@ -136,9 +136,22 @@ Stores visibility and order for both built-in and custom categories.
 | `description` | String | Required | Human-readable summary. |
 | `timestamp` | Date | Now | When it happened. |
 | `duration` | Number | Optional | Duration in seconds. |
-| `details` | Embedded object | Optional | `page`, `puzzleId`, `puzzleName`, `category`, `attempts`, `result` (`passed`/`failed`), and `timeSpent`. |
+| `details` | Embedded object | Optional | `page`, `puzzleId`, `attemptId` (new puzzle events only), `puzzleName`, `category`, `attempts`, `result` (`passed`/`failed`), and `timeSpent`. |
 
-Allowed `type` values are `page_visit`, `puzzle_attempt`, `puzzle_solved`, `puzzle_failed`, `opening_viewed`, `game_viewed`, `login`, and `logout`. Compound indexes support recent activity lookup and puzzle progress aggregation.
+Allowed `type` values are `puzzle_attempt`, `puzzle_solved`, `puzzle_failed`, `login`, and `logout`. Compound indexes support recent activity lookup and puzzle progress aggregation.
+
+### `puzzleprogress` — PuzzleProgress
+
+Stores one authoritative record per student and puzzle. The unique compound index on `{ userId: 1, puzzleId: 1 }` prevents duplicate progress rows.
+
+| Field | Type | Required/default | Description |
+|---|---|---|---|
+| `userId` | ObjectId → `login` | Required | Student whose progress is tracked. |
+| `puzzleId` | String | Required | Puzzle `_id` as a string. |
+| `a` | Number | Required; minimum 1 | Total attempts used, including the successful attempt. Before completion each failed attempt increments this value; the solving attempt increments it once and sets `completed`. |
+| `completed` | Boolean | Required; `false` | Permanent completion marker. Once true, subsequent attempts do not change progress. |
+
+Puzzle attempt history continues to be stored in `useractivities` for dashboards and activity history. New puzzle events carry a unique `details.attemptId`; a transaction and unique partial index make repeated submissions idempotent while updating progress atomically.
 
 ## Runtime-only live-game data
 
@@ -147,4 +160,3 @@ Live game sessions and pending game requests are held in Node.js `Map` objects, 
 ## Client-side state
 
 The browser stores the current JWT under `chessCoach_token` and cached user JSON under `chessCoach_user` in `localStorage`. The cache is refreshed from `GET /auth/me` when an existing token is checked. This is session cache, not a MongoDB collection.
-
