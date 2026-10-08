@@ -223,6 +223,7 @@ const AdminDashboard = () => {
   const initialTab = searchParams.get('tab');
   const [stats, setStats] = useState<Stats>({ totalStudents: 0, activeStudents: 0, totalPuzzles: 0, totalOpenings: 0, totalFamousMates: 0, totalBestGames: 0 });
   const [users, setUsers] = useState<User[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(true);
   const [puzzles, setPuzzles] = useState<PuzzleData[]>([]);
   const [openings, setOpenings] = useState<OpeningData[]>([]);
   const [famousMates, setFamousMates] = useState<FamousMateData[]>([]);
@@ -617,11 +618,16 @@ const AdminDashboard = () => {
   };
 
   const loadUsers = async (): Promise<User[]> => {
-    const data = await getAllUsers();
-    setUsers(data);
-    // Load fees for all students
-    await loadAllUsersFees(data);
-    return data;
+    setIsLoadingUsers(true);
+    try {
+      const data = await getAllUsers();
+      setUsers(data);
+      // Load fees for all students
+      await loadAllUsersFees(data);
+      return data;
+    } finally {
+      setIsLoadingUsers(false);
+    }
   };
 
   const loadAdmins = async (): Promise<boolean> => {
@@ -2998,6 +3004,10 @@ const AdminDashboard = () => {
     { label: 'Total Openings', value: stats.totalOpenings, icon: BookOpen, color: 'text-warning' },
     { label: 'Best Games', value: stats.totalBestGames, icon: Trophy, color: 'text-brilliant' },
   ];
+  const filteredUsers = users.filter(u => {
+    if (groupFilter === 'all') return true;
+    return u.groupId?.toString() === groupFilter;
+  });
 
   return (
     <AppLayout>
@@ -3327,10 +3337,19 @@ const AdminDashboard = () => {
                   </thead>
                   <tbody>
 
-                    {users.filter(u => {
-                      if (groupFilter === 'all') return true;
-                      return (u as any).groupId?.toString() === groupFilter;
-                    }).map((u) => {
+                    {isLoadingUsers ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-muted-foreground">
+                          Loading students...
+                        </td>
+                      </tr>
+                    ) : filteredUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-8 text-center text-muted-foreground">
+                          No students exist. Click on Add Student button to add your student.
+                        </td>
+                      </tr>
+                    ) : filteredUsers.map((u) => {
 
                       const todayAttendance = getTodayAttendance(u);
                       const hasUnpaid = hasUnpaidFees(u.id);

@@ -79,6 +79,9 @@ const BestGames = () => {
   const { user, token } = useAuth();
   const navigate = useNavigate();
   const [bestGames, setBestGames] = useState<BestGame[]>([]);
+  const [isLoadingBestGames, setIsLoadingBestGames] = useState(true);
+  const [hasLoadedBestGames, setHasLoadedBestGames] = useState(false);
+  const [bestGamesLoadError, setBestGamesLoadError] = useState(false);
   const [selectedGame, setSelectedGame] = useState<BestGame | null>(null);
   const [currentMoveIndex, setCurrentMoveIndex] = useState(-1);
   const [game, setGame] = useState(new Chess());
@@ -125,13 +128,15 @@ const BestGames = () => {
       const response = await fetch(`${API_BASE_URL}/bestgames`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) {
-        const data: BestGame[] = await response.json();
-        setBestGames(data);
-      }
+      if (!response.ok) throw new Error(`Failed to load best games: ${response.status}`);
+      const data: BestGame[] = await response.json();
+      setBestGames(data);
+      setHasLoadedBestGames(true);
     } catch (error) {
       console.error('Load best games error:', error);
-      // Keep default games on error
+      setBestGamesLoadError(true);
+    } finally {
+      setIsLoadingBestGames(false);
     }
   };
 
@@ -275,7 +280,7 @@ const BestGames = () => {
             {isAdmin && !selectedGame && (
               <Button onClick={() => navigate('/best-games/create')}>
                 <Plus className="w-4 h-4 mr-2" />
-                Add New Best Game
+                {bestGames.length === 0 ? 'Add' : 'Add New Best Game'}
               </Button>
             )}
           </div>
@@ -283,6 +288,23 @@ const BestGames = () => {
 
         {!selectedGame ? (
           /* Game List */
+          isLoadingBestGames ? (
+            <div className="space-y-4" aria-label="Loading best games" aria-busy="true">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div key={index} className="card-premium p-5 animate-pulse">
+                  <div className="h-4 bg-muted rounded w-1/4 mb-3" />
+                  <div className="h-6 bg-muted rounded w-1/2 mb-2" />
+                  <div className="h-4 bg-muted rounded w-3/4" />
+                </div>
+              ))}
+            </div>
+          ) : bestGamesLoadError ? (
+            <p className="text-center text-muted-foreground py-12">Unable to load Best Games. Please try again.</p>
+          ) : isAdmin && hasLoadedBestGames && bestGames.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground">No content in Best Games. Click the + Add button to add content.</p>
+            </div>
+          ) : (
           <div className="space-y-4">
             <div className="grid gap-4">
               {bestGames.map((bestGame) => {
@@ -343,6 +365,7 @@ const BestGames = () => {
               })}
             </div>
           </div>
+          )
         ) : (
           /* Game Replay View */
           <div className="space-y-6">

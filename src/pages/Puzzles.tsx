@@ -111,6 +111,7 @@ const Puzzles = () => {
 
   const [puzzleCategories, setPuzzleCategories] = useState<PuzzleCategory[]>(defaultCategories);
   const [isInitializing, setIsInitializing] = useState(true);
+  const [hasPuzzles, setHasPuzzles] = useState(false);
   const [categoryPuzzles, setCategoryPuzzles] = useState<PuzzleData[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState(0);
   const [game, setGame] = useState(new Chess());
@@ -462,6 +463,7 @@ const Puzzles = () => {
       });
       if (response.ok) {
         const puzzles: PuzzleData[] = await response.json();
+        setHasPuzzles(puzzles.length > 0);
 
         // Count puzzles per category (including custom ones)
         const categoryCounts: { [key: string]: number } = {};
@@ -1175,7 +1177,7 @@ const Puzzles = () => {
               {!isReorderMode && (
                 <Button size="sm" onClick={() => navigate('/puzzle-manager')}>
                   <Plus className="w-4 h-4 mr-1" />
-                  Create
+                  {hasPuzzles ? 'Create' : 'Add'}
                 </Button>
               )}
             </div>
@@ -1245,6 +1247,10 @@ const Puzzles = () => {
                     );
                   })}
                 </div>
+              </div>
+            ) : isAdmin && !hasPuzzles ? (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">No content in Puzzles. Click the + Add button to add content.</p>
               </div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">

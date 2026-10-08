@@ -81,6 +81,9 @@ const FamousMates = () => {
   const { user, token } = useAuth();
   const navigate = useNavigate();
   const [famousMates, setFamousMates] = useState<FamousMate[]>([]);
+  const [isLoadingFamousMates, setIsLoadingFamousMates] = useState(true);
+  const [hasLoadedFamousMates, setHasLoadedFamousMates] = useState(false);
+  const [famousMatesLoadError, setFamousMatesLoadError] = useState(false);
   const [selectedMate, setSelectedMate] = useState<FamousMate | null>(null);
   const [currentMoveIndex, setCurrentMoveIndex] = useState(-1);
   const [game, setGame] = useState(new Chess());
@@ -127,13 +130,15 @@ const FamousMates = () => {
       const response = await fetch(`${API_BASE_URL}/famous-mates`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) {
-        const data: FamousMate[] = await response.json();
-        setFamousMates(data);
-      }
+      if (!response.ok) throw new Error(`Failed to load famous mates: ${response.status}`);
+      const data: FamousMate[] = await response.json();
+      setFamousMates(data);
+      setHasLoadedFamousMates(true);
     } catch (error) {
       console.error('Load famous mates error:', error);
-      // Keep default mates on error
+      setFamousMatesLoadError(true);
+    } finally {
+      setIsLoadingFamousMates(false);
     }
   };
 
@@ -267,7 +272,7 @@ const FamousMates = () => {
             {isAdmin && !selectedMate && (
               <Button onClick={() => navigate('/famous-mates/create')}>
                 <Plus className="w-4 h-4 mr-2" />
-                Add New Mate
+                {famousMates.length === 0 ? 'Add' : 'Add New Mate'}
               </Button>
             )}
           </div>
@@ -275,6 +280,23 @@ const FamousMates = () => {
 
         {!selectedMate ? (
           /* Mates List */
+          isLoadingFamousMates ? (
+            <div className="space-y-4" aria-label="Loading famous mates" aria-busy="true">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div key={index} className="card-premium p-5 animate-pulse">
+                  <div className="h-4 bg-muted rounded w-1/4 mb-3" />
+                  <div className="h-6 bg-muted rounded w-1/2 mb-2" />
+                  <div className="h-4 bg-muted rounded w-3/4" />
+                </div>
+              ))}
+            </div>
+          ) : famousMatesLoadError ? (
+            <p className="text-center text-muted-foreground py-12">Unable to load Famous Mates. Please try again.</p>
+          ) : isAdmin && hasLoadedFamousMates && famousMates.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground">No content in Famous Mates. Click the + Add button to add content.</p>
+            </div>
+          ) : (
           <div className="space-y-4">
             <div className="grid gap-4">
               {famousMates.map((mate) => {
@@ -332,6 +354,7 @@ const FamousMates = () => {
               })}
             </div>
           </div>
+          )
         ) : (
           /* Mate Study View */
           <div className="space-y-6">

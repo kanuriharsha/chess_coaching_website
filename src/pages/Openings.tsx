@@ -92,6 +92,9 @@ const Openings = () => {
   const { user, token } = useAuth();
   const navigate = useNavigate();
   const [openings, setOpenings] = useState<Opening[]>([]);
+  const [isLoadingOpenings, setIsLoadingOpenings] = useState(true);
+  const [hasLoadedOpenings, setHasLoadedOpenings] = useState(false);
+  const [openingsLoadError, setOpeningsLoadError] = useState(false);
   const [selectedOpening, setSelectedOpening] = useState<Opening | null>(null);
   const [currentMoveIndex, setCurrentMoveIndex] = useState(-1);
   const [game, setGame] = useState(new Chess());
@@ -138,13 +141,15 @@ const Openings = () => {
       const response = await fetch(`${API_BASE_URL}/openings`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) {
-        const data: Opening[] = await response.json();
-        setOpenings(data);
-      }
+      if (!response.ok) throw new Error(`Failed to load openings: ${response.status}`);
+      const data: Opening[] = await response.json();
+      setOpenings(data);
+      setHasLoadedOpenings(true);
     } catch (error) {
       console.error('Load openings error:', error);
-      // Keep default openings on error
+      setOpeningsLoadError(true);
+    } finally {
+      setIsLoadingOpenings(false);
     }
   };
 
@@ -277,7 +282,7 @@ const Openings = () => {
             {isAdmin && !selectedOpening && (
               <Button onClick={() => navigate('/openings/create')}>
                 <Plus className="w-4 h-4 mr-2" />
-                Add New Opening
+                {openings.length === 0 ? 'Add' : 'Add New Opening'}
               </Button>
             )}
           </div>
@@ -285,6 +290,23 @@ const Openings = () => {
 
         {!selectedOpening ? (
           /* Opening List */
+          isLoadingOpenings ? (
+            <div className="space-y-4" aria-label="Loading openings" aria-busy="true">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <div key={index} className="card-premium p-5 animate-pulse">
+                  <div className="h-4 bg-muted rounded w-1/4 mb-3" />
+                  <div className="h-6 bg-muted rounded w-1/2 mb-2" />
+                  <div className="h-4 bg-muted rounded w-3/4" />
+                </div>
+              ))}
+            </div>
+          ) : openingsLoadError ? (
+            <p className="text-center text-muted-foreground py-12">Unable to load Openings. Please try again.</p>
+          ) : isAdmin && hasLoadedOpenings && openings.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-muted-foreground">No content in Openings. Click the + Add button to add content.</p>
+            </div>
+          ) : (
           <div className="space-y-4">
             <div className="grid gap-4">
               {openings.map((opening) => {
@@ -342,6 +364,7 @@ const Openings = () => {
               })}
             </div>
           </div>
+          )
         ) : (
           /* Opening Study View */
           <div className="space-y-6">
