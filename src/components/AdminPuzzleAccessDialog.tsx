@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 interface GrantableCategory {
   category: string;
@@ -558,9 +558,9 @@ export default function AdminPuzzleAccessDialog({
                           No enabled {noun}s are available to grant.
                         </p>
                       )}
-                      <p className="mt-2 text-xs text-muted-foreground">
+                      {/* <p className="mt-2 text-xs text-muted-foreground">
                         `${settings.allowedIds.length} ${noun}${settings.allowedIds.length === 1 ? '' : 's'} selected.`
-                      </p>
+                      </p> */}
                     </>
                   )}
                   {!settings.enabled && (
