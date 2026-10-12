@@ -19,6 +19,7 @@ import {
   buildPuzzleProgress,
   buildPuzzleProgressAttemptUpdate
 } from './puzzleProgress.js';
+import { buildAdminPuzzleGrant } from './adminPuzzleAccess.js';
 import PuzzleProgress from './puzzleProgressModel.js';
 
 const app = express();
@@ -203,8 +204,6 @@ app.use('/api', async (req, res, next) => {
 
 app.use('/api/users/:id', async (req, res, next) => {
   try {
-    if (req.path === '/activity/beacon') return next();
-
     const requestingUser = await getAuthenticatedUser(req, '_id role adminId isEnabled');
     if (!requestingUser || requestingUser.isEnabled === false) {
       return res.status(401).json({ message: 'Unauthorized' });
@@ -500,8 +499,30 @@ const contentAccessSchema = new mongoose.Schema({
 
 const ContentAccess = mongoose.model('ContentAccess', contentAccessSchema, 'contentaccess');
 
+const adminPuzzleAccessSchema = new mongoose.Schema({
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  grantedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  puzzleIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Puzzle' }],
+  puzzleAccess: { type: mongoose.Schema.Types.Mixed, default: {} },
+  updatedAt: { type: Date, default: Date.now }
+}, { collection: 'adminpuzzleaccess' });
+const AdminPuzzleAccess = mongoose.model('AdminPuzzleAccess', adminPuzzleAccessSchema);
+
 async function getContentAccessForUser(userId) {
   return ContentAccess.findOne({ userId }).lean();
+}
+
+async function getAdminPuzzleQuery(adminId) {
+  const access = await AdminPuzzleAccess.findOne({ adminId }).select('puzzleIds').lean();
+  const grantedPuzzleIds = access?.puzzleIds || [];
+  return {
+    $or: [
+      { adminId },
+      ...(grantedPuzzleIds.length > 0
+        ? [{ _id: { $in: grantedPuzzleIds }, isEnabled: true }]
+        : [])
+    ]
+  };
 }
 
 async function belongToAdminGroups(groupIds, adminId) {
@@ -513,7 +534,10 @@ async function belongToAdminGroups(groupIds, adminId) {
 
 async function getVisiblePuzzles(viewer, category) {
   const adminId = getContentOwnerId(viewer);
-  const query = { adminId };
+  const ownershipQuery = viewer.role === 'superadmin'
+    ? { adminId }
+    : await getAdminPuzzleQuery(adminId);
+  const query = { ...ownershipQuery };
   if (category) query.category = category;
   if (!isAdminRole(viewer)) query.isEnabled = true;
 
@@ -525,128 +549,13 @@ async function getVisiblePuzzles(viewer, category) {
     ).lean()
   ]);
 
-  if (isAdminRole(viewer)) return puzzles;
+  if (isAdminRole(viewer)) {
+    return puzzles.map(puzzle => ({
+      ...puzzle.toObject(),
+      isOwned: String(puzzle.adminId) === String(viewer._id)
+    }));
+  }
   return filterVisiblePuzzles(puzzles, access, categorySettings, viewer);
-}
-
-// User Activity Schema - Tracks all user activity with timestamps
-const userActivitySchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  type: {
-    type: String,
-    enum: ['puzzle_attempt', 'puzzle_solved', 'puzzle_failed', 'login', 'logout'],
-    required: true
-  },
-  description: { type: String, required: true },
-  timestamp: { type: Date, default: Date.now },
-  duration: { type: Number }, // in seconds
-  details: {
-    page: { type: String },
-    puzzleId: { type: String },
-    attemptId: { type: String },
-    puzzleName: { type: String },
-    category: { type: String },
-    attempts: { type: Number },
-    result: { type: String, enum: ['passed', 'failed'] },
-    timeSpent: { type: Number }
-  }
-});
-
-// Index for efficient querying
-userActivitySchema.index({ userId: 1, timestamp: -1 });
-userActivitySchema.index({ userId: 1, type: 1 });
-userActivitySchema.index({ userId: 1, type: 1, 'details.puzzleId': 1 });
-userActivitySchema.index({ adminId: 1, userId: 1, timestamp: -1 });
-userActivitySchema.index(
-  { userId: 1, 'details.attemptId': 1 },
-  {
-    unique: true,
-    partialFilterExpression: { 'details.attemptId': { $type: 'string' } }
-  }
-);
-
-const UserActivity = mongoose.model('UserActivity', userActivitySchema, 'useractivities');
-
-async function recordPuzzleAttempt(activityData) {
-  const { userId, puzzleId, attemptId, type } = activityData;
-  const progressUpdate = buildPuzzleProgressAttemptUpdate(type === 'puzzle_solved');
-
-  for (let retry = 0; retry < 3; retry += 1) {
-    const session = await mongoose.startSession();
-    let result;
-    try {
-      await session.withTransaction(async () => {
-        const existingActivity = await UserActivity.findOne({
-          userId,
-          'details.attemptId': attemptId
-        }).session(session);
-
-        if (existingActivity) {
-          if (
-            existingActivity.details?.puzzleId !== puzzleId ||
-            existingActivity.type !== type
-          ) {
-            const error = new Error('Attempt id was already used for another puzzle result');
-            error.status = 409;
-            throw error;
-          }
-          const progress = await PuzzleProgress.findOne({ userId, puzzleId })
-            .session(session)
-            .lean();
-          result = { activity: existingActivity, progress, duplicate: true };
-          return;
-        }
-
-        const progress = await PuzzleProgress.findOneAndUpdate(
-          { userId, puzzleId },
-          progressUpdate,
-          { new: true, upsert: retry === 0, session }
-        );
-        if (!progress) throw new Error('Puzzle progress record was not found');
-
-        const { puzzleName, puzzleNumber, category } = activityData.details;
-        const puzzleLabel = puzzleNumber ? `Puzzle ${puzzleNumber}` : puzzleName;
-        const description = type === 'puzzle_solved'
-          ? `✅ Completed ${puzzleLabel}${puzzleName !== puzzleLabel ? ` (${puzzleName})` : ''} in ${category}`
-          : `❌ Failed ${puzzleLabel}${puzzleName !== puzzleLabel ? ` (${puzzleName})` : ''} in ${category} (Attempt ${progress.a})`;
-        const activity = new UserActivity({
-          ...activityData,
-          description,
-          details: { ...activityData.details, attempts: progress.a }
-        });
-        await activity.save({ session });
-        result = { activity, progress, duplicate: false };
-      });
-      return result;
-    } catch (error) {
-      if (error.code === 11000) {
-        const existingActivity = await UserActivity.findOne({
-          userId,
-          'details.attemptId': attemptId
-        }).lean();
-        if (existingActivity) {
-          if (
-            existingActivity.details?.puzzleId !== puzzleId ||
-            existingActivity.type !== type
-          ) {
-            const conflict = new Error('Attempt id was already used for another puzzle result');
-            conflict.status = 409;
-            throw conflict;
-          }
-          const progress = await PuzzleProgress.findOne({ userId, puzzleId }).lean();
-          return { activity: existingActivity, progress, duplicate: true };
-        }
-        if (retry === 2) throw error;
-      } else {
-        throw error;
-      }
-    } finally {
-      await session.endSession();
-    }
-  }
-
-  throw new Error('Unable to record puzzle attempt');
 }
 
 // Get compact puzzle progress and recommendations for the admin access modal.
@@ -672,35 +581,35 @@ app.get('/api/users/:id/puzzle-recommendations', async (req, res) => {
       adminId: requestingUser._id
     }).select('_id');
     if (!student) return res.status(404).json({ message: 'Student not found' });
-    const [categoryTotals, solvedGroups] = await Promise.all([
-      Puzzle.aggregate([
-        { $match: { isEnabled: true, adminId: requestingUser._id } },
-        { $group: { _id: '$category', total: { $sum: 1 } } },
-        { $sort: { _id: 1 } }
-      ]),
+    const adminPuzzleQuery = await getAdminPuzzleQuery(requestingUser._id);
+    const [studentPuzzles, solvedGroups] = await Promise.all([
+      Puzzle.find({ $and: [adminPuzzleQuery, { isEnabled: true }] })
+        .select('_id category order createdAt')
+        .sort({ order: 1, createdAt: 1 })
+        .lean(),
       PuzzleProgress.find({ userId, completed: true }).select('puzzleId').lean()
     ]);
-
-    const solvedObjectIds = solvedGroups
-      .map(item => item.puzzleId)
-      .filter(id => mongoose.isValidObjectId(id))
-      .map(id => new mongoose.Types.ObjectId(id));
-
-    const solvedPuzzles = solvedObjectIds.length > 0
-      ? await Puzzle.find({ _id: { $in: solvedObjectIds }, isEnabled: true, adminId: requestingUser._id })
-          .select('_id category order')
-          .lean()
-      : [];
+    const solvedPuzzleIds = new Set(solvedGroups.map(item => String(item.puzzleId)));
 
     const solvedByCategory = {};
     const solvedNumbersByCategory = {};
-    solvedPuzzles.forEach(puzzle => {
-      solvedByCategory[puzzle.category] = (solvedByCategory[puzzle.category] || 0) + 1;
-      if (!solvedNumbersByCategory[puzzle.category]) solvedNumbersByCategory[puzzle.category] = [];
-      solvedNumbersByCategory[puzzle.category].push(puzzle.order || 0);
+    const categoryTotalsById = new Map();
+    const categoryPositions = new Map();
+    studentPuzzles.forEach(puzzle => {
+      categoryTotalsById.set(
+        puzzle.category,
+        (categoryTotalsById.get(puzzle.category) || 0) + 1
+      );
+      const position = (categoryPositions.get(puzzle.category) || 0) + 1;
+      categoryPositions.set(puzzle.category, position);
+      if (solvedPuzzleIds.has(String(puzzle._id))) {
+        solvedByCategory[puzzle.category] = (solvedByCategory[puzzle.category] || 0) + 1;
+        if (!solvedNumbersByCategory[puzzle.category]) solvedNumbersByCategory[puzzle.category] = [];
+        solvedNumbersByCategory[puzzle.category].push(position);
+      }
     });
 
-    const categories = categoryTotals.map(({ _id: category, total }) => {
+    const categories = Array.from(categoryTotalsById, ([category, total]) => {
       const completed = solvedByCategory[category] || 0;
       const progress = total > 0 ? (completed / total) * 100 : 0;
       return {
@@ -1078,7 +987,11 @@ app.get('/api/coaches', async (req, res) => {
 
 app.get('/api/superadmin/admins', requireRole('superadmin'), async (req, res) => {
   try {
-    const admins = await User.find({ role: 'admin', verificationStatus: { $ne: 'under_review' } })
+    const admins = await User.find({
+      role: 'admin',
+      adminId: req.authUser._id,
+      verificationStatus: { $ne: 'under_review' }
+    })
       .select('-password')
       .populate('adminId', 'username profile.fullName')
       .sort({ createdAt: -1 });
@@ -1096,6 +1009,149 @@ app.get('/api/superadmin/admins', requireRole('superadmin'), async (req, res) =>
     })));
   } catch (error) {
     console.error('Get admins error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.get('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid admin id' });
+    }
+
+    const admin = await User.findOne({
+      _id: req.params.id,
+      role: 'admin',
+      adminId: req.authUser._id
+    }).select('_id');
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+
+    const [puzzles, access, customCategories, categoryOrders] = await Promise.all([
+      Puzzle.find({ adminId: req.authUser._id, isEnabled: true })
+        .select('_id name category difficulty order')
+        .sort({ category: 1, order: 1, createdAt: 1 })
+        .lean(),
+      AdminPuzzleAccess.findOne({ adminId: admin._id }).select('puzzleIds puzzleAccess').lean(),
+      PuzzleCategory.find({ adminId: req.authUser._id })
+        .select('categoryId name icon order_index')
+        .sort({ order_index: 1, createdAt: 1 })
+        .lean(),
+      PuzzleCategoryOrder.find({ adminId: req.authUser._id })
+        .select('categoryId order_index')
+        .sort({ order_index: 1 })
+        .lean()
+    ]);
+
+    const existingPuzzleAccess = access?.puzzleAccess;
+    const puzzleAccess = existingPuzzleAccess && Object.keys(existingPuzzleAccess).length > 0
+      ? existingPuzzleAccess
+      : {};
+    const legacyGrantedIds = new Set((access?.puzzleIds || []).map(String));
+    const categoryPositions = new Map();
+    const categoriesById = new Map();
+    puzzles.forEach(puzzle => {
+      const position = (categoryPositions.get(puzzle.category) || 0) + 1;
+      categoryPositions.set(puzzle.category, position);
+      const category = categoriesById.get(puzzle.category) || { category: puzzle.category, total: 0 };
+      category.total += 1;
+      categoriesById.set(puzzle.category, category);
+
+      if (!puzzleAccess[puzzle.category] && legacyGrantedIds.has(String(puzzle._id))) {
+        puzzleAccess[puzzle.category] = {
+          enabled: true,
+          limit: 0,
+          rangeStart: null,
+          rangeEnd: null,
+          specificPuzzles: []
+        };
+      }
+      if (legacyGrantedIds.has(String(puzzle._id))) {
+        const legacyAccess = puzzleAccess[puzzle.category];
+        if (legacyAccess && !legacyAccess.specificPuzzles.includes(position)) {
+          legacyAccess.specificPuzzles.push(position);
+        }
+      }
+    });
+
+    const defaultCategoryOrder = [
+      'mate-in-1',
+      'mate-in-2',
+      'mate-in-3',
+      'pins',
+      'forks',
+      'traps'
+    ];
+    const categoryMetadata = new Map(customCategories.map(category => [
+      category.categoryId,
+      { name: category.name, icon: category.icon }
+    ]));
+    const orderedCategories = [
+      ...defaultCategoryOrder
+        .filter(category => categoriesById.has(category))
+        .map(category => categoriesById.get(category)),
+      ...customCategories
+        .filter(category => categoriesById.has(category.categoryId) && !defaultCategoryOrder.includes(category.categoryId))
+        .map(category => categoriesById.get(category.categoryId)),
+      ...Array.from(categoriesById.values()).filter(category =>
+        !defaultCategoryOrder.includes(category.category) &&
+        !categoryMetadata.has(category.category)
+      )
+    ];
+    const categoryOrderMap = new Map(categoryOrders.map(order => [order.categoryId, order.order_index]));
+    if (categoryOrders.length > 0) {
+      orderedCategories.sort((a, b) =>
+        (categoryOrderMap.get(a.category) ?? 999) -
+        (categoryOrderMap.get(b.category) ?? 999)
+      );
+    }
+
+    res.json({
+      categories: orderedCategories.map(category => ({
+        ...category,
+        ...categoryMetadata.get(category.category)
+      })),
+      puzzleAccess
+    });
+  } catch (error) {
+    console.error('Load admin puzzle access error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.put('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid admin id' });
+    }
+    const admin = await User.findOne({
+      _id: req.params.id,
+      role: 'admin',
+      adminId: req.authUser._id
+    }).select('_id');
+    if (!admin) return res.status(404).json({ message: 'Admin not found' });
+
+    const puzzles = await Puzzle.find({ adminId: req.authUser._id, isEnabled: true })
+      .select('_id category order createdAt')
+      .sort({ category: 1, order: 1, createdAt: 1 })
+      .lean();
+    const grant = buildAdminPuzzleGrant(puzzles, req.body?.puzzleAccess);
+    if (grant.error) return res.status(400).json({ message: grant.error });
+
+    await AdminPuzzleAccess.findOneAndUpdate(
+      { adminId: admin._id },
+      {
+        $set: {
+          grantedBy: req.authUser._id,
+          puzzleIds: grant.puzzleIds,
+          puzzleAccess: grant.puzzleAccess,
+          updatedAt: new Date()
+        }
+      },
+      { upsert: true, new: true, runValidators: true }
+    );
+    res.json({ success: true, puzzleAccess: grant.puzzleAccess });
+  } catch (error) {
+    console.error('Update admin puzzle access error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -1808,15 +1864,14 @@ app.put('/api/users/:id/group', async (req, res) => {
   }
 });
 
-// ============ USER ACTIVITY TRACKING ROUTES ============
+// ============ PUZZLE PROGRESS ROUTES ============
 
-// Record user activity
-app.post('/api/users/:id/activity', async (req, res) => {
+// Record puzzle attempts directly in the per-user puzzle progress collection.
+app.post('/api/users/:id/puzzle-attempt', async (req, res) => {
   try {
-    const { type, description, duration, details } = req.body;
-    if (type === 'page_visit' || type === 'opening_viewed' || type === 'game_viewed') {
-      return res.status(204).send();
-    }
+    const { type, details } = req.body;
+    const puzzleId = details?.puzzleId;
+    const result = details?.result;
     const requestingUser = req.authUser;
     const targetUser = req.targetUser;
     if (!requestingUser || !targetUser) {
@@ -1826,252 +1881,55 @@ app.post('/api/users/:id/activity', async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    const adminId = targetUser.role === 'student' ? targetUser.adminId : targetUser._id;
-    if (!adminId) return res.status(400).json({ message: 'Activity owner is not available' });
-
-    if (type === 'puzzle_solved' || type === 'puzzle_failed') {
-      if (targetUser.role !== 'student' || !requestingUser._id.equals(targetUser._id)) {
-        return res.status(403).json({ message: 'Puzzle attempts must be recorded by the student' });
-      }
-      if (
-        !mongoose.isValidObjectId(details?.puzzleId) ||
-        typeof details?.attemptId !== 'string' ||
-        !details.attemptId.trim() ||
-        details.attemptId.length > 128
-      ) {
-        return res.status(400).json({ message: 'A valid puzzle id and attempt id are required' });
-      }
-      if (
-        details.result &&
-        ((type === 'puzzle_solved') !== (details.result === 'passed'))
-      ) {
-        return res.status(400).json({ message: 'Puzzle result does not match activity type' });
-      }
-
-      const puzzle = await Puzzle.findOne({
-        _id: details.puzzleId,
-        adminId,
-        isEnabled: true
-      });
-      if (!puzzle) return res.status(404).json({ message: 'Puzzle not found' });
-
-      const puzzleAccessViewer = await User.findById(targetUser._id)
-        .select('_id role groupId adminId');
-      if (!puzzleAccessViewer) return res.status(404).json({ message: 'Student not found' });
-      const visiblePuzzles = await getVisiblePuzzles(puzzleAccessViewer, puzzle.category);
-      const canAccessPuzzle = visiblePuzzles.some(item =>
-        String(item._id) === String(puzzle._id) && !item.isLocked
-      );
-      if (!canAccessPuzzle) return res.status(403).json({ message: 'Puzzle access denied' });
-
-      const result = type === 'puzzle_solved' ? 'passed' : 'failed';
-      const attempt = await recordPuzzleAttempt({
-        userId: targetUser._id,
-        adminId,
-        type,
-        description,
-        duration: duration || 0,
-        details: {
-          ...details,
-          puzzleId: String(puzzle._id),
-          attemptId: details.attemptId,
-          puzzleName: puzzle.name,
-          category: puzzle.category,
-          result
-        },
-        timestamp: new Date()
-      });
-      return res.status(attempt.duplicate ? 200 : 201).json(attempt.activity);
+    if (targetUser.role !== 'student' || !requestingUser._id.equals(targetUser._id)) {
+      return res.status(403).json({ message: 'Puzzle attempts must be recorded by the student' });
+    }
+    if (
+      !mongoose.isValidObjectId(puzzleId) ||
+      !['puzzle_solved', 'puzzle_failed'].includes(type) ||
+      !['passed', 'failed'].includes(result) ||
+      ((type === 'puzzle_solved') !== (result === 'passed'))
+    ) {
+      return res.status(400).json({ message: 'A valid puzzle id and result are required' });
     }
 
-    const activity = new UserActivity({
-      userId: targetUser._id,
-      adminId,
-      type,
-      description,
-      duration: duration || 0,
-      details: details || {},
-      timestamp: new Date()
+    const adminPuzzleQuery = await getAdminPuzzleQuery(targetUser.adminId);
+    const puzzle = await Puzzle.findOne({
+      $and: [adminPuzzleQuery, { _id: puzzleId, isEnabled: true }]
     });
+    if (!puzzle) return res.status(404).json({ message: 'Puzzle not found' });
 
-    await activity.save();
-    res.status(201).json(activity);
+    const puzzleAccessViewer = await User.findById(targetUser._id)
+      .select('_id role groupId adminId');
+    if (!puzzleAccessViewer) return res.status(404).json({ message: 'Student not found' });
+    const visiblePuzzles = await getVisiblePuzzles(puzzleAccessViewer, puzzle.category);
+    const canAccessPuzzle = visiblePuzzles.some(item =>
+      String(item._id) === String(puzzle._id) && !item.isLocked
+    );
+    if (!canAccessPuzzle) return res.status(403).json({ message: 'Puzzle access denied' });
+
+    const progress = await PuzzleProgress.findOneAndUpdate(
+      { userId: targetUser._id, puzzleId: String(puzzle._id) },
+      buildPuzzleProgressAttemptUpdate(result === 'passed'),
+      { new: true, upsert: true }
+    );
+    res.status(200).json(progress);
   } catch (error) {
-    console.error('Record activity error:', error);
-    res.status(error.status || 500).json({ message: error.status ? error.message : 'Server error' });
-  }
-});
-
-// Beacon endpoint for page unload tracking (token in body since headers not supported)
-app.post('/api/users/:id/activity/beacon', async (req, res) => {
-  try {
-    const { type, description, duration, details, _token } = req.body;
-
-    if (type === 'page_visit' || type === 'opening_viewed' || type === 'game_viewed') {
-      return res.status(204).send();
-    }
-
-    if (!_token) {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-
-    const decoded = jwt.verify(_token, JWT_SECRET);
-    const requestingUser = await User.findById(decoded.id).select('_id isEnabled role adminId');
-    if (!requestingUser || requestingUser.isEnabled === false) {
-      return res.status(401).json({ message: 'Unauthorized' });
-    }
-
-    // Users can only record their own activity
-    if (!requestingUser._id.equals(req.params.id)) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-
-    const adminId = requestingUser.role === 'student' ? requestingUser.adminId : requestingUser._id;
-    if (!adminId) return res.status(400).json({ message: 'Activity owner is not available' });
-
-    const activity = new UserActivity({
-      userId: requestingUser._id,
-      adminId,
-      type,
-      description,
-      duration: duration || 0,
-      details: details || {},
-      timestamp: new Date()
-    });
-
-    await activity.save();
-    res.status(201).json({ success: true });
-  } catch (error) {
-    console.error('Beacon activity error:', error);
+    console.error('Record puzzle progress error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
 // Get user activities (for admin dashboard)
 app.get('/api/users/:id/activity', async (req, res) => {
-  try {
-    const requestingUser = req.authUser;
-    if (!requestingUser) return res.status(401).json({ message: 'Unauthorized' });
-
-    const { limit = 50, startDate, endDate, type } = req.query;
-
-    const query = { userId: req.params.id };
-    if (requestingUser.role === 'admin') query.adminId = requestingUser._id;
-
-    // Filter by date range if provided
-    if (startDate || endDate) {
-      query.timestamp = {};
-      if (startDate) query.timestamp.$gte = new Date(startDate);
-      if (endDate) query.timestamp.$lte = new Date(endDate);
-    }
-
-    // Filter by activity type if provided
-    if (type) {
-      query.type = type;
-    }
-
-    const activities = await UserActivity.find(query)
-      .sort({ timestamp: -1 })
-      .limit(parseInt(limit));
-
-    res.json(activities);
-  } catch (error) {
-    console.error('Get activities error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
+  if (!req.authUser) return res.status(401).json({ message: 'Unauthorized' });
+  res.json([]);
 });
 
-// Get user activity summary (aggregated stats)
+// Activity history is no longer retained; keep the endpoint response shape for existing clients.
 app.get('/api/users/:id/activity/summary', async (req, res) => {
-  try {
-    const requestingUser = req.authUser;
-    if (!requestingUser) return res.status(401).json({ message: 'Unauthorized' });
-
-    const { startDate, endDate } = req.query;
-
-    const matchQuery = { userId: new mongoose.Types.ObjectId(req.params.id) };
-    if (requestingUser.role === 'admin') matchQuery.adminId = requestingUser._id;
-
-    if (startDate || endDate) {
-      matchQuery.timestamp = {};
-      if (startDate) matchQuery.timestamp.$gte = new Date(startDate);
-      if (endDate) matchQuery.timestamp.$lte = new Date(endDate);
-    }
-
-    const summary = await UserActivity.aggregate([
-      { $match: matchQuery },
-      {
-        $group: {
-          _id: '$type',
-          count: { $sum: 1 },
-          totalDuration: { $sum: '$duration' },
-          lastActivity: { $max: '$timestamp' }
-        }
-      },
-      { $sort: { count: -1 } }
-    ]);
-
-    // Get puzzle-specific stats
-    const puzzleStats = await UserActivity.aggregate([
-      {
-        $match: {
-          ...matchQuery,
-          type: { $in: ['puzzle_solved', 'puzzle_failed'] }
-        }
-      },
-      {
-        $group: {
-          _id: '$details.category',
-          solved: {
-            $sum: { $cond: [{ $eq: ['$type', 'puzzle_solved'] }, 1, 0] }
-          },
-          failed: {
-            $sum: { $cond: [{ $eq: ['$type', 'puzzle_failed'] }, 1, 0] }
-          },
-          totalAttempts: { $sum: 1 },
-          totalTime: { $sum: '$details.timeSpent' }
-        }
-      }
-    ]);
-
-    res.json({ summary, puzzleStats });
-  } catch (error) {
-    console.error('Get activity summary error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
-});
-
-// Delete old activities (cleanup - admin only)
-app.delete('/api/activity/cleanup', async (req, res) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) {
-      return res.status(401).json({ message: 'No token provided' });
-    }
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const requestingUser = await User.findById(decoded.id);
-
-    if (!isAdminRole(requestingUser)) {
-      return res.status(403).json({ message: 'Access denied' });
-    }
-
-    const { daysOld = 30 } = req.query;
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - parseInt(daysOld));
-
-    const query = { timestamp: { $lt: cutoffDate } };
-    if (requestingUser.role === 'admin') query.adminId = requestingUser._id;
-    const result = await UserActivity.deleteMany(query);
-
-    res.json({
-      success: true,
-      message: `Deleted ${result.deletedCount} activities older than ${daysOld} days`
-    });
-  } catch (error) {
-    console.error('Cleanup activities error:', error);
-    res.status(500).json({ message: 'Server error' });
-  }
+  if (!req.authUser) return res.status(401).json({ message: 'Unauthorized' });
+  res.json({ summary: [], puzzleStats: [] });
 });
 
 // Get user puzzle progress from the compact per-user/per-puzzle collection.
@@ -2093,9 +1951,11 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
       return res.status(404).json({ message: 'Student not found' });
     }
 
+    const adminPuzzleQuery = await getAdminPuzzleQuery(student.adminId);
     const [progressRecords, allPuzzles] = await Promise.all([
       PuzzleProgress.find({ userId: student._id }).lean(),
-      Puzzle.find({ isEnabled: true, adminId: student.adminId })
+      Puzzle.find({ $and: [adminPuzzleQuery, { isEnabled: true }] })
+        .sort({ order: 1, createdAt: 1 })
     ]);
 
     res.json(buildPuzzleProgress(allPuzzles, progressRecords));
@@ -2559,7 +2419,8 @@ app.get('/api/stats', async (req, res) => {
 
     const totalStudents = await User.countDocuments({ role: 'student', adminId: requestingUser._id });
     const activeStudents = await User.countDocuments({ role: 'student', adminId: requestingUser._id, isEnabled: true });
-    const totalPuzzles = await Puzzle.countDocuments({ adminId: requestingUser._id });
+    const adminPuzzleQuery = await getAdminPuzzleQuery(requestingUser._id);
+    const totalPuzzles = await Puzzle.countDocuments(adminPuzzleQuery);
     const totalOpenings = await Opening.countDocuments({ adminId: requestingUser._id });
     const totalFamousMates = await FamousMate.countDocuments({ adminId: requestingUser._id });
     const totalBestGames = await BestGame.countDocuments({ adminId: requestingUser._id });
@@ -2720,7 +2581,27 @@ app.get('/api/puzzle-categories', async (req, res) => {
     const adminId = getContentOwnerId(viewer);
     if (!adminId) return res.json([]);
     const categories = await PuzzleCategory.find({ adminId }).sort({ order_index: 1, createdAt: 1 });
-    res.json(categories);
+    const adminPuzzleAccess = await AdminPuzzleAccess.findOne({ adminId })
+      .select('grantedBy puzzleIds')
+      .lean();
+    const grantedCategories = adminPuzzleAccess?.puzzleIds?.length
+      ? await Puzzle.distinct('category', {
+          _id: { $in: adminPuzzleAccess.puzzleIds },
+          adminId: adminPuzzleAccess.grantedBy,
+          isEnabled: true
+        })
+      : [];
+    const grantedCustomCategories = grantedCategories.length > 0
+      ? await PuzzleCategory.find({
+          adminId: adminPuzzleAccess.grantedBy,
+          categoryId: { $in: grantedCategories }
+        }).sort({ order_index: 1, createdAt: 1 })
+      : [];
+    const existingCategoryIds = new Set(categories.map(category => category.categoryId));
+    res.json([
+      ...categories,
+      ...grantedCustomCategories.filter(category => !existingCategoryIds.has(category.categoryId))
+    ]);
   } catch (error) {
     console.error('Get puzzle categories error:', error);
     res.status(500).json({ message: 'Server error' });

@@ -47,7 +47,8 @@ import {
   Wifi,
 
   Crown,
-  Layers
+  Layers,
+  KeyRound
 
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -60,6 +61,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import AdminPuzzleAccessDialog from '@/components/AdminPuzzleAccessDialog';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -130,6 +132,19 @@ interface BestGameData {
   category: 'brilliant' | 'best' | 'blunder';
   moves: string[];
   highlights: number[];
+  isEnabled: boolean;
+}
+
+interface PuzzleData {
+  _id: string;
+  name: string;
+  category: string;
+  description: string;
+  fen: string;
+  solution: string[];
+  hint: string;
+  difficulty: string;
+  icon: string;
   isEnabled: boolean;
 }
 
@@ -418,6 +433,7 @@ const AdminDashboard = () => {
   const [adminUsername, setAdminUsername] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [adminEnabled, setAdminEnabled] = useState(true);
+  const [puzzleAccessAdmin, setPuzzleAccessAdmin] = useState<ManagedAdmin | null>(null);
   const [newOpening, setNewOpening] = useState<OpeningData>({
     name: '', description: '', category: 'Open Games', moves: [], isEnabled: true
   });
@@ -463,8 +479,16 @@ const AdminDashboard = () => {
       name: cat.name,
       icon: cat.icon || '🎯'
     }));
-    return [...PUZZLE_CATEGORIES, ...customCats];
-  }, [customCategories]);
+    const categories = [...PUZZLE_CATEGORIES, ...customCats];
+    const knownCategoryIds = new Set(categories.map(category => category.id));
+    puzzles.forEach(puzzle => {
+      if (!knownCategoryIds.has(puzzle.category)) {
+        categories.push({ id: puzzle.category, name: puzzle.category, icon: '♟' });
+        knownCategoryIds.add(puzzle.category);
+      }
+    });
+    return categories;
+  }, [customCategories, puzzles]);
 
   const loadPuzzleCategoryVisibility = async () => {
     try {
@@ -1303,11 +1327,11 @@ const AdminDashboard = () => {
     }
   };
 
-  const loadPuzzleRecommendations = async (userId: string) => {
-    const cachedRecommendations = puzzleRecommendationsCache.current.get(userId);
+  const loadPuzzleRecommendations = async (userId: string, refresh = false) => {
+    const cachedRecommendations = refresh ? undefined : puzzleRecommendationsCache.current.get(userId);
     if (cachedRecommendations) {
       setPuzzleRecommendations(cachedRecommendations);
-      return;
+      return true;
     }
 
     try {
@@ -1318,8 +1342,10 @@ const AdminDashboard = () => {
       const recommendations: PuzzleRecommendations = await response.json();
       puzzleRecommendationsCache.current.set(userId, recommendations);
       setPuzzleRecommendations(recommendations);
+      return true;
     } catch (error) {
       console.error('Load puzzle recommendations error:', error);
+      return false;
     }
   };
 
@@ -3781,8 +3807,12 @@ const AdminDashboard = () => {
                       size="sm"
                       onClick={async () => {
                         if (selectedUserForAccess) {
-                          await loadPuzzleRecommendations(selectedUserForAccess.id);
-                          toast.success('Puzzle progress refreshed');
+                          const refreshed = await loadPuzzleRecommendations(selectedUserForAccess.id, true);
+                          if (refreshed) {
+                            toast.success('Puzzle progress refreshed');
+                          } else {
+                            toast.error('Failed to refresh puzzle progress');
+                          }
                         }
                       }}
                       className="flex items-center gap-2"
@@ -5010,6 +5040,16 @@ const AdminDashboard = () => {
                                 <td className="py-3 text-right">
                                   <div className="flex items-center justify-end gap-1">
                                     <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() => setPuzzleAccessAdmin(admin)}
+                                      className="h-8 gap-1.5 px-2"
+                                      title="Manage puzzle access"
+                                    >
+                                      <KeyRound className="w-4 h-4" />
+                                      <span>Manage Access</span>
+                                    </Button>
+                                    <Button
                                       variant="ghost"
                                       size="sm"
                                       onClick={() => openAdminDialog(admin)}
@@ -5221,6 +5261,14 @@ const AdminDashboard = () => {
             </DialogContent>
           </Dialog>
         </Tabs>
+        <AdminPuzzleAccessDialog
+          adminId={puzzleAccessAdmin?.id || null}
+          adminUsername={puzzleAccessAdmin?.username || ''}
+          token={token}
+          onOpenChange={open => {
+            if (!open) setPuzzleAccessAdmin(null);
+          }}
+        />
           </>
         )}
       </div>

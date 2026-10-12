@@ -28,6 +28,7 @@ interface PuzzleData {
   preloadedMove?: string; // Optional move to execute automatically before student plays
   successMessage?: string; // Custom success message when puzzle is solved (default: "Checkmate! Brilliant move!")
   moveTree?: MoveNode[]; // Branching move tree (flat node list with parentId refs)
+  isOwned?: boolean;
 }
 
 const PUZZLE_CATEGORIES = [
@@ -235,6 +236,10 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
   }, [editPuzzleId, puzzles]);
 
   const handleEditPuzzle = (p: PuzzleData) => {
+    if (p.isOwned === false) {
+      toast.error('Puzzles granted by the superadmin cannot be edited');
+      return;
+    }
     setNewPuzzle({ ...p });
     setVariations([]);
     setShowPuzzleList(false);
@@ -704,7 +709,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          {showPuzzleList && !isRearrangeMode && (
+          {showPuzzleList && !isRearrangeMode && puzzles.every(puzzle => puzzle.isOwned !== false) && (
             <Button
               variant="secondary"
               onClick={() => setIsRearrangeMode(true)}
@@ -712,6 +717,11 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
               <GripVertical className="w-4 h-4 mr-2" />
               Rearrange Puzzles
             </Button>
+          )}
+          {showPuzzleList && !isRearrangeMode && puzzles.some(puzzle => puzzle.isOwned === false) && (
+            <p className="text-xs text-muted-foreground">
+              Rearranging is unavailable while superadmin-granted puzzles are in this list.
+            </p>
           )}
           {!isRearrangeMode && (
             <Button
@@ -953,10 +963,13 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                         {puzzle.hint && (
                           <p className="text-sm text-muted-foreground">Hint: {puzzle.hint}</p>
                         )}
+                        {puzzle.isOwned === false && (
+                          <p className="mt-2 text-xs font-medium text-primary">Granted by superadmin · read-only</p>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-2">
+                      {puzzle.isOwned !== false && <div className="flex items-center gap-2">
                       <Button
                         variant="ghost"
                         size="icon"
@@ -974,7 +987,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
-                    </div>
+                    </div>}
                     </div>
                   </div>
                 </CardContent>

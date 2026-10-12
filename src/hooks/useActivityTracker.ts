@@ -83,7 +83,7 @@ export const useActivityTracker = () => {
     if (!user || !token) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/users/${user.id}/activity`, {
+      const response = await fetch(`${API_BASE_URL}/users/${user.id}/puzzle-attempt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

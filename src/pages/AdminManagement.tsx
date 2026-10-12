@@ -13,6 +13,7 @@ import {
   X, 
   Save, 
   RefreshCw,
+  KeyRound,
   Mail,
   Phone,
   MapPin,
@@ -24,6 +25,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import AdminPuzzleAccessDialog from '@/components/AdminPuzzleAccessDialog';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
 
@@ -58,6 +60,7 @@ export default function AdminManagement() {
   const [isLoadingAdmins, setIsLoadingAdmins] = useState(false);
   const [isLoadingRequests, setIsLoadingRequests] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [puzzleAccessAdmin, setPuzzleAccessAdmin] = useState<ManagedAdmin | null>(null);
 
   // Direct Admin Dialog states
   const [adminDialogOpen, setAdminDialogOpen] = useState(false);
@@ -420,6 +423,16 @@ export default function AdminManagement() {
                         <td className="py-3.5 text-right">
                           <div className="flex items-center justify-end gap-1">
                             <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setPuzzleAccessAdmin(admin)}
+                              className="h-8 gap-1.5 px-2"
+                              title="Manage puzzle access"
+                            >
+                              <KeyRound className="w-4 h-4" />
+                              <span>Manage Access</span>
+                            </Button>
+                            <Button
                               variant="ghost"
                               size="sm"
                               onClick={() => openAdminDialog(admin)}
@@ -628,6 +641,14 @@ export default function AdminManagement() {
             </div>
           </DialogContent>
         </Dialog>
+        <AdminPuzzleAccessDialog
+          adminId={puzzleAccessAdmin?.id || null}
+          adminUsername={puzzleAccessAdmin?.username || ''}
+          token={token}
+          onOpenChange={open => {
+            if (!open) setPuzzleAccessAdmin(null);
+          }}
+        />
       </div>
     </AppLayout>
   );
