@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Loader2, Puzzle, Save } from 'lucide-react';
+import { BookOpen, Crown, Loader2, Puzzle, Save, Trophy } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,13 +24,48 @@ interface PuzzleGrantSettings {
   specificPuzzles: number[];
 }
 
-interface AdminPuzzleAccessResponse {
-  categories: GrantableCategory[];
-  puzzleAccess: Record<string, PuzzleGrantSettings>;
+interface GrantableContentItem {
+  id: string;
+  name: string;
 }
+
+interface AssetGrantSettings {
+  enabled: boolean;
+  allowedIds: string[];
+}
+
+type AssetAccessKey = 'openingAccess' | 'famousMatesAccess' | 'bestGamesAccess';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseContentItems(value: unknown, nameKey: 'name' | 'title', sectionName: string): GrantableContentItem[] {
+  if (!Array.isArray(value)) throw new Error(`The puzzle-access API did not return ${sectionName}.`);
+  return value.map(item => {
+    const name = isRecord(item) ? item[nameKey] : null;
+    if (
+      !isRecord(item) ||
+      typeof item._id !== 'string' ||
+      typeof name !== 'string'
+    ) {
+      throw new Error(`The puzzle-access API returned invalid ${sectionName} data.`);
+    }
+    return { id: item._id, name };
+  });
+}
+
+function parseAssetGrant(value: unknown, idsKey: string, sectionName: string): AssetGrantSettings {
+  const ids = isRecord(value) ? value[idsKey] : null;
+  if (
+    !isRecord(value) ||
+    typeof value.enabled !== 'boolean' ||
+    !Array.isArray(ids) ||
+    ids.some(id => typeof id !== 'string')
+  ) {
+    throw new Error(`The puzzle-access API returned invalid ${sectionName} settings.`);
+  }
+  return { enabled: value.enabled, allowedIds: ids.filter((id): id is string => typeof id === 'string') };
 }
 
 interface AdminPuzzleAccessDialogProps {
@@ -57,6 +92,16 @@ export default function AdminPuzzleAccessDialog({
   const [categories, setCategories] = useState<GrantableCategory[]>([]);
   const [puzzleAccess, setPuzzleAccess] = useState<Record<string, PuzzleGrantSettings>>({});
   const [specificPuzzlesInputs, setSpecificPuzzlesInputs] = useState<Record<string, string>>({});
+  const [contentItems, setContentItems] = useState<Record<AssetAccessKey, GrantableContentItem[]>>({
+    openingAccess: [],
+    famousMatesAccess: [],
+    bestGamesAccess: []
+  });
+  const [assetAccess, setAssetAccess] = useState<Record<AssetAccessKey, AssetGrantSettings>>({
+    openingAccess: { enabled: false, allowedIds: [] },
+    famousMatesAccess: { enabled: false, allowedIds: [] },
+    bestGamesAccess: { enabled: false, allowedIds: [] }
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -81,7 +126,17 @@ export default function AdminPuzzleAccessDialog({
           throw new Error(`${error.message || 'Failed to load puzzle access'} (HTTP ${response.status})`);
         }
         const data: unknown = await response.json();
-        if (!isRecord(data) || !Array.isArray(data.categories) || !isRecord(data.puzzleAccess)) {
+        if (
+          !isRecord(data) ||
+          !Array.isArray(data.categories) ||
+          !isRecord(data.puzzleAccess) ||
+          !('openings' in data) ||
+          !('famousMates' in data) ||
+          !('bestGames' in data) ||
+          !('openingAccess' in data) ||
+          !('famousMatesAccess' in data) ||
+          !('bestGamesAccess' in data)
+        ) {
           const responseFields = isRecord(data) ? Object.keys(data).join(', ') : typeof data;
           throw new Error(
             `The puzzle-access API returned an unexpected response (${responseFields}). ` +
@@ -106,9 +161,23 @@ export default function AdminPuzzleAccessDialog({
             icon: typeof rawCategory.icon === 'string' ? rawCategory.icon : undefined
           });
         }
+        const parsedOpenings = parseContentItems(data.openings, 'name', 'openings');
+        const parsedFamousMates = parseContentItems(data.famousMates, 'name', 'famous mates');
+        const parsedBestGames = parseContentItems(data.bestGames, 'title', 'best games');
+        const parsedAssetAccess: Record<AssetAccessKey, AssetGrantSettings> = {
+          openingAccess: parseAssetGrant(data.openingAccess, 'allowedOpenings', 'opening'),
+          famousMatesAccess: parseAssetGrant(data.famousMatesAccess, 'allowedMates', 'famous mates'),
+          bestGamesAccess: parseAssetGrant(data.bestGamesAccess, 'allowedGames', 'best game')
+        };
 
         if (!cancelled) {
           setCategories(parsedCategories);
+          setContentItems({
+            openingAccess: parsedOpenings,
+            famousMatesAccess: parsedFamousMates,
+            bestGamesAccess: parsedBestGames
+          });
+          setAssetAccess(parsedAssetAccess);
           const normalizedAccess: Record<string, PuzzleGrantSettings> = {};
           const specificInputs: Record<string, string> = {};
           parsedCategories.forEach(({ category }) => {
@@ -174,6 +243,18 @@ export default function AdminPuzzleAccessDialog({
     }));
   };
 
+  const updateAssetAccess = (section: AssetAccessKey, settings: AssetGrantSettings) => {
+    setAssetAccess(current => ({ ...current, [section]: settings }));
+  };
+
+  const toggleAssetItem = (section: AssetAccessKey, itemId: string, checked: boolean) => {
+    const current = assetAccess[section];
+    const allowedIds = checked
+      ? [...new Set([...current.allowedIds, itemId])]
+      : current.allowedIds.filter(id => id !== itemId);
+    updateAssetAccess(section, { ...current, enabled: true, allowedIds });
+  };
+
   const saveAccess = async () => {
     if (!adminId || !token) return;
 
@@ -220,7 +301,21 @@ export default function AdminPuzzleAccessDialog({
           'Content-Type': 'application/json',
           Authorization: 'Bearer ' + token
         },
-        body: JSON.stringify({ puzzleAccess: submittedAccess })
+        body: JSON.stringify({
+          puzzleAccess: submittedAccess,
+          openingAccess: {
+            enabled: assetAccess.openingAccess.enabled,
+            allowedOpenings: assetAccess.openingAccess.allowedIds
+          },
+          famousMatesAccess: {
+            enabled: assetAccess.famousMatesAccess.enabled,
+            allowedMates: assetAccess.famousMatesAccess.allowedIds
+          },
+          bestGamesAccess: {
+            enabled: assetAccess.bestGamesAccess.enabled,
+            allowedGames: assetAccess.bestGamesAccess.allowedIds
+          }
+        })
       });
       if (!response.ok) {
         const error = await response.json();
@@ -233,6 +328,12 @@ export default function AdminPuzzleAccessDialog({
           settings.specificPuzzles.join(', ')
         ])
       ));
+      setAssetAccess(current => ({
+        ...current,
+        openingAccess: { ...current.openingAccess, allowedIds: [...new Set(current.openingAccess.allowedIds)] },
+        famousMatesAccess: { ...current.famousMatesAccess, allowedIds: [...new Set(current.famousMatesAccess.allowedIds)] },
+        bestGamesAccess: { ...current.bestGamesAccess, allowedIds: [...new Set(current.bestGamesAccess.allowedIds)] }
+      }));
       toast.success(`Puzzle access updated for ${adminUsername}`);
       onOpenChange(false);
     } catch (error) {
@@ -259,6 +360,16 @@ export default function AdminPuzzleAccessDialog({
     }
     return sum + (settings.limit > 0 ? Math.min(settings.limit, total) : total);
   }, 0);
+  const assetSections: {
+    key: AssetAccessKey;
+    title: string;
+    noun: string;
+    icon: typeof BookOpen;
+  }[] = [
+    { key: 'openingAccess', title: 'Opening Access', noun: 'opening', icon: BookOpen },
+    { key: 'famousMatesAccess', title: 'Famous Mates Access', noun: 'famous mate', icon: Crown },
+    { key: 'bestGamesAccess', title: 'Best Games Access', noun: 'best game', icon: Trophy }
+  ];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -266,11 +377,11 @@ export default function AdminPuzzleAccessDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Puzzle className="h-5 w-5" />
-            Puzzle Access for {adminUsername}
+            Content Access for {adminUsername}
           </DialogTitle>
         </DialogHeader>
         <DialogDescription>
-          Grant puzzle ranges to this admin. They can assign granted puzzles to their students, but cannot edit the puzzles.
+          Grant puzzles, openings, famous mates, and best games to this admin. They can assign granted content to their students, but cannot edit content created by you.
         </DialogDescription>
 
         {isLoading ? (
@@ -397,8 +508,68 @@ export default function AdminPuzzleAccessDialog({
           </div>
         )}
 
-        {!isLoading && !loadError && categories.length > 0 && (
-          <div className="flex items-center justify-between gap-3">
+        {!isLoading && !loadError && (
+          <div className="space-y-5">
+            {assetSections.map(({ key, title, noun, icon: Icon }) => {
+              const items = contentItems[key];
+              const settings = assetAccess[key];
+              return (
+                <section key={key} className="rounded-lg border border-border p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h3 className="flex items-center gap-2 font-semibold">
+                      <Icon className="h-5 w-5" />
+                      {title}
+                    </h3>
+                    <Switch
+                      checked={settings.enabled}
+                      onCheckedChange={enabled => updateAssetAccess(key, {
+                        enabled,
+                        allowedIds: []
+                      })}
+                      aria-label={`Grant ${title.toLowerCase()}`}
+                    />
+                  </div>
+                  {settings.enabled && (
+                    <>
+                      {items.length > 0 ? (
+                        <div className="max-h-52 space-y-1 overflow-y-auto border-t border-border pt-2">
+                          <div className="flex items-center justify-between gap-2 px-2 py-1">
+                            <p className="text-xs text-muted-foreground">
+                              Select only the {noun}s you want this admin to access.
+                            </p>
+                          </div>
+                          {items.map(item => (
+                            <label
+                              key={item.id}
+                              className="flex cursor-pointer items-center gap-2 rounded p-2 hover:bg-secondary/50"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={settings.allowedIds.includes(item.id)}
+                                onChange={event => toggleAssetItem(key, item.id, event.target.checked)}
+                                className="rounded border-gray-300"
+                              />
+                              <span className="flex-1 text-sm">{item.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="border-t border-border pt-3 text-sm text-muted-foreground">
+                          No enabled {noun}s are available to grant.
+                        </p>
+                      )}
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        `${settings.allowedIds.length} ${noun}${settings.allowedIds.length === 1 ? '' : 's'} selected.`
+                      </p>
+                    </>
+                  )}
+                  {!settings.enabled && (
+                    <p className="text-xs text-muted-foreground">{title} not granted.</p>
+                  )}
+                </section>
+              );
+            })}
+            <div className="flex items-center justify-between gap-3">
             <span className="text-sm text-muted-foreground">
               {selectedPuzzleCount} puzzle{selectedPuzzleCount === 1 ? '' : 's'} granted
             </span>
@@ -411,6 +582,7 @@ export default function AdminPuzzleAccessDialog({
                 Save Access
               </Button>
             </div>
+          </div>
           </div>
         )}
       </DialogContent>

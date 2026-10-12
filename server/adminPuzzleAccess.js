@@ -69,3 +69,40 @@ export function buildAdminPuzzleGrant(puzzles, puzzleAccess) {
     puzzleIds: Array.from(grantedPuzzleIds)
   };
 }
+
+export function migrateLegacyAdminPuzzleAccess(puzzles, puzzleAccess, legacyPuzzleIds = []) {
+  if (puzzleAccess && Object.keys(puzzleAccess).length > 0) {
+    return puzzleAccess;
+  }
+
+  const legacyIds = new Set(legacyPuzzleIds.map(String));
+  const settingsByCategory = {};
+  const positionsByCategory = new Map();
+  for (const puzzle of puzzles) {
+    const position = (positionsByCategory.get(puzzle.category) || 0) + 1;
+    positionsByCategory.set(puzzle.category, position);
+    if (!legacyIds.has(String(puzzle._id))) continue;
+
+    const settings = settingsByCategory[puzzle.category] || {
+      enabled: true,
+      limit: 0,
+      rangeStart: null,
+      rangeEnd: null,
+      specificPuzzles: []
+    };
+    settings.specificPuzzles.push(position);
+    settingsByCategory[puzzle.category] = settings;
+  }
+  return settingsByCategory;
+}
+
+export function buildAdminContentQuery(adminId, grantedBy, settings, allowedIdsKey) {
+  if (!settings?.enabled || !grantedBy) return { adminId };
+  const allowedIds = Array.isArray(settings[allowedIdsKey]) ? settings[allowedIdsKey] : [];
+  return {
+    $or: [
+      { adminId },
+      { adminId: grantedBy, _id: { $in: allowedIds } }
+    ]
+  };
+}

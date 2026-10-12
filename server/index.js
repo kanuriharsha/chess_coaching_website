@@ -19,7 +19,11 @@ import {
   buildPuzzleProgress,
   buildPuzzleProgressAttemptUpdate
 } from './puzzleProgress.js';
-import { buildAdminPuzzleGrant } from './adminPuzzleAccess.js';
+import {
+  buildAdminContentQuery,
+  buildAdminPuzzleGrant,
+  migrateLegacyAdminPuzzleAccess
+} from './adminPuzzleAccess.js';
 import PuzzleProgress from './puzzleProgressModel.js';
 
 const app = express();
@@ -502,8 +506,21 @@ const ContentAccess = mongoose.model('ContentAccess', contentAccessSchema, 'cont
 const adminPuzzleAccessSchema = new mongoose.Schema({
   adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
   grantedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  // Read only for migration of old records; new grants store category settings instead.
   puzzleIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Puzzle' }],
   puzzleAccess: { type: mongoose.Schema.Types.Mixed, default: {} },
+  openingAccess: {
+    enabled: { type: Boolean, default: false },
+    allowedOpenings: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Opening' }]
+  },
+  famousMatesAccess: {
+    enabled: { type: Boolean, default: false },
+    allowedMates: [{ type: mongoose.Schema.Types.ObjectId, ref: 'FamousMate' }]
+  },
+  bestGamesAccess: {
+    enabled: { type: Boolean, default: false },
+    allowedGames: [{ type: mongoose.Schema.Types.ObjectId, ref: 'BestGame' }]
+  },
   updatedAt: { type: Date, default: Date.now }
 }, { collection: 'adminpuzzleaccess' });
 const AdminPuzzleAccess = mongoose.model('AdminPuzzleAccess', adminPuzzleAccessSchema);
@@ -512,9 +529,63 @@ async function getContentAccessForUser(userId) {
   return ContentAccess.findOne({ userId }).lean();
 }
 
+async function getResolvedAdminPuzzleAccess(adminId) {
+  const access = await AdminPuzzleAccess.findOne({ adminId })
+    .select('grantedBy puzzleAccess puzzleIds openingAccess famousMatesAccess bestGamesAccess')
+    .lean();
+  if (!access?.grantedBy) return { grantedBy: null, puzzleAccess: {}, puzzleIds: [] };
+
+  const puzzles = await Puzzle.find({ adminId: access.grantedBy, isEnabled: true })
+    .select('_id category order createdAt')
+    .sort({ category: 1, order: 1, createdAt: 1 })
+    .lean();
+  const savedSettings = access.puzzleAccess && typeof access.puzzleAccess === 'object'
+    ? access.puzzleAccess
+    : {};
+  const migratedSettings = migrateLegacyAdminPuzzleAccess(
+    puzzles,
+    savedSettings,
+    access.puzzleIds || []
+  );
+  const availableCategories = new Set(puzzles.map(puzzle => puzzle.category));
+  const puzzleAccess = Object.fromEntries(
+    Object.entries(migratedSettings).filter(([category]) => availableCategories.has(category))
+  );
+  const grant = buildAdminPuzzleGrant(puzzles, puzzleAccess);
+  if (grant.error) throw new Error(`Invalid saved admin puzzle access: ${grant.error}`);
+
+  const hasLegacyPuzzleIds = Array.isArray(access.puzzleIds);
+  const needsSettingsMigration =
+    Object.keys(savedSettings).length === 0 &&
+    Object.keys(puzzleAccess).length > 0;
+  if (hasLegacyPuzzleIds || needsSettingsMigration) {
+    const update = { $unset: { puzzleIds: '' } };
+    if (needsSettingsMigration) update.$set = { puzzleAccess, updatedAt: new Date() };
+    await AdminPuzzleAccess.updateOne({ _id: access._id }, update);
+  }
+
+  return {
+    grantedBy: access.grantedBy,
+    puzzleAccess,
+    puzzleIds: grant.puzzleIds,
+    openingAccess: {
+      enabled: access.openingAccess?.enabled === true,
+      allowedOpenings: (access.openingAccess?.allowedOpenings || []).map(String)
+    },
+    famousMatesAccess: {
+      enabled: access.famousMatesAccess?.enabled === true,
+      allowedMates: (access.famousMatesAccess?.allowedMates || []).map(String)
+    },
+    bestGamesAccess: {
+      enabled: access.bestGamesAccess?.enabled === true,
+      allowedGames: (access.bestGamesAccess?.allowedGames || []).map(String)
+    }
+  };
+}
+
 async function getAdminPuzzleQuery(adminId) {
-  const access = await AdminPuzzleAccess.findOne({ adminId }).select('puzzleIds').lean();
-  const grantedPuzzleIds = access?.puzzleIds || [];
+  const access = await getResolvedAdminPuzzleAccess(adminId);
+  const grantedPuzzleIds = access.puzzleIds;
   return {
     $or: [
       { adminId },
@@ -523,6 +594,14 @@ async function getAdminPuzzleQuery(adminId) {
         : [])
     ]
   };
+}
+
+async function getAdminContentQuery(adminId, accessKey, allowedIdsKey) {
+  const access = await AdminPuzzleAccess.findOne({ adminId })
+    .select(`grantedBy ${accessKey}`)
+    .lean();
+  const settings = access?.[accessKey];
+  return buildAdminContentQuery(adminId, access?.grantedBy, settings, allowedIdsKey);
 }
 
 async function belongToAdminGroups(groupIds, adminId) {
@@ -1026,12 +1105,31 @@ app.get('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), a
     }).select('_id');
     if (!admin) return res.status(404).json({ message: 'Admin not found' });
 
-    const [puzzles, access, customCategories, categoryOrders] = await Promise.all([
+    const [
+      puzzles,
+      openings,
+      famousMates,
+      bestGames,
+      customCategories,
+      categoryOrders,
+      resolvedAccess
+    ] = await Promise.all([
       Puzzle.find({ adminId: req.authUser._id, isEnabled: true })
         .select('_id name category difficulty order')
         .sort({ category: 1, order: 1, createdAt: 1 })
         .lean(),
-      AdminPuzzleAccess.findOne({ adminId: admin._id }).select('puzzleIds puzzleAccess').lean(),
+      Opening.find({ adminId: req.authUser._id, isEnabled: true })
+        .select('_id name')
+        .sort({ createdAt: -1 })
+        .lean(),
+      FamousMate.find({ adminId: req.authUser._id, isEnabled: true })
+        .select('_id name')
+        .sort({ createdAt: -1 })
+        .lean(),
+      BestGame.find({ adminId: req.authUser._id, isEnabled: true })
+        .select('_id title')
+        .sort({ createdAt: -1 })
+        .lean(),
       PuzzleCategory.find({ adminId: req.authUser._id })
         .select('categoryId name icon order_index')
         .sort({ order_index: 1, createdAt: 1 })
@@ -1039,38 +1137,15 @@ app.get('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), a
       PuzzleCategoryOrder.find({ adminId: req.authUser._id })
         .select('categoryId order_index')
         .sort({ order_index: 1 })
-        .lean()
+        .lean(),
+      getResolvedAdminPuzzleAccess(admin._id)
     ]);
 
-    const existingPuzzleAccess = access?.puzzleAccess;
-    const puzzleAccess = existingPuzzleAccess && Object.keys(existingPuzzleAccess).length > 0
-      ? existingPuzzleAccess
-      : {};
-    const legacyGrantedIds = new Set((access?.puzzleIds || []).map(String));
-    const categoryPositions = new Map();
     const categoriesById = new Map();
     puzzles.forEach(puzzle => {
-      const position = (categoryPositions.get(puzzle.category) || 0) + 1;
-      categoryPositions.set(puzzle.category, position);
       const category = categoriesById.get(puzzle.category) || { category: puzzle.category, total: 0 };
       category.total += 1;
       categoriesById.set(puzzle.category, category);
-
-      if (!puzzleAccess[puzzle.category] && legacyGrantedIds.has(String(puzzle._id))) {
-        puzzleAccess[puzzle.category] = {
-          enabled: true,
-          limit: 0,
-          rangeStart: null,
-          rangeEnd: null,
-          specificPuzzles: []
-        };
-      }
-      if (legacyGrantedIds.has(String(puzzle._id))) {
-        const legacyAccess = puzzleAccess[puzzle.category];
-        if (legacyAccess && !legacyAccess.specificPuzzles.includes(position)) {
-          legacyAccess.specificPuzzles.push(position);
-        }
-      }
     });
 
     const defaultCategoryOrder = [
@@ -1110,7 +1185,13 @@ app.get('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), a
         ...category,
         ...categoryMetadata.get(category.category)
       })),
-      puzzleAccess
+      puzzleAccess: resolvedAccess.puzzleAccess,
+      openings,
+      famousMates,
+      bestGames,
+      openingAccess: resolvedAccess.openingAccess,
+      famousMatesAccess: resolvedAccess.famousMatesAccess,
+      bestGamesAccess: resolvedAccess.bestGamesAccess
     });
   } catch (error) {
     console.error('Load admin puzzle access error:', error);
@@ -1137,19 +1218,67 @@ app.put('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), a
     const grant = buildAdminPuzzleGrant(puzzles, req.body?.puzzleAccess);
     if (grant.error) return res.status(400).json({ message: grant.error });
 
+    const contentAccessSettings = [
+      {
+        bodyKey: 'openingAccess',
+        idsKey: 'allowedOpenings',
+        Model: Opening,
+        databaseKey: 'openingAccess'
+      },
+      {
+        bodyKey: 'famousMatesAccess',
+        idsKey: 'allowedMates',
+        Model: FamousMate,
+        databaseKey: 'famousMatesAccess'
+      },
+      {
+        bodyKey: 'bestGamesAccess',
+        idsKey: 'allowedGames',
+        Model: BestGame,
+        databaseKey: 'bestGamesAccess'
+      }
+    ];
+    const normalizedContentAccess = {};
+    for (const { bodyKey, idsKey, Model, databaseKey } of contentAccessSettings) {
+      const settings = req.body?.[bodyKey] || { enabled: false, [idsKey]: [] };
+      if (
+        typeof settings.enabled !== 'boolean' ||
+        !Array.isArray(settings[idsKey]) ||
+        settings[idsKey].some(id => !mongoose.isValidObjectId(id))
+      ) {
+        return res.status(400).json({ message: `Invalid ${bodyKey} settings` });
+      }
+      const allowedIds = [...new Set(settings[idsKey].map(String))];
+      if (allowedIds.length > 0) {
+        const matchingItems = await Model.countDocuments({
+          _id: { $in: allowedIds },
+          adminId: req.authUser._id,
+          isEnabled: true
+        });
+        if (matchingItems !== allowedIds.length) {
+          return res.status(400).json({ message: `${bodyKey} contains unavailable content` });
+        }
+      }
+      normalizedContentAccess[databaseKey] = {
+        enabled: settings.enabled,
+        [idsKey]: allowedIds
+      };
+    }
+
     await AdminPuzzleAccess.findOneAndUpdate(
       { adminId: admin._id },
       {
         $set: {
           grantedBy: req.authUser._id,
-          puzzleIds: grant.puzzleIds,
           puzzleAccess: grant.puzzleAccess,
+          ...normalizedContentAccess,
           updatedAt: new Date()
-        }
+        },
+        $unset: { puzzleIds: '' }
       },
       { upsert: true, new: true, runValidators: true }
     );
-    res.json({ success: true, puzzleAccess: grant.puzzleAccess });
+    res.json({ success: true, puzzleAccess: grant.puzzleAccess, ...normalizedContentAccess });
   } catch (error) {
     console.error('Update admin puzzle access error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -2137,7 +2266,10 @@ app.get('/api/openings', async (req, res) => {
     const viewer = await getAuthenticatedUser(req, '_id role adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
-    const openings = await Opening.find({ adminId: getContentOwnerId(viewer) }).sort({ createdAt: -1 });
+    const contentOwnerId = getContentOwnerId(viewer);
+    const openings = await Opening.find(
+      await getAdminContentQuery(contentOwnerId, 'openingAccess', 'allowedOpenings')
+    ).sort({ createdAt: -1 });
     const visibleOpenings = isAdminRole(viewer) ? openings : filterVisibleItems(
         openings,
         await getContentAccessForUser(viewer._id),
@@ -2219,7 +2351,10 @@ app.get('/api/famous-mates', async (req, res) => {
     const viewer = await getAuthenticatedUser(req, '_id role adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
-    const famousMates = await FamousMate.find({ adminId: getContentOwnerId(viewer) }).sort({ createdAt: -1 });
+    const contentOwnerId = getContentOwnerId(viewer);
+    const famousMates = await FamousMate.find(
+      await getAdminContentQuery(contentOwnerId, 'famousMatesAccess', 'allowedMates')
+    ).sort({ createdAt: -1 });
     const visibleMates = isAdminRole(viewer)
       ? famousMates
       : filterVisibleItems(
@@ -2241,7 +2376,12 @@ app.get('/api/famous-mates/:id', async (req, res) => {
     const viewer = await getAuthenticatedUser(req, '_id role adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
-    const famousMate = await FamousMate.findOne({ _id: req.params.id, adminId: getContentOwnerId(viewer) });
+    const famousMate = await FamousMate.findOne({
+      $and: [
+        await getAdminContentQuery(getContentOwnerId(viewer), 'famousMatesAccess', 'allowedMates'),
+        { _id: req.params.id }
+      ]
+    });
     if (!famousMate) return res.status(404).json({ message: 'Famous mate not found' });
     if (!isAdminRole(viewer)) {
       const access = await getContentAccessForUser(viewer._id);
@@ -2329,7 +2469,10 @@ app.get('/api/bestgames', async (req, res) => {
     const viewer = await getAuthenticatedUser(req, '_id role adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
-    const games = await BestGame.find({ adminId: getContentOwnerId(viewer) }).sort({ createdAt: -1 });
+    const contentOwnerId = getContentOwnerId(viewer);
+    const games = await BestGame.find(
+      await getAdminContentQuery(contentOwnerId, 'bestGamesAccess', 'allowedGames')
+    ).sort({ createdAt: -1 });
     const visibleGames = isAdminRole(viewer)
       ? games
       : filterVisibleItems(
@@ -2581,10 +2724,8 @@ app.get('/api/puzzle-categories', async (req, res) => {
     const adminId = getContentOwnerId(viewer);
     if (!adminId) return res.json([]);
     const categories = await PuzzleCategory.find({ adminId }).sort({ order_index: 1, createdAt: 1 });
-    const adminPuzzleAccess = await AdminPuzzleAccess.findOne({ adminId })
-      .select('grantedBy puzzleIds')
-      .lean();
-    const grantedCategories = adminPuzzleAccess?.puzzleIds?.length
+    const adminPuzzleAccess = await getResolvedAdminPuzzleAccess(adminId);
+    const grantedCategories = adminPuzzleAccess.puzzleIds.length
       ? await Puzzle.distinct('category', {
           _id: { $in: adminPuzzleAccess.puzzleIds },
           adminId: adminPuzzleAccess.grantedBy,
