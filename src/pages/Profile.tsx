@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { User as UserIcon, Mail, Phone, MapPin, GraduationCap, Calendar, Trophy, Target, CalendarDays, Check, XCircle, Activity, Clock, TrendingUp } from 'lucide-react';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL ;
 
 interface PuzzleProgress {
   category: string;

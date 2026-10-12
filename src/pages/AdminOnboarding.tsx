@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { Crown, ChevronRight, ChevronLeft, Clock, CheckCircle2, XCircle, RefreshCw, Eye, EyeOff, ShieldCheck, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 interface AdminOnboardingForm {
   // Step 1: Personal

@@ -63,7 +63,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import AdminPuzzleAccessDialog from '@/components/AdminPuzzleAccessDialog';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL ;
 
 
 interface Group {
@@ -3845,7 +3845,10 @@ const AdminDashboard = () => {
                         )}
                       </div>
                       <div className="grid grid-cols-2 gap-4">
-                        {allPuzzleCategories.filter(cat => isCategoryVisibleForStudent(cat.id, selectedUserForAccess)).map((cat) => {
+                        {allPuzzleCategories
+                          .filter(cat => (puzzleCounts[cat.id] || 0) > 0)
+                          .filter(cat => isCategoryVisibleForStudent(cat.id, selectedUserForAccess))
+                          .map((cat) => {
                           const hasIncomplete = hasIncompletePuzzlesInRange(cat.id);
                           const incompletePuzzles = getIncompletePuzzles(cat.id);
                           const recommendation = puzzleRecommendations?.categories.find(item => item.category === cat.id);

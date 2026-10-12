@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
 import { useChessSound } from '@/hooks/useChessSound';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL ;
 
 interface Opening {
   _id?: string;

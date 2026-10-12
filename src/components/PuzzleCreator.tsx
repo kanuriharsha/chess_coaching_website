@@ -11,7 +11,7 @@ import { Trash2, Save, Eye, EyeOff, Edit3, GripVertical, ArrowLeft, Plus, X, Cop
 import { useAuth } from '@/contexts/AuthContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from './ui/dialog';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 interface PuzzleData {
   _id?: string;

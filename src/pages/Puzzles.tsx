@@ -16,7 +16,7 @@ import { useChessSound } from '@/hooks/useChessSound';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
 import type { MoveNode } from '@/components/VisualBoardEditor';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL ;
 
 interface HistoryStep {
   fen: string;
@@ -1254,7 +1254,9 @@ const Puzzles = () => {
               </div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {[...puzzleCategories].sort((a, b) => {
+                {[...puzzleCategories]
+                  .filter(category => user?.role === 'superadmin' || category.count > 0)
+                  .sort((a, b) => {
                   // Hybrid sorting for students: unlocked first, locked second
                   // Within each group, preserve admin-defined order (order_index)
                   if (isAdmin) return 0; // admins: preserve admin-defined order as-is
@@ -1263,7 +1265,9 @@ const Puzzles = () => {
                   if (aLocked !== bLocked) return aLocked ? 1 : -1; // unlocked first
                   // Within same lock group, preserve admin order
                   return (a.order_index ?? 999) - (b.order_index ?? 999);
-                }).filter(category => isAdmin || isCategoryVisibleToStudent(category)).map((category) => {
+                  })
+                  .filter(category => isAdmin || isCategoryVisibleToStudent(category))
+                  .map((category) => {
                   const isAccessLocked = !isAdmin && (!hasAccessToCategory(category.id) || category.isLocked);
                   const isEmptyLocked = category.count === 0 && !isAdmin;
                   const isLocked = isAccessLocked || isEmptyLocked;

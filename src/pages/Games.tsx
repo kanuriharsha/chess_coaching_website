@@ -56,7 +56,7 @@ const Games = () => {
   // Fetch admins when coach is selected
   useEffect(() => {
     if (opponent === 'coach') {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+      const apiUrl = import.meta.env.VITE_API_URL ;
       console.log('📡 Fetching coaches from:', `${apiUrl}/coaches`);
       fetch(`${apiUrl}/coaches`, {
         headers: { Authorization: `Bearer ${token}` }
