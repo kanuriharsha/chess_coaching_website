@@ -10,12 +10,14 @@ A comprehensive chess coaching platform built with React, TypeScript, and Node.j
 - **Opening Theory**: Learn chess openings with detailed moves and commentary
 - **Best Games Analysis**: Study famous chess games with highlights
 - **Progress Tracking**: Monitor learning progress and achievements
+- **Persistent Puzzle Progress**: Puzzle attempts and completions are stored per student and puzzle
 - **Attendance System**: Track coaching sessions
 
 ### For Coaches/Admins
 - **Student Management**: Manage student accounts and access permissions
 - **Live Game Coaching**: Play and coach students in real-time
 - **Content Management**: Create and manage puzzles, openings, and best games
+- **Content Grants**: Super Admins can grant selected puzzles and learning content to normal admins
 - **Progress Analytics**: Track student performance and activity
 - **Attendance Management**: Mark and track student attendance
 
@@ -84,7 +86,7 @@ A comprehensive chess coaching platform built with React, TypeScript, and Node.j
 
    Create `.env` in the root directory:
    ```env
-   VITE_API_URL=http://localhost:5000
+   VITE_API_URL=http://localhost:5000/api
    ```
 
    Create `.env` in the `server` directory:
@@ -110,7 +112,7 @@ A comprehensive chess coaching platform built with React, TypeScript, and Node.j
 
 6. **Access the application**
    - Frontend: http://localhost:5173
-   - Backend API: http://localhost:5000
+   - Backend API: http://localhost:5000/api
 
 ## 🔐 Default Users
 
@@ -122,7 +124,7 @@ After starting the server, these default users are created:
 
 ### Frontend (Vercel)
 1. Connect your GitHub repository to Vercel
-2. Set environment variable: `VITE_API_URL=https://your-backend-url.onrender.com`
+2. Set environment variable: `VITE_API_URL=https://your-backend-url.onrender.com/api`
 3. Deploy automatically
 
 ### Backend (Render)

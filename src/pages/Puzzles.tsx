@@ -7,7 +7,7 @@ import { isPromotionMove } from '@/lib/chess';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { isAdminRole } from '@/lib/roles';
-import { Lock, CheckCircle, Puzzle as PuzzleIcon, ArrowRight, ArrowLeft, RotateCcw, Lightbulb, ShieldOff, Plus, Edit3, GripVertical, Save, X } from 'lucide-react';
+import { Lock, CheckCircle, Puzzle as PuzzleIcon, ArrowRight, ArrowLeft, RotateCcw, Lightbulb, ShieldOff, Plus, Edit3, GripVertical, Save, X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
@@ -113,6 +113,8 @@ const Puzzles = () => {
   const [isInitializing, setIsInitializing] = useState(true);
   const [hasPuzzles, setHasPuzzles] = useState(false);
   const [categoryPuzzles, setCategoryPuzzles] = useState<PuzzleData[]>([]);
+  const [isLoadingCategoryPuzzles, setIsLoadingCategoryPuzzles] = useState(false);
+  const [categoryPuzzleLoadError, setCategoryPuzzleLoadError] = useState<string | null>(null);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState(0);
   const [game, setGame] = useState(new Chess());
   const [solved, setSolved] = useState(false);
@@ -138,6 +140,7 @@ const Puzzles = () => {
   const [savingOrder, setSavingOrder] = useState(false);
 
   const isAdmin = isAdminRole(user?.role);
+  const reorderablePuzzleCategories = puzzleCategories.filter(category => category.count > 0);
   const currentPuzzle = categoryPuzzles[currentPuzzleIndex];
   const getPuzzleDisplayNumber = (p: PuzzleData | undefined, idx: number) => {
     if (!p) return `#${idx + 1}`;
@@ -264,7 +267,7 @@ const Puzzles = () => {
   };
 
   const enterReorderMode = () => {
-    setReorderList([...puzzleCategories]);
+    setReorderList([...reorderablePuzzleCategories]);
     setSelectedReorderIndex(null);
     setIsReorderMode(true);
   };
@@ -565,36 +568,45 @@ const Puzzles = () => {
   };
 
   const loadCategoryPuzzles = async (category: string) => {
+    setIsLoadingCategoryPuzzles(true);
+    setCategoryPuzzleLoadError(null);
     try {
       const response = await fetch(`${API_BASE_URL}/puzzles/category/${category}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (response.ok) {
-        let puzzles: PuzzleData[] = await response.json();
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || `Failed to load puzzles (HTTP ${response.status})`);
+      }
+      let puzzles: PuzzleData[] = await response.json();
 
-        // The API returns only entitled puzzles and preserves their category position.
-        puzzles = puzzles.map((puzzle, index) => ({
-          ...puzzle,
-          originalIndex: puzzle.originalIndex || index + 1
-        }));
+      // The API returns only entitled puzzles and preserves their category position.
+      puzzles = puzzles.map((puzzle, index) => ({
+        ...puzzle,
+        originalIndex: puzzle.originalIndex || index + 1
+      }));
 
-        // Ensure unlocked puzzles appear first for students
-        if (!isAdmin) {
-          puzzles = puzzles.sort((a, b) => {
-            const aLocked = !!a.isLocked;
-            const bLocked = !!b.isLocked;
-            if (aLocked === bLocked) return 0;
-            return aLocked ? 1 : -1; // unlocked (false) first
-          });
-        }
+      // Ensure unlocked puzzles appear first for students
+      if (!isAdmin) {
+        puzzles = puzzles.sort((a, b) => {
+          const aLocked = !!a.isLocked;
+          const bLocked = !!b.isLocked;
+          if (aLocked === bLocked) return 0;
+          return aLocked ? 1 : -1; // unlocked (false) first
+        });
+      }
 
-        setCategoryPuzzles(puzzles);
-        if (puzzles.length > 0 && !puzzles[0].isLocked) {
-          setGame(new Chess(puzzles[0].fen));
-        }
+      setCategoryPuzzles(puzzles);
+      if (puzzles.length > 0 && !puzzles[0].isLocked) {
+        setGame(new Chess(puzzles[0].fen));
       }
     } catch (error) {
       console.error('Load category puzzles error:', error);
+      setCategoryPuzzleLoadError(
+        error instanceof Error ? error.message : 'Failed to load puzzles for this category.'
+      );
+    } finally {
+      setIsLoadingCategoryPuzzles(false);
     }
   };
 
@@ -1121,6 +1133,7 @@ const Puzzles = () => {
     }
     setSelectedCategory(category.id);
     setCurrentPuzzleIndex(0);
+    setCategoryPuzzles([]);
     await loadCategoryPuzzles(category.id);
     resetPuzzle();
   };
@@ -1401,6 +1414,21 @@ const Puzzles = () => {
                 })}
               </div>
             )}
+          </div>
+        ) : isLoadingCategoryPuzzles ? (
+          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground" role="status">
+            <Loader2 className="mb-3 h-6 w-6 animate-spin" />
+            <p>Loading puzzles...</p>
+          </div>
+        ) : categoryPuzzleLoadError ? (
+          <div className="text-center py-12">
+            <p className="text-destructive mb-4">{categoryPuzzleLoadError}</p>
+            <button
+              onClick={() => selectedCategory && loadCategoryPuzzles(selectedCategory)}
+              className="text-primary hover:underline"
+            >
+              Try again
+            </button>
           </div>
         ) : categoryPuzzles.length === 0 ? (
           <div className="text-center py-12">

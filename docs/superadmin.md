@@ -21,13 +21,13 @@ Students and admin-managed records are associated with an owner through the
 - Admin list, detail, edit, delete, group, statistics, and content operations
   are scoped to the signed-in admin. Students likewise receive content only
   from their own admin’s workspace, subject to the existing content-access
-  settings.
+  settings and any Super Admin grant to that student's admin.
 
 The Super Admin is also an admin for ownership purposes. They can manage their
-own students and content, but do not see or manage another admin’s students or
-content. Normal admins cannot view or manage admin accounts and cannot change
-student roles or ownership. Content sharing and student reassignment between
-admins are not implemented.
+own students and content. Normal admins cannot view or manage admin accounts
+and cannot change student roles or ownership. Super Admin content grants share
+access without transferring ownership: the receiving admin may assign granted
+content to their students but may edit only content they own.
 
 ## Set up the Super Admin
 
@@ -82,27 +82,24 @@ sets the ownership of every record in those collections to the Super Admin.
 Do not run it again after admins have started creating their own students or
 content, or their records will be reassigned to the Super Admin.
 
-### Existing activity ownership
+### Legacy puzzle progress migration
 
-To assign existing `UserActivity` records to the Super Admin, run this separate
-one-time script from the repository root:
+Puzzle attempts are now written directly to the `puzzleprogress` collection;
+the application does not store activity events. If an existing installation
+needs to preserve historical puzzle completion data from the legacy
+`useractivities` collection, run the optional migration from the `server`
+directory before deleting that collection:
 
 ```powershell
-node server\scripts\map-user-activities-to-superadmin.js
+node scripts\migrate-puzzle-progress.js
 ```
 
-It verifies that account `6950bc7b6beae457a17971b0` is the Super Admin, then
-sets only `adminId` on every document in `useractivities`. It does not change
-or delete any other activity field. Do not run this again after new admins
-have started recording their own activities: rerunning it would reassign all
-activity ownership to the Super Admin.
-
-New activity records are assigned server-side to the owning admin. Normal
-admins' activity queries are filtered by their `adminId`; the Super Admin can
-query all activity records, subject to the existing student ownership checks
-on student-specific dashboard pages. Puzzle progress and Manage Access
-recommendations use those same activity ownership rules. No puzzle completion
-or history fields are rewritten by the activity ownership migration.
+Review the dry-run output, then apply the migration with
+`node scripts\migrate-puzzle-progress.js --apply` and verify the resulting
+student progress before removing the old collection. This migration reads
+legacy puzzle events only; no activity history is retained after migration.
+It is unnecessary for a new installation or when legacy progress does not need
+to be recovered.
 
 ## Use Admin Management
 
@@ -120,6 +117,8 @@ From that tab, the Super Admin can:
 - **Enable or disable an admin:** use the access switch. A disabled account
   cannot use the application until re-enabled.
 - **Delete an admin:** choose **Delete** and confirm.
+- **Manage Access:** choose **Manage Access** for an admin to grant selected
+  puzzles and learning content from the Super Admin's workspace.
 
 Admin account management is also enforced by the server. These endpoints
 require a Super Admin session:
@@ -134,6 +133,26 @@ require a Super Admin session:
 The API does not provide a way to promote an admin or change an account’s role
 or owner through these requests.
 
+### Grant content to a normal admin
+
+Use **Manage Access** in Admin Management to grant puzzle categories and
+selected openings, famous mates, or best games. Puzzle grants are stored
+compactly as category settings in `adminpuzzleaccess`; the selected puzzle
+positions are resolved to puzzle records when access is checked. Opening,
+famous-mate, and best-game grants store only the explicitly selected item IDs.
+With nothing selected, nothing is granted.
+
+The receiving admin can see granted content in their workspace and may include
+it in student access settings. The grant does not make the receiving admin the
+content owner: puzzles and other content created by the Super Admin remain
+read-only to normal admins, who can still edit content they created themselves.
+Grant access is separate from student access; the admin must still select what
+their students can use.
+
+The grant endpoints are `GET /api/superadmin/admins/:id/puzzle-access` and
+`PUT /api/superadmin/admins/:id/puzzle-access`. Only the owning Super Admin
+can manage grants for their normal admin accounts.
+
 ### Important when deleting an admin
 
 Deleting an admin removes the admin account only; it does not delete or transfer
@@ -146,9 +165,10 @@ deleting an admin.
 ## Normal admin workflow
 
 An admin signs in with the credentials created by the Super Admin and uses the
-same `/admin` dashboard as before. The admin can manage only their own
-students, groups, attendance, fees, activity, puzzles, openings, famous mates,
-best games, and related access settings.
+same `/admin` dashboard as before. The admin manages their own students,
+groups, attendance, fees, puzzles, openings, famous mates, best games, and
+student access settings, and can use content explicitly granted by the Super
+Admin.
 
 New students and content created within that admin’s workspace are stored with
 that admin’s `adminId`. Super Admin-created students and content are stored
@@ -167,3 +187,6 @@ account.
   [`server/scripts/map-existing-students-to-superadmin.js`](../server/scripts/map-existing-students-to-superadmin.js).
 - Deployment environment setup is documented in
   [`DEPLOYMENT.md`](../DEPLOYMENT.md).
+- API routes and grant payloads are documented in
+  [`api.md`](api.md); persistent puzzle progress is documented in
+  [`schema.md`](schema.md).

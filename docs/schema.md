@@ -1,6 +1,6 @@
 # Data Schema
 
-The backend uses MongoDB through Mongoose. The collection names below are explicitly set in `server/index.js`. Unless stated otherwise, Mongoose supplies each document with `_id` and `__v`. Date fields are BSON dates in MongoDB and are serialized as ISO strings in JSON responses.
+The backend uses MongoDB through Mongoose. The collection names below are explicitly set in the backend schemas. Unless stated otherwise, Mongoose supplies each document with `_id` and `__v`. Date fields are BSON dates in MongoDB and are serialized as ISO strings in JSON responses.
 
 ## Collections
 
@@ -10,7 +10,9 @@ The backend uses MongoDB through Mongoose. The collection names below are explic
 |---|---|---|---|
 | `username` | String | Required, unique | Login name. |
 | `password` | String | Required | Credential field used by the login handler. |
-| `role` | String | `student`; enum `admin`, `student` | Account role. |
+| `role` | String | `student`; enum `admin`, `superadmin`, `student` | Account role. |
+| `adminId` | ObjectId → `login` | `null` | Owning admin for a student, or the creating Super Admin for a normal admin account. |
+| `verificationStatus` | String | Optional; enum `under_review`, `verified`, `rejected` | Admin account verification state. |
 | `isEnabled` | Boolean | `true` | Whether login is allowed. |
 | `onboardingComplete` | Boolean | `false` | Student onboarding state. |
 | `joiningDate` | Date | Optional | Date the student joined. |
@@ -29,7 +31,8 @@ The backend uses MongoDB through Mongoose. The collection names below are explic
 
 | Field | Type | Required/default | Description |
 |---|---|---|---|
-| `name` | String | Required, unique, trimmed | Group name. |
+| `name` | String | Required, trimmed | Group name; unique within the owning admin workspace. |
+| `adminId` | ObjectId → `login` | Required | Admin workspace that owns the group. The name is unique within that workspace. |
 | `description` | String | `""` | Optional description. |
 | `createdAt` | Date | Now | Creation timestamp. |
 
@@ -40,6 +43,7 @@ User documents refer to a group through `groupId`. Deleting a group unassigns it
 | Field | Type | Required/default | Description |
 |---|---|---|---|
 | `name` | String | Required | Puzzle display name. |
+| `adminId` | ObjectId → `login` | Required | Admin workspace that owns the puzzle. |
 | `category` | String | Required | Category identifier/name. |
 | `description` | String | Optional | Supporting description. |
 | `fen` | String | Required | Starting board position in FEN. |
@@ -60,6 +64,7 @@ User documents refer to a group through `groupId`. Deleting a group unassigns it
 | Field | Type | Required/default | Description |
 |---|---|---|---|
 | `name` | String | Required | Opening name. |
+| `adminId` | ObjectId → `login` | Required | Admin workspace that owns the opening. |
 | `description` | String | Optional | Opening description. |
 | `category` | String | Required | Opening category. |
 | `startFen` | String | Optional | Custom starting board position. |
@@ -72,6 +77,7 @@ User documents refer to a group through `groupId`. Deleting a group unassigns it
 | Field | Type | Required/default | Description |
 |---|---|---|---|
 | `name` | String | Required | Mate pattern/name. |
+| `adminId` | ObjectId → `login` | Required | Admin workspace that owns the pattern. |
 | `description` | String | Optional | Description. |
 | `category` | String | `"Famous Mates"` | Category. |
 | `startFen` | String | Optional | Custom starting position. |
@@ -84,6 +90,7 @@ User documents refer to a group through `groupId`. Deleting a group unassigns it
 | Field | Type | Required/default | Description |
 |---|---|---|---|
 | `title` | String | Required | Game title. |
+| `adminId` | ObjectId → `login` | Required | Admin workspace that owns the game. |
 | `players` | String | Required | Player names/description. |
 | `description` | String | Optional | Game notes. |
 | `category` | String | `"best"`; enum `brilliant`, `best`, `blunder` | Curated category. |
@@ -97,7 +104,8 @@ User documents refer to a group through `groupId`. Deleting a group unassigns it
 
 | Field | Type | Required/default | Description |
 |---|---|---|---|
-| `categoryId` | String | Required, unique | Category slug/identifier. |
+| `categoryId` | String | Required | Category slug/identifier; unique within the owning admin workspace. |
+| `adminId` | ObjectId → `login` | Required | Admin workspace that owns the custom category. Category IDs are unique within that workspace. |
 | `name` | String | Required | Display name. |
 | `description` | String | `"Custom puzzle category"` | Description. |
 | `icon` | String | Pawn glyph | Display icon. |
@@ -110,7 +118,8 @@ Stores visibility and order for both built-in and custom categories.
 
 | Field | Type | Required/default | Description |
 |---|---|---|---|
-| `categoryId` | String | Required, unique | Category identifier. |
+| `categoryId` | String | Required | Category identifier; unique within the owning admin workspace. |
+| `adminId` | ObjectId → `login` | Required | Admin workspace that owns the category-order setting. |
 | `order_index` | Number | Required, `0` | Display order. |
 | `isEnabled` | Boolean | `true` | Category visibility. |
 | `allowedGroups` | Array of ObjectId → `groups` | `[]` | Groups allowed to see this category when group filtering is configured. |
@@ -127,31 +136,31 @@ Stores visibility and order for both built-in and custom categories.
 | `bestGamesAccess` | Object | `{ enabled: false, allowedGames: [] }` | Best-game permissions. |
 | `createdAt`, `updatedAt` | Date | Now | Timestamps. |
 
-### `useractivities` — UserActivity
+### `adminpuzzleaccess` — AdminPuzzleAccess
 
 | Field | Type | Required/default | Description |
 |---|---|---|---|
-| `userId` | ObjectId → `login` | Required | Activity owner. |
-| `type` | String | Required; enum below | Kind of tracked activity. |
-| `description` | String | Required | Human-readable summary. |
-| `timestamp` | Date | Now | When it happened. |
-| `duration` | Number | Optional | Duration in seconds. |
-| `details` | Embedded object | Optional | `page`, `puzzleId`, `attemptId` (new puzzle events only), `puzzleName`, `category`, `attempts`, `result` (`passed`/`failed`), and `timeSpent`. |
-
-Allowed `type` values are `puzzle_attempt`, `puzzle_solved`, `puzzle_failed`, `login`, and `logout`. Compound indexes support recent activity lookup and puzzle progress aggregation.
+| `adminId` | ObjectId → `login` | Required, unique | Normal admin receiving the grant. |
+| `grantedBy` | ObjectId → `login` | Required | Super Admin that owns and granted the content. |
+| `puzzleAccess` | Mixed object | `{}` | Per-category puzzle settings, including enabled state and limit, range, or specific category positions. Puzzle IDs are derived from these compact settings. |
+| `puzzleIds` | Array of ObjectId → `puzzles` | Legacy only | Read for migration of older ID-based grants; new grants use `puzzleAccess`. |
+| `openingAccess` | Object | `{ enabled: false, allowedOpenings: [] }` | Explicitly selected openings owned by the granting Super Admin. |
+| `famousMatesAccess` | Object | `{ enabled: false, allowedMates: [] }` | Explicitly selected famous mates owned by the granting Super Admin. |
+| `bestGamesAccess` | Object | `{ enabled: false, allowedGames: [] }` | Explicitly selected best games owned by the granting Super Admin. |
+| `updatedAt` | Date | Now | Last grant update. |
 
 ### `puzzleprogress` — PuzzleProgress
 
-Stores one authoritative record per student and puzzle. The unique compound index on `{ userId: 1, puzzleId: 1 }` prevents duplicate progress rows.
+Stores one authoritative record per student and puzzle. The unique compound index on `{ userId: 1, puzzleId: 1 }` prevents duplicate progress rows. No attempt-event history is stored.
 
 | Field | Type | Required/default | Description |
 |---|---|---|---|
 | `userId` | ObjectId → `login` | Required | Student whose progress is tracked. |
 | `puzzleId` | String | Required | Puzzle `_id` as a string. |
-| `a` | Number | Required; minimum 1 | Total attempts used, including the successful attempt. Before completion each failed attempt increments this value; the solving attempt increments it once and sets `completed`. |
-| `completed` | Boolean | Required; `false` | Permanent completion marker. Once true, subsequent attempts do not change progress. |
+| `a` | Number | Required; minimum 1 | Compact total-attempt counter. A failed attempt increments it; the solving attempt increments it once and sets `completed`. |
+| `completed` | Boolean | Required; `false` | Completion marker. Once true, subsequent attempts do not change progress. |
 
-Puzzle attempt history continues to be stored in `useractivities` for dashboards and activity history. New puzzle events carry a unique `details.attemptId`; a transaction and unique partial index make repeated submissions idempotent while updating progress atomically.
+The application writes puzzle attempts directly to `puzzleprogress`; it does not write activity events to `useractivities`. Existing installations may optionally run `server/scripts/migrate-puzzle-progress.js` to reconstruct progress from a legacy `useractivities` collection. Run and verify that migration before deleting the legacy collection if its historical puzzle records need to be preserved. After migration, the collection is not needed at runtime.
 
 ## Runtime-only live-game data
 

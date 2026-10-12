@@ -73,8 +73,11 @@ sequence:
 Each step is awaited before the next begins, and `isInitializing` is cleared
 after the sequence. As a result, the page's initial loading time can include
 the sum of these request times, not only the time for the slowest request.
-Category selection can also load category puzzle data from
-`GET /api/puzzles/category/:category`.
+Category selection loads puzzle data from
+`GET /api/puzzles/category/:category`. While that request is pending, the
+category view displays a loading indicator instead of the empty-category
+message. A failed request displays an error and retry action; the empty message
+is shown only after a successful response contains no puzzles.
 
 Puzzle creation and management in `src/components/PuzzleCreator.tsx` also wait
 for category and puzzle list reads and for create, update, delete, category,
@@ -85,13 +88,14 @@ variation puzzles involves additional puzzle-create requests.
 
 `src/components/StudentDashboard.tsx` loads the following serially:
 
-1. `GET /api/users/:id/activity?limit=1000`
+1. `GET /api/users/:id/activity?limit=1000` (compatibility endpoint; returns an empty array)
 2. `GET /api/users/:id/puzzle-progress`
 3. `GET /api/users/:id/attendance`
 
 Dashboard calculations and the end of its loading state occur after those
-requests. The activity request asks for up to 1,000 records, so the amount of
-activity data and database/network response time can contribute to this wait.
+requests. Puzzle completion and attempt totals are loaded from `puzzleprogress`,
+not reconstructed from the activity response. Activity history is no longer
+stored.
 
 ### Admin dashboard
 
@@ -108,7 +112,9 @@ student list creates many simultaneous requests, and one slow fee request can
 extend the overall initial loading state.
 
 Other admin actions load fees, puzzle recommendations, or access settings when
-an admin opens the relevant student view. Selective content assignment loads
+an admin opens the relevant student view. Puzzle recommendations use persistent
+`puzzleprogress` records. Activity-history reads return an empty list for
+compatibility. Selective content assignment loads
 each student's access record on demand and caches it, avoiding a repeated
 read when the selected content item changes.
 
@@ -129,13 +135,15 @@ request/round trip. Saving an item waits for its create or update request.
 ### Profile
 
 `src/pages/Profile.tsx` loads an admin-selected user's details separately from
-attendance. When an admin views a student's profile, puzzle progress and recent
-activity are also requested. These reads are started by separate loading
-effects, so parts of the page can become ready at different times.
+attendance. When an admin views a student's profile, puzzle progress and the
+legacy activity endpoint are also requested. The activity endpoint returns an
+empty list. These reads are started by separate loading effects, so parts of
+the page can become ready at different times.
 
 Marking or deleting attendance, updating profile details, and loading progress
-or activity wait for their corresponding API requests. Puzzle progress has an
-explicit loading indicator.
+wait for their corresponding API requests. Puzzle progress has an explicit
+loading indicator. The profile's legacy activity-history request returns an
+empty list.
 
 ### Games page
 
@@ -167,21 +175,17 @@ disconnected, `socketService.emit` logs a warning and does not send the event.
 - `src/pages/Puzzles.tsx` delays execution of a preloaded opponent move by
   500 ms and uses 300 ms timers in puzzle feedback/state transitions. These
   delays are local UI behavior, not API response time.
-- `src/hooks/useActivityTracker.ts` only records a page visit after more than
-  five seconds on that page. This threshold delays/filters the tracking event;
-  it does not hold up page navigation.
+- Page visits, opening views, and best-game views are not recorded. Puzzle
+  attempt writes use the `puzzleprogress` collection directly.
 
-## Activity tracking
+## Puzzle progress (activity history is not stored)
 
-`src/hooks/useActivityTracker.ts` sends activity records to
-`POST /api/users/:id/activity`. Page visits, puzzle results, and content views
-can create these requests. The record functions await `fetch`, but they catch
-and log network errors; activity recording is not intended to provide the
-content displayed on the page.
-
-When leaving a page, the hook uses `navigator.sendBeacon` for a page-visit
-record rather than waiting for a normal fetch response. A beacon is queued by
-the browser and does not provide the page with a normal response to await.
+`src/hooks/useActivityTracker.ts` sends puzzle results to
+`POST /api/users/:id/puzzle-attempt`. The server validates the student, puzzle,
+and access, then directly increments or completes that student's
+`puzzleprogress` record. This awaited request does not create a `useractivities`
+record. Legacy activity read endpoints return empty responses, and page-view
+and content-view tracking are disabled.
 
 ## Common factors that can lengthen a wait
 
@@ -190,10 +194,10 @@ The following are possible contributors, not diagnoses of a measured problem:
 - Slow or unstable client internet, DNS, TLS, or browser-to-server connection.
 - API server startup/restart, load, or an unavailable server.
 - MongoDB connection latency, query duration, or database unavailability.
-- Larger results, such as the dashboard activity history or content lists,
-  taking longer to query, transfer, and parse.
+- Larger content lists taking longer to query, transfer, and parse. Activity
+  history is not returned or stored by the current application.
 - Sequential request chains, particularly puzzle initialization and the
-  student dashboard.
+  student dashboard (which still makes an empty compatibility activity read).
 - Many concurrent requests, particularly per-student fee loading in the admin
   dashboard.
 - A required Socket.IO connection or a person needing to respond to a live-game

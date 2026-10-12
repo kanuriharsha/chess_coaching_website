@@ -80,7 +80,7 @@ interface VariationData {
 }
 
 const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [puzzles, setPuzzles] = useState<PuzzleData[]>([]);
   const [showPuzzleList, setShowPuzzleList] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -224,6 +224,15 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
 
   // Get all categories (default + custom)
   const allCategories = [...DEFAULT_PUZZLE_CATEGORIES, ...customCategories];
+  const puzzleCreationCategories = user?.role === 'admin'
+    ? allCategories.filter(category =>
+        customCategories.some(customCategory => customCategory.id === category.id) ||
+        puzzles.some(puzzle => puzzle.category === category.id)
+      )
+    : allCategories;
+  const availablePuzzleCategories = allCategories.filter(category =>
+    puzzles.some(puzzle => puzzle.category === category.id)
+  );
 
   // If PuzzleManager forwarded an editPuzzleId, load that puzzle when puzzles are available
   useEffect(() => {
@@ -790,7 +799,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                         >
                           All ({puzzles.length})
                         </Button>
-                        {allCategories.map(cat => {
+                        {availablePuzzleCategories.map(cat => {
                           const count = puzzles.filter(p => p.category === cat.id).length;
                           return (
                             <Button
@@ -895,7 +904,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                     >
                       All ({puzzles.length})
                     </Button>
-                    {allCategories.map(cat => {
+                    {availablePuzzleCategories.map(cat => {
                       const count = puzzles.filter(p => p.category === cat.id).length;
                       return (
                         <Button
@@ -1072,7 +1081,7 @@ const PuzzleCreator: React.FC<PuzzleCreatorProps> = ({ editPuzzleId }) => {
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
                     <SelectContent>
-                      {allCategories.map(cat => (
+                      {puzzleCreationCategories.map(cat => (
                         <SelectItem key={cat.id} value={cat.id}>
                           {cat.name}
                         </SelectItem>

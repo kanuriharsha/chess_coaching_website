@@ -4,7 +4,7 @@ This document describes the Express and Socket.IO interfaces implemented in `ser
 
 ## Base URLs and conventions
 
-- REST base URL: `http://localhost:5000/api` by default. Set the frontend build-time variable `VITE_API_URL` to the full API base URL (including `/api`) when deploying elsewhere.
+- REST base URL: `http://localhost:5000/api` by default. Set the frontend build-time variable `VITE_API_URL` to the full API base URL, including `/api` (for local development: `VITE_API_URL=http://localhost:5000/api`).
 - Socket.IO connects to the server origin (the frontend strips `/api` from `VITE_API_URL`).
 - REST request bodies are JSON unless otherwise noted.
 - Authenticated REST routes expect `Authorization: Bearer <JWT>`. The token is issued at login and expires after seven days.
@@ -30,6 +30,21 @@ This document describes the Express and Socket.IO interfaces implemented in `ser
 | `DELETE /users/:id` | Admin token | Deletes the user; returns `{ success, message }`. |
 | `GET /users/:id/puzzle-recommendations` | Admin token | Returns category progress, overall average, remaining puzzles, and catch-up/continue recommendations. |
 
+### Super Admin and admin content grants
+
+The Super Admin can manage normal admin accounts and grant that admin selected content from the Super Admin's own workspace. A grant gives the normal admin access to use the content and assign it to their students; it does not transfer ownership or permission to edit Super Admin-owned content. Normal admins continue to see and manage their own content.
+
+| Method and path | Access | Purpose and result |
+|---|---|---|
+| `GET /superadmin/admins` | Super Admin token | Lists normal admin accounts created under the caller. |
+| `POST /superadmin/admins` | Super Admin token | Creates a normal admin account. |
+| `PUT /superadmin/admins/:id` | Super Admin token | Updates a normal admin account. |
+| `DELETE /superadmin/admins/:id` | Super Admin token | Deletes a normal admin account; does not transfer that admin's students or content. |
+| `GET /superadmin/admins/:id/puzzle-access` | Super Admin token | Returns that admin's available grant categories, the Super Admin's enabled puzzles and learning items, and current grant settings. |
+| `PUT /superadmin/admins/:id/puzzle-access` | Super Admin token | Saves puzzle category settings and selected opening, famous-mate, and best-game IDs. Puzzle category settings use `enabled`, `limit`, `rangeStart`, `rangeEnd`, and/or `specificPuzzles` positions. The access dialog starts with items unselected. Asset IDs must belong to the granting Super Admin; an empty selection grants none. |
+| `GET /superadmin/admin-requests` | Super Admin token | Lists normal admin accounts awaiting verification. |
+| `PUT /superadmin/admin-requests/:id/action` | Super Admin token | Approves or rejects an admin request. |
+
 ### Attendance, fees, groups, and activity
 
 | Method and path | Access | Purpose and result |
@@ -47,16 +62,14 @@ This document describes the Express and Socket.IO interfaces implemented in `ser
 | `PUT /groups/:id` | Admin token | Updates a group's name and/or description. |
 | `DELETE /groups/:id` | Admin token | Deletes a group and unassigns its members. |
 | `PUT /users/:id/group` | Admin token | Body: `{ groupId }`; use `null` to unassign. Returns `{ success, groupId, groupName }`. |
-| `POST /users/:id/activity` | Owner or admin | Body: `{ type, description, duration?, details? }`; stores an activity and returns `201` with the record. Puzzle events require `details.puzzleId` and `details.attemptId`; the server atomically records progress and history. |
-| `POST /users/:id/activity/beacon` | Owner token in body | Unload/beacon variant of activity creation. Body includes `type`, `description`, optional `duration`/`details`, and `_token`. |
-| `GET /users/:id/activity` | Owner or admin | Returns newest-first activity records. Optional query parameters: `limit` (default 50), `startDate`, `endDate`, and `type`. |
-| `GET /users/:id/activity/summary` | Owner or admin | Optional `startDate`/`endDate`; returns `{ summary, puzzleStats }` aggregate data. |
-| `DELETE /activity/cleanup?daysOld=30` | Admin token | Deletes activities older than the specified number of days. |
-| `GET /users/:id/puzzle-progress` | Owner or admin | Returns per-category puzzle totals, solved state, and persistent attempt totals from `puzzleprogress`. |
+| `GET /users/:id/activity` | Authenticated token | Compatibility endpoint; returns an empty array. Activity history is not stored. |
+| `GET /users/:id/activity/summary` | Authenticated token | Compatibility endpoint; returns `{ summary: [], puzzleStats: [] }`. |
+| `POST /users/:id/puzzle-attempt` | Student's own token | Body includes `type` (`puzzle_solved` or `puzzle_failed`) and `details` with a valid `puzzleId` and `result` (`passed` or `failed`). Updates the student's `puzzleprogress` record directly; it does not create an activity record. |
+| `GET /users/:id/puzzle-progress` | Owner or admin managing that student | Returns per-category totals, completion state, and attempt counts from `puzzleprogress`. |
 
 ## Puzzle-progress migration
 
-From the `server/` directory, `node scripts/migrate-puzzle-progress.js` prints a dry-run reconstruction and performs no writes. After reviewing the preview and pausing puzzle submissions, run `node scripts/migrate-puzzle-progress.js --apply` to create/verify the unique index and migrate progress. The script does not delete or rewrite `useractivities`; it is safe to rerun and never changes an already-completed progress record. Reconstruction counts failed events in timestamp order and includes the first success; legacy `details.attempts` is a visit-local move ordinal, so it is only used to order events with equal timestamps.
+Puzzle attempts are stored directly in `puzzleprogress`. Existing installations that need to preserve completions from legacy `useractivities` may run `node scripts/migrate-puzzle-progress.js` from `server/` for a dry run, then review the output and run `node scripts/migrate-puzzle-progress.js --apply`. Run this optional migration and verify the resulting progress before deleting the legacy collection; the application does not use `useractivities` at runtime. The migration reconstructs attempts from legacy puzzle events and does not create activity history.
 
 ### Puzzles and categories
 
@@ -77,7 +90,7 @@ From the `server/` directory, `node scripts/migrate-puzzle-progress.js` prints a
 
 ### Learning content and access
 
-The content-list routes require authentication. Admins receive enabled and disabled records so they can manage visibility; student responses omit disabled records and apply the relevant content-access settings. Disabled content is not returned as a locked card.
+The content-list routes require authentication. Normal admins receive content they own plus only the items granted by the Super Admin; granted items are read-only to that admin. Students receive content from their admin's workspace, filtered by that admin's student-level access settings. Disabled content is not returned as a locked card.
 
 | Method and path | Access | Purpose and result |
 |---|---|---|

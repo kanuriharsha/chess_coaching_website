@@ -65,7 +65,7 @@ Your repository: https://github.com/kanuriharsha/chess_coaching_website
    Click "Environment Variables" and add:
    ```
    Name: VITE_API_URL
-   Value: https://your-backend-name.onrender.com
+   Value: https://your-backend-name.onrender.com/api
    ```
    
    ⚠️ **Important**: Replace with your actual Render backend URL!
@@ -116,7 +116,7 @@ db.login.updateOne({ _id: account._id }, { $set: { role: "superadmin" } });
 
 After promoting the account, run `node server/scripts/map-existing-students-to-superadmin.js` once from the repository root. It maps existing students, groups, puzzles, openings, famous mates, best games, and puzzle-category settings to the Super Admin; it also migrates legacy unique indexes so each admin can create matching group/category names. The script refuses to run unless exactly one Super Admin exists.
 
-New students, groups, and content created from an admin account are assigned to that account through `adminId`. Each admin (including the Super Admin) can see and manage only their own students, groups, and content. Do not assign students or content to another admin; the application does not provide reassignment or cross-admin sharing.
+New students, groups, and content created from an admin account are assigned to that account through `adminId`. Each admin manages only their own students and groups. A Super Admin can selectively grant their puzzles by category and grant selected openings, famous mates, and best games to a normal admin. A normal admin can use granted content and assign it to their own students, but can edit only content they created. Student access is configured separately by that student's admin. Do not treat a grant as a transfer of ownership.
 
 ---
 
@@ -148,7 +148,7 @@ New students, groups, and content created from an admin account are assigned to 
 
 ### Frontend (Vercel)
 ```env
-VITE_API_URL=https://your-backend.onrender.com
+VITE_API_URL=https://your-backend.onrender.com/api
 ```
 
 ### Backend (Render)
