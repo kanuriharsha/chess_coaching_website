@@ -8,6 +8,10 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import {
   canManageStudent,
+  filterVisibleColumnContents,
+  filterColumnsForAdmin,
+  areColumnsCompatible,
+  getGrantedColumnContentIds,
   filterVisibleItems,
   filterVisiblePuzzles,
   getContentOwnerId,
@@ -451,6 +455,30 @@ const bestGameSchema = new mongoose.Schema({
 
 const BestGame = mongoose.model('BestGame', bestGameSchema, 'bestgames');
 
+const columnSchema = new mongoose.Schema({
+  title: { type: String, required: true, trim: true },
+  icon: { type: String, required: true },
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  contentType: { type: String, enum: ['opening', 'bestGame', 'famousMate', 'generic'], default: 'generic' },
+  isEnabled: { type: Boolean, default: true },
+  order: { type: Number, default: 0 },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+}, { collection: 'columns' });
+columnSchema.index({ adminId: 1, order: 1 });
+const Column = mongoose.model('Column', columnSchema);
+
+const columnContentSchema = new mongoose.Schema({
+  columnId: { type: mongoose.Schema.Types.ObjectId, ref: 'Column', required: true },
+  adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  contentType: { type: String, enum: ['opening', 'bestGame', 'famousMate', 'generic'], default: 'generic' },
+  isEnabled: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+}, { collection: 'columncontents', strict: false });
+columnContentSchema.index({ columnId: 1, adminId: 1, createdAt: -1 });
+const ColumnContent = mongoose.model('ColumnContent', columnContentSchema);
+
 // Puzzle Category Schema - stores custom puzzle categories server-side
 const puzzleCategorySchema = new mongoose.Schema({
   adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -497,6 +525,7 @@ const contentAccessSchema = new mongoose.Schema({
     enabled: { type: Boolean, default: false },
     allowedGames: [{ type: mongoose.Schema.Types.ObjectId, ref: 'BestGame' }]
   },
+  columnAccess: { type: mongoose.Schema.Types.Mixed, default: {} },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
@@ -521,6 +550,7 @@ const adminPuzzleAccessSchema = new mongoose.Schema({
     enabled: { type: Boolean, default: false },
     allowedGames: [{ type: mongoose.Schema.Types.ObjectId, ref: 'BestGame' }]
   },
+  columnAccess: { type: mongoose.Schema.Types.Mixed, default: {} },
   updatedAt: { type: Date, default: Date.now }
 }, { collection: 'adminpuzzleaccess' });
 const AdminPuzzleAccess = mongoose.model('AdminPuzzleAccess', adminPuzzleAccessSchema);
@@ -531,7 +561,7 @@ async function getContentAccessForUser(userId) {
 
 async function getResolvedAdminPuzzleAccess(adminId) {
   const access = await AdminPuzzleAccess.findOne({ adminId })
-    .select('grantedBy puzzleAccess puzzleIds openingAccess famousMatesAccess bestGamesAccess')
+    .select('grantedBy puzzleAccess puzzleIds openingAccess famousMatesAccess bestGamesAccess columnAccess')
     .lean();
   if (!access?.grantedBy) return { grantedBy: null, puzzleAccess: {}, puzzleIds: [] };
 
@@ -579,7 +609,10 @@ async function getResolvedAdminPuzzleAccess(adminId) {
     bestGamesAccess: {
       enabled: access.bestGamesAccess?.enabled === true,
       allowedGames: (access.bestGamesAccess?.allowedGames || []).map(String)
-    }
+    },
+    columnAccess: access.columnAccess && typeof access.columnAccess === 'object'
+      ? access.columnAccess
+      : {}
   };
 }
 
@@ -602,6 +635,132 @@ async function getAdminContentQuery(adminId, accessKey, allowedIdsKey) {
     .lean();
   const settings = access?.[accessKey];
   return buildAdminContentQuery(adminId, access?.grantedBy, settings, allowedIdsKey);
+}
+
+const SUPPORTED_COLUMN_ICONS = new Set([
+  'BookOpen', 'Trophy', 'Crown', 'Puzzle', 'Star', 'Target', 'Lightbulb', 'Swords'
+]);
+const PRESET_COLUMN_TYPES = {
+  opening: { title: 'Openings', icon: 'BookOpen' },
+  famousMate: { title: 'Famous Mates', icon: 'Crown' },
+  bestGame: { title: 'Best Games', icon: 'Trophy' }
+};
+
+async function getColumnsVisibleTo(viewer) {
+  const ownerId = getContentOwnerId(viewer);
+  if (!ownerId) return [];
+  const ownColumns = await Column.find({ adminId: ownerId }).sort({ order: 1, createdAt: 1 }).lean();
+  const adminGrant = await getResolvedAdminPuzzleAccess(ownerId);
+  if (!adminGrant.grantedBy) return ownColumns;
+  const grantedColumns = await Column.find({ adminId: adminGrant.grantedBy, isEnabled: true })
+    .sort({ order: 1, createdAt: 1 })
+    .lean();
+  const eligibleGrantedColumns = filterColumnsForAdmin(grantedColumns, ownColumns);
+  const sourceColumnsByAdminColumn = new Map();
+  for (const adminColumn of ownColumns) {
+    sourceColumnsByAdminColumn.set(String(adminColumn._id), eligibleGrantedColumns
+      .filter(sourceColumn => filterColumnsForAdmin([sourceColumn], [adminColumn]).length > 0)
+      .filter(sourceColumn => getGrantedColumnContentIds(adminGrant, sourceColumn).length > 0)
+      .map(sourceColumn => String(sourceColumn._id)));
+  }
+  return ownColumns
+    .map(column => ({
+      ...column,
+      sharedColumnIds: sourceColumnsByAdminColumn.get(String(column._id)) || []
+    }))
+    .sort((a, b) => a.order - b.order);
+}
+
+async function getColumnContentsVisibleTo(viewer, column) {
+  const ownerId = getContentOwnerId(viewer);
+  const ownContents = await ColumnContent.find({
+    columnId: column._id,
+    adminId: column.adminId
+  }).sort({ order: 1, createdAt: -1 }).lean();
+  let sharedContents = [];
+  if (viewer.role !== 'superadmin' && String(column.adminId) === String(ownerId) && column.sharedColumnIds?.length) {
+    const adminGrant = await getResolvedAdminPuzzleAccess(ownerId);
+    const sources = await Column.find({
+      _id: { $in: column.sharedColumnIds },
+      adminId: adminGrant.grantedBy,
+      isEnabled: true
+    }).lean();
+    sharedContents = (await Promise.all(sources.map(async sourceColumn => {
+      const allowedIds = getGrantedColumnContentIds(adminGrant, sourceColumn);
+      if (!allowedIds.length) return [];
+      return ColumnContent.find({
+        columnId: sourceColumn._id,
+        adminId: sourceColumn.adminId,
+        _id: { $in: allowedIds },
+        isEnabled: { $ne: false }
+      }).sort({ order: 1, createdAt: -1 }).lean().then(items =>
+        items.map(item => ({ ...item, isShared: true, sourceColumnId: String(sourceColumn._id) }))
+      );
+    }))).flat();
+  }
+  const contents = [...ownContents, ...sharedContents];
+  if (viewer.role === 'admin' || viewer.role === 'superadmin') return contents;
+  const access = await getContentAccessForUser(viewer._id);
+  return filterVisibleColumnContents(
+    contents,
+    access,
+    column,
+    viewer
+  );
+}
+
+function normalizeColumnContentPayload(body, contentType) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const title = typeof body.title === 'string' ? body.title.trim()
+    : typeof body.name === 'string' ? body.name.trim()
+      : '';
+  if (!title) return null;
+  if (
+    contentType === 'bestGame' &&
+    (typeof body.players !== 'string' || !body.players.trim() ||
+      !['brilliant', 'best', 'blunder'].includes(body.category))
+  ) return null;
+  const moves = body.moves;
+  if (moves !== undefined && (!Array.isArray(moves) || moves.some(move =>
+    typeof move !== 'string' &&
+    (!move || typeof move !== 'object' || typeof move.san !== 'string')
+  ))) return null;
+  if (Array.isArray(moves) && moves.some(move =>
+    typeof move === 'object' && move !== null && (
+      (move.comment !== undefined && typeof move.comment !== 'string') ||
+      (move.evaluation !== undefined &&
+        !['best', 'brilliant', 'good', 'inaccuracy'].includes(move.evaluation))
+    )
+  )) return null;
+  const startFen = typeof body.startFen === 'string' && body.startFen ? body.startFen : undefined;
+  try {
+    const chessGame = new Chess(startFen);
+    for (const move of moves || []) {
+      const san = typeof move === 'string' ? move : move.san;
+      if (!chessGame.move(san)) return null;
+    }
+  } catch {
+    return null;
+  }
+
+  const result = {
+    title,
+    name: title,
+    contentType,
+    description: typeof body.description === 'string' ? body.description : '',
+    category: typeof body.category === 'string' ? body.category : contentType === 'bestGame' ? 'best' : 'General',
+    startFen,
+    moves: moves || [],
+    isEnabled: typeof body.isEnabled === 'boolean' ? body.isEnabled : true
+  };
+  if (typeof body.players === 'string') result.players = body.players;
+  if (Array.isArray(body.highlights) && body.highlights.every(Number.isSafeInteger)) {
+    result.highlights = body.highlights;
+  } else if (body.highlights !== undefined) {
+    return null;
+  }
+  if (Number.isSafeInteger(body.order)) result.order = body.order;
+  return result;
 }
 
 async function belongToAdminGroups(groupIds, adminId) {
@@ -1110,6 +1269,8 @@ app.get('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), a
       openings,
       famousMates,
       bestGames,
+      superAdminColumns,
+      adminColumns,
       customCategories,
       categoryOrders,
       resolvedAccess
@@ -1129,6 +1290,13 @@ app.get('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), a
       BestGame.find({ adminId: req.authUser._id, isEnabled: true })
         .select('_id title')
         .sort({ createdAt: -1 })
+        .lean(),
+      Column.find({ adminId: req.authUser._id, isEnabled: true })
+        .select('_id title icon contentType order')
+        .sort({ order: 1, createdAt: 1 })
+        .lean(),
+      Column.find({ adminId: admin._id, isEnabled: true })
+        .select('title contentType')
         .lean(),
       PuzzleCategory.find({ adminId: req.authUser._id })
         .select('categoryId name icon order_index')
@@ -1180,6 +1348,16 @@ app.get('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), a
       );
     }
 
+    const grantableColumns = filterColumnsForAdmin(superAdminColumns, adminColumns);
+    const grantableColumnAccess = { ...resolvedAccess.columnAccess };
+    for (const column of grantableColumns) {
+      if (Object.prototype.hasOwnProperty.call(grantableColumnAccess, String(column._id))) continue;
+      const allowedContentIds = getGrantedColumnContentIds(resolvedAccess, column);
+      if (allowedContentIds.length) {
+        grantableColumnAccess[String(column._id)] = { enabled: true, allowedContentIds };
+      }
+    }
+
     res.json({
       categories: orderedCategories.map(category => ({
         ...category,
@@ -1189,9 +1367,19 @@ app.get('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), a
       openings,
       famousMates,
       bestGames,
+      columns: (await Promise.all(grantableColumns.map(async column => ({
+        ...column,
+        contents: (await ColumnContent.find({
+          columnId: column._id,
+          adminId: req.authUser._id,
+          isEnabled: { $ne: false }
+        }).select('_id title name').sort({ order: 1, createdAt: -1 }).lean())
+          .map(content => ({ ...content, title: content.title || content.name }))
+      })))).filter(column => column.contents.length > 0),
       openingAccess: resolvedAccess.openingAccess,
       famousMatesAccess: resolvedAccess.famousMatesAccess,
-      bestGamesAccess: resolvedAccess.bestGamesAccess
+      bestGamesAccess: resolvedAccess.bestGamesAccess,
+      columnAccess: grantableColumnAccess
     });
   } catch (error) {
     console.error('Load admin puzzle access error:', error);
@@ -1265,6 +1453,58 @@ app.put('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), a
       };
     }
 
+    let normalizedColumnAccess;
+    if (req.body?.columnAccess !== undefined) {
+      if (!req.body.columnAccess || typeof req.body.columnAccess !== 'object' || Array.isArray(req.body.columnAccess)) {
+        return res.status(400).json({ message: 'Invalid column access settings' });
+      }
+      normalizedColumnAccess = {};
+      for (const [columnId, settings] of Object.entries(req.body.columnAccess)) {
+        if (
+          !mongoose.isValidObjectId(columnId) ||
+          !settings || typeof settings !== 'object' || Array.isArray(settings) ||
+          typeof settings.enabled !== 'boolean' ||
+          !Array.isArray(settings.allowedContentIds) ||
+          settings.allowedContentIds.some(id => !mongoose.isValidObjectId(id))
+        ) {
+          return res.status(400).json({ message: 'Invalid column access settings' });
+        }
+        const column = await Column.findOne({
+          _id: columnId,
+          adminId: req.authUser._id,
+          isEnabled: true
+        }).select('_id contentType title');
+        if (!column) return res.status(400).json({ message: 'Column access contains unavailable columns' });
+        const adminColumnsOfType = await Column.find({
+          adminId: admin._id,
+          contentType: column.contentType,
+          isEnabled: true
+        }).select('title').lean();
+        const adminHasColumnType = adminColumnsOfType.some(adminColumn =>
+          areColumnsCompatible(column, adminColumn)
+        );
+        if (!adminHasColumnType) {
+          return res.status(400).json({ message: 'The admin must add the matching standard column before content can be shared' });
+        }
+        const allowedContentIds = [...new Set(settings.allowedContentIds.map(String))];
+        if (allowedContentIds.length) {
+          const count = await ColumnContent.countDocuments({
+            _id: { $in: allowedContentIds },
+            columnId,
+            adminId: req.authUser._id,
+            isEnabled: { $ne: false }
+          });
+          if (count !== allowedContentIds.length) {
+            return res.status(400).json({ message: 'Column access contains unavailable content' });
+          }
+        }
+        normalizedColumnAccess[columnId] = {
+          enabled: settings.enabled,
+          allowedContentIds
+        };
+      }
+    }
+
     await AdminPuzzleAccess.findOneAndUpdate(
       { adminId: admin._id },
       {
@@ -1272,13 +1512,19 @@ app.put('/api/superadmin/admins/:id/puzzle-access', requireRole('superadmin'), a
           grantedBy: req.authUser._id,
           puzzleAccess: grant.puzzleAccess,
           ...normalizedContentAccess,
+          ...(normalizedColumnAccess !== undefined ? { columnAccess: normalizedColumnAccess } : {}),
           updatedAt: new Date()
         },
         $unset: { puzzleIds: '' }
       },
       { upsert: true, new: true, runValidators: true }
     );
-    res.json({ success: true, puzzleAccess: grant.puzzleAccess, ...normalizedContentAccess });
+    res.json({
+      success: true,
+      puzzleAccess: grant.puzzleAccess,
+      ...normalizedContentAccess,
+      ...(normalizedColumnAccess !== undefined ? { columnAccess: normalizedColumnAccess } : {})
+    });
   } catch (error) {
     console.error('Update admin puzzle access error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -2548,6 +2794,198 @@ app.delete('/api/bestgames/:id', async (req, res) => {
   }
 });
 
+// ============ DYNAMIC COLUMN ROUTES ============
+
+app.get('/api/columns', async (req, res) => {
+  try {
+    const viewer = await getAuthenticatedUser(req, '_id role adminId isEnabled');
+    if (!viewer || viewer.isEnabled === false) return res.status(401).json({ message: 'Unauthorized' });
+    const columns = await getColumnsVisibleTo(viewer);
+    if (isAdminRole(viewer)) return res.json(columns);
+
+    const visibleColumns = [];
+    for (const column of columns) {
+      if (column.isEnabled === false) continue;
+      const contents = await getColumnContentsVisibleTo(viewer, column);
+      if (contents.length) visibleColumns.push(column);
+    }
+    res.json(visibleColumns);
+  } catch (error) {
+    console.error('Get columns error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/columns', requireRole('admin', 'superadmin'), async (req, res) => {
+  try {
+    const { title, icon, contentType = 'generic' } = req.body || {};
+    if (!['opening', 'bestGame', 'famousMate', 'generic'].includes(contentType)) {
+      return res.status(400).json({ message: 'Select a supported column type' });
+    }
+    const preset = PRESET_COLUMN_TYPES[contentType];
+    if (preset) {
+      const existing = await Column.findOne({ adminId: req.authUser._id, contentType }).select('_id');
+      if (existing) return res.status(409).json({ message: `${preset.title} column already exists` });
+    } else if (typeof title !== 'string' || !title.trim() || title.trim().length > 80) {
+      return res.status(400).json({ message: 'A custom column title between 1 and 80 characters is required' });
+    }
+    const columnTitle = preset?.title || title.trim();
+    const columnIcon = preset?.icon || icon;
+    if (typeof columnIcon !== 'string' || !SUPPORTED_COLUMN_ICONS.has(columnIcon)) {
+      return res.status(400).json({ message: 'Select a supported column icon' });
+    }
+    const lastColumn = await Column.findOne({ adminId: req.authUser._id }).sort({ order: -1 }).select('order');
+    const column = await Column.create({
+      title: columnTitle,
+      icon: columnIcon,
+      adminId: req.authUser._id,
+      contentType,
+      order: lastColumn ? lastColumn.order + 1 : 0
+    });
+    res.status(201).json(column);
+  } catch (error) {
+    console.error('Create column error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.put('/api/columns/:id', requireRole('admin', 'superadmin'), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid column id' });
+    if (req.body.title !== undefined || req.body.icon !== undefined) {
+      const existingColumn = await Column.findOne({
+        _id: req.params.id,
+        adminId: req.authUser._id
+      }).select('contentType');
+      if (!existingColumn) return res.status(404).json({ message: 'Column not found' });
+      if (existingColumn.contentType !== 'generic') {
+        return res.status(400).json({ message: 'Standard column titles and icons cannot be changed' });
+      }
+    }
+    const updates = {};
+    if (req.body.title !== undefined) {
+      if (typeof req.body.title !== 'string' || !req.body.title.trim() || req.body.title.trim().length > 80) {
+        return res.status(400).json({ message: 'A column title between 1 and 80 characters is required' });
+      }
+      updates.title = req.body.title.trim();
+    }
+    if (req.body.icon !== undefined) {
+      if (typeof req.body.icon !== 'string' || !SUPPORTED_COLUMN_ICONS.has(req.body.icon)) {
+        return res.status(400).json({ message: 'Select a supported column icon' });
+      }
+      updates.icon = req.body.icon;
+    }
+    if (req.body.isEnabled !== undefined) {
+      if (typeof req.body.isEnabled !== 'boolean') return res.status(400).json({ message: 'isEnabled must be a boolean' });
+      updates.isEnabled = req.body.isEnabled;
+    }
+    if (req.body.order !== undefined) {
+      if (!Number.isSafeInteger(req.body.order) || req.body.order < 0) {
+        return res.status(400).json({ message: 'order must be a non-negative integer' });
+      }
+      updates.order = req.body.order;
+    }
+    updates.updatedAt = new Date();
+    const column = await Column.findOneAndUpdate(
+      { _id: req.params.id, adminId: req.authUser._id },
+      { $set: updates },
+      { new: true, runValidators: true }
+    );
+    if (!column) return res.status(404).json({ message: 'Column not found' });
+    res.json(column);
+  } catch (error) {
+    console.error('Update column error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.delete('/api/columns/:id', requireRole('admin', 'superadmin'), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid column id' });
+    const column = await Column.findOneAndDelete({ _id: req.params.id, adminId: req.authUser._id });
+    if (!column) return res.status(404).json({ message: 'Column not found' });
+    await ColumnContent.deleteMany({ columnId: column._id, adminId: req.authUser._id });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete column error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.get('/api/columns/:id/contents', async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid column id' });
+    const viewer = await getAuthenticatedUser(req, '_id role adminId isEnabled');
+    if (!viewer || viewer.isEnabled === false) return res.status(401).json({ message: 'Unauthorized' });
+    const columns = await getColumnsVisibleTo(viewer);
+    const column = columns.find(item => String(item._id) === req.params.id);
+    if (!column) return res.status(404).json({ message: 'Column not found' });
+    res.json(await getColumnContentsVisibleTo(viewer, column));
+  } catch (error) {
+    console.error('Get column contents error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.post('/api/columns/:id/contents', requireRole('admin', 'superadmin'), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid column id' });
+    const column = await Column.findOne({ _id: req.params.id, adminId: req.authUser._id });
+    if (!column) return res.status(404).json({ message: 'Column not found' });
+    const content = normalizeColumnContentPayload(req.body, column.contentType);
+    if (!content) return res.status(400).json({ message: 'Content title and valid moves are required' });
+    const newContent = await ColumnContent.create({
+      ...content,
+      columnId: column._id,
+      adminId: req.authUser._id
+    });
+    res.status(201).json(newContent);
+  } catch (error) {
+    console.error('Create column content error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.put('/api/columns/:id/contents/:contentId', requireRole('admin', 'superadmin'), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id) || !mongoose.isValidObjectId(req.params.contentId)) {
+      return res.status(400).json({ message: 'Invalid column or content id' });
+    }
+    const column = await Column.findOne({ _id: req.params.id, adminId: req.authUser._id });
+    if (!column) return res.status(404).json({ message: 'Column not found' });
+    const content = normalizeColumnContentPayload(req.body, column.contentType);
+    if (!content) return res.status(400).json({ message: 'Content title and valid moves are required' });
+    const updated = await ColumnContent.findOneAndUpdate(
+      { _id: req.params.contentId, columnId: column._id, adminId: req.authUser._id },
+      { $set: { ...content, updatedAt: new Date() } },
+      { new: true, runValidators: true }
+    );
+    if (!updated) return res.status(404).json({ message: 'Content not found' });
+    res.json(updated);
+  } catch (error) {
+    console.error('Update column content error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+app.delete('/api/columns/:id/contents/:contentId', requireRole('admin', 'superadmin'), async (req, res) => {
+  try {
+    if (!mongoose.isValidObjectId(req.params.id) || !mongoose.isValidObjectId(req.params.contentId)) {
+      return res.status(400).json({ message: 'Invalid column or content id' });
+    }
+    const deleted = await ColumnContent.findOneAndDelete({
+      _id: req.params.contentId,
+      columnId: req.params.id,
+      adminId: req.authUser._id
+    });
+    if (!deleted) return res.status(404).json({ message: 'Content not found' });
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete column content error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // ============ STATS ROUTE ============
 
 // Get dashboard stats (admin only)
@@ -2684,7 +3122,82 @@ app.put('/api/content-access/:userId', async (req, res) => {
     }).select('_id');
     if (!targetStudent) return res.status(404).json({ message: 'User not found' });
 
-    const { puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess } = req.body;
+    const { puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess, columnAccess } = req.body;
+    if (columnAccess !== undefined) {
+      if (!columnAccess || typeof columnAccess !== 'object' || Array.isArray(columnAccess)) {
+        return res.status(400).json({ message: 'Invalid column access settings' });
+      }
+      const accessEntries = Object.entries(columnAccess);
+      for (const [columnId, settings] of accessEntries) {
+        if (
+          !mongoose.isValidObjectId(columnId) ||
+          !settings || typeof settings !== 'object' || Array.isArray(settings) ||
+          typeof settings.enabled !== 'boolean' ||
+          !Array.isArray(settings.allowedContentIds) ||
+          settings.allowedContentIds.some(id => !mongoose.isValidObjectId(id))
+        ) {
+          return res.status(400).json({ message: 'Invalid column access settings' });
+        }
+      }
+      const adminGrant = await getResolvedAdminPuzzleAccess(requestingUser._id);
+      const accessibleColumns = await Column.find({
+        _id: { $in: accessEntries.map(([id]) => id) },
+        $or: [
+          { adminId: requestingUser._id },
+          ...(adminGrant.grantedBy ? [{ adminId: adminGrant.grantedBy }] : [])
+        ]
+      }).select('_id adminId contentType title').lean();
+      if (accessibleColumns.length !== accessEntries.length) {
+        return res.status(400).json({ message: 'Column access contains unavailable columns' });
+      }
+      for (const column of accessibleColumns) {
+        const settings = columnAccess[String(column._id)];
+        const allowedContentIds = [...new Set(settings.allowedContentIds.map(String))];
+        let matchingContentCount = 0;
+        if (String(column.adminId) !== String(requestingUser._id)) {
+          const grantedIds = new Set(getGrantedColumnContentIds(adminGrant, column));
+          if (allowedContentIds.some(id => !grantedIds.has(id))) {
+            return res.status(400).json({ message: 'Column access includes content not granted to your admin' });
+          }
+          matchingContentCount = await ColumnContent.countDocuments({
+            _id: { $in: allowedContentIds },
+            columnId: column._id,
+            adminId: column.adminId
+          });
+        } else {
+          const ownContentIds = new Set((await ColumnContent.find({
+            _id: { $in: allowedContentIds },
+            columnId: column._id,
+            adminId: requestingUser._id
+          }).distinct('_id')).map(String));
+          const sourceColumns = adminGrant.grantedBy
+            ? await Column.find({ adminId: adminGrant.grantedBy, isEnabled: true }).select('_id contentType title').lean()
+            : [];
+          const compatibleSources = filterColumnsForAdmin(sourceColumns, [column]);
+          const sharedIds = new Set();
+          for (const sourceColumn of compatibleSources) {
+            const grantedIds = getGrantedColumnContentIds(adminGrant, sourceColumn);
+            grantedIds.forEach(id => sharedIds.add(id));
+          }
+          if (allowedContentIds.some(id => !ownContentIds.has(id) && !sharedIds.has(id))) {
+            return res.status(400).json({ message: 'Column access includes content not granted to your admin' });
+          }
+          const sharedContentCount = compatibleSources.length
+            ? await ColumnContent.countDocuments({
+              _id: { $in: allowedContentIds.filter(id => !ownContentIds.has(id)) },
+              columnId: { $in: compatibleSources.map(source => source._id) },
+              adminId: adminGrant.grantedBy,
+              isEnabled: { $ne: false }
+            })
+            : 0;
+          matchingContentCount = ownContentIds.size + sharedContentCount;
+        }
+        if (matchingContentCount !== allowedContentIds.length) {
+          return res.status(400).json({ message: 'Column access contains unavailable content' });
+        }
+        settings.allowedContentIds = allowedContentIds;
+      }
+    }
 
     let access = await ContentAccess.findOne({ userId: req.params.userId });
 
@@ -2694,7 +3207,8 @@ app.put('/api/content-access/:userId', async (req, res) => {
         puzzleAccess: puzzleAccess || {},
         openingAccess: openingAccess || { enabled: false, allowedOpenings: [] },
         famousMatesAccess: famousMatesAccess || { enabled: false, allowedMates: [] },
-        bestGamesAccess: bestGamesAccess || { enabled: false, allowedGames: [] }
+        bestGamesAccess: bestGamesAccess || { enabled: false, allowedGames: [] },
+        columnAccess: columnAccess || {}
       });
     } else {
       if (puzzleAccess) {
@@ -2704,6 +3218,10 @@ app.put('/api/content-access/:userId', async (req, res) => {
       if (openingAccess) access.openingAccess = openingAccess;
       if (famousMatesAccess) access.famousMatesAccess = famousMatesAccess;
       if (bestGamesAccess) access.bestGamesAccess = bestGamesAccess;
+      if (columnAccess !== undefined) {
+        access.columnAccess = columnAccess;
+        access.markModified('columnAccess');
+      }
       access.updatedAt = new Date();
       await access.save();
     }

@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ChevronLeft, ChevronRight, SkipBack, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ;
 
@@ -24,10 +25,13 @@ interface Move {
 }
 
 const FamousMatesEditor = () => {
-  const { id } = useParams();
+  const { id: legacyId, columnId, contentId } = useParams();
+  const id = contentId || legacyId;
   const navigate = useNavigate();
   const { token, user } = useAuth();
+  const queryClient = useQueryClient();
   const isEditMode = !!id;
+  const returnPath = columnId ? `/columns/${columnId}` : '/famous-mates';
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -62,13 +66,23 @@ const FamousMatesEditor = () => {
 
   const loadFamousMate = async (mateId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/mates/${mateId}`, {
+      const endpoint = columnId
+        ? `${API_BASE_URL}/columns/${columnId}/contents`
+        : `${API_BASE_URL}/mates/${mateId}`;
+      const response = await fetch(endpoint, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
       if (response.ok) {
-        const famousMate = await response.json();
+        const responseData = await response.json();
+        const famousMate = columnId
+          ? responseData.find((item: { _id: string }) => item._id === mateId)
+          : responseData;
+        if (!famousMate) {
+          toast.error('Failed to load famous mate');
+          return;
+        }
         setName(famousMate.name);
         setDescription(famousMate.description);
         setCategory(famousMate.category);
@@ -251,8 +265,12 @@ const FamousMatesEditor = () => {
 
     try {
       const url = isEditMode
-        ? `${API_BASE_URL}/famous-mates/${id}`
-        : `${API_BASE_URL}/famous-mates`;
+        ? columnId
+          ? `${API_BASE_URL}/columns/${columnId}/contents/${id}`
+          : `${API_BASE_URL}/famous-mates/${id}`
+        : columnId
+          ? `${API_BASE_URL}/columns/${columnId}/contents`
+          : `${API_BASE_URL}/famous-mates`;
       
       const method = isEditMode ? 'PUT' : 'POST';
 
@@ -266,8 +284,9 @@ const FamousMatesEditor = () => {
       });
 
       if (response.ok) {
+        if (columnId) await queryClient.invalidateQueries({ queryKey: ['column-contents', token, columnId] });
         toast.success(isEditMode ? 'mate updated successfully' : 'mate created successfully');
-        navigate('/famous-mates');
+        navigate(returnPath);
       } else {
         toast.error('Failed to save famous mate');
       }
@@ -283,7 +302,7 @@ const FamousMatesEditor = () => {
         {/* Header */}
         <div className="mb-6">
           <button
-            onClick={() => navigate('/mates')}
+            onClick={() => navigate(returnPath)}
             className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
           >
             ← Back to mates

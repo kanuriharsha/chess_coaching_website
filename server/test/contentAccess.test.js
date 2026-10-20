@@ -3,11 +3,58 @@ import test from 'node:test';
 import {
   canManageStudent,
   canReadUserContentAccess,
+  areColumnsCompatible,
+  getGrantedColumnContentIds,
+  filterColumnsForAdmin,
+  filterVisibleColumnContents,
   filterVisibleItems,
   filterVisiblePuzzles,
   getUserContentAccessStatus,
   getContentOwnerId
 } from '../contentAccess.js';
+
+test('admins can receive standard and matching custom superadmin columns they added', () => {
+  const superAdminColumns = [
+    { _id: 'opening-source', contentType: 'opening' },
+    { _id: 'mate-source', contentType: 'famousMate' },
+    { _id: 'game-source', contentType: 'bestGame' },
+    { _id: 'custom-source', contentType: 'generic', title: 'Endgame Studies' },
+    { _id: 'other-custom-source', contentType: 'generic', title: 'Tactics' }
+  ];
+  assert.deepEqual(
+    filterColumnsForAdmin(superAdminColumns, [
+      { contentType: 'opening' },
+      { contentType: 'bestGame' },
+      { contentType: 'generic', title: ' endgame studies ' }
+    ])
+      .map(column => column._id),
+    ['opening-source', 'game-source', 'custom-source']
+  );
+  assert.deepEqual(filterColumnsForAdmin(superAdminColumns, []).map(column => column._id), []);
+  assert.equal(
+    areColumnsCompatible(
+      { contentType: 'generic', title: 'Endgame Studies' },
+      { contentType: 'generic', title: 'Tactics' }
+    ),
+    false
+  );
+});
+
+test('legacy opening grants feed the migrated standard column unless an explicit column grant overrides them', () => {
+  const sourceColumn = { _id: 'source-openings', contentType: 'opening' };
+  const legacyGrant = {
+    openingAccess: { enabled: true, allowedOpenings: ['opening-6', 'opening-2', 'opening-6'] }
+  };
+  assert.deepEqual(getGrantedColumnContentIds(legacyGrant, sourceColumn), ['opening-6', 'opening-2']);
+  assert.deepEqual(getGrantedColumnContentIds({
+    ...legacyGrant,
+    columnAccess: { 'source-openings': { enabled: false, allowedContentIds: [] } }
+  }, sourceColumn), []);
+  assert.deepEqual(getGrantedColumnContentIds({
+    ...legacyGrant,
+    columnAccess: { 'source-openings': { enabled: true, allowedContentIds: ['new-1'] } }
+  }, sourceColumn), ['new-1']);
+});
 
 test('content-access records are readable only by their owner or an admin', () => {
   const student = { _id: 'student-b', role: 'student', adminId: 'coach' };
@@ -97,6 +144,42 @@ test('opening, famous-mate, and best-game entitlements require enabled access an
     assert.equal('moves' in restricted, false);
     assert.equal('startFen' in restricted, false);
   }
+});
+
+test('student columns require enabled columns, enabled content, and both student and admin grants', () => {
+  const column = { _id: 'column-1', isEnabled: true };
+  const contents = [
+    { _id: 'c1', isEnabled: true },
+    { _id: 'c2', isEnabled: true },
+    { _id: 'c3', isEnabled: false }
+  ];
+  const viewer = { _id: 'student-1', role: 'student' };
+  const access = { columnAccess: { 'column-1': { enabled: true, allowedContentIds: [] } } };
+
+  assert.deepEqual(
+    filterVisibleColumnContents(contents, access, column, viewer, ['c1', 'c3']),
+    [contents[0]]
+  );
+  assert.deepEqual(
+    filterVisibleColumnContents(contents, {
+      columnAccess: { 'column-1': { enabled: true, allowedContentIds: ['c2'] } }
+    }, column, viewer, ['c1', 'c2']),
+    [contents[1]]
+  );
+  assert.deepEqual(
+    filterVisibleColumnContents(contents, {
+      columnAccess: { 'column-1': { enabled: false, allowedContentIds: [] } }
+    }, column, viewer),
+    []
+  );
+  assert.deepEqual(
+    filterVisibleColumnContents(contents, access, { ...column, isEnabled: false }, viewer),
+    []
+  );
+  assert.deepEqual(
+    filterVisibleColumnContents(contents, null, column, { role: 'admin' }),
+    contents
+  );
 });
 
 test('puzzle permissions retain locked card metadata while enforcing category, group, range, specific grants, and limits', () => {

@@ -14,14 +14,18 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ChevronLeft, ChevronRight, SkipBack, Save, Trash2, Star } from 'lucide-react';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 const BestGameEditor = () => {
-  const { id } = useParams();
+  const { id: legacyId, columnId, contentId } = useParams();
+  const id = contentId || legacyId;
   const navigate = useNavigate();
   const { token, user } = useAuth();
+  const queryClient = useQueryClient();
   const isEditMode = !!id;
+  const returnPath = columnId ? `/columns/${columnId}` : '/best-games';
 
   const [title, setTitle] = useState('');
   const [players, setPlayers] = useState('');
@@ -56,13 +60,23 @@ const BestGameEditor = () => {
 
   const loadBestGame = async (gameId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/bestgames/${gameId}`, {
+      const endpoint = columnId
+        ? `${API_BASE_URL}/columns/${columnId}/contents`
+        : `${API_BASE_URL}/bestgames/${gameId}`;
+      const response = await fetch(endpoint, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
       if (response.ok) {
-        const bestGame = await response.json();
+        const responseData = await response.json();
+        const bestGame = columnId
+          ? responseData.find((item: { _id: string }) => item._id === gameId)
+          : responseData;
+        if (!bestGame) {
+          toast.error('Failed to load game');
+          return;
+        }
         setTitle(bestGame.title);
         setPlayers(bestGame.players);
         setDescription(bestGame.description);
@@ -259,8 +273,12 @@ const BestGameEditor = () => {
 
     try {
       const url = isEditMode
-        ? `${API_BASE_URL}/bestgames/${id}`
-        : `${API_BASE_URL}/bestgames`;
+        ? columnId
+          ? `${API_BASE_URL}/columns/${columnId}/contents/${id}`
+          : `${API_BASE_URL}/bestgames/${id}`
+        : columnId
+          ? `${API_BASE_URL}/columns/${columnId}/contents`
+          : `${API_BASE_URL}/bestgames`;
       
       const method = isEditMode ? 'PUT' : 'POST';
 
@@ -274,8 +292,9 @@ const BestGameEditor = () => {
       });
 
       if (response.ok) {
+        if (columnId) await queryClient.invalidateQueries({ queryKey: ['column-contents', token, columnId] });
         toast.success(isEditMode ? 'Game updated successfully' : 'Game created successfully');
-        navigate('/best-games');
+        navigate(returnPath);
       } else {
         toast.error('Failed to save game');
       }
@@ -291,7 +310,7 @@ const BestGameEditor = () => {
         {/* Header */}
         <div className="mb-6">
           <button
-            onClick={() => navigate('/best-games')}
+            onClick={() => navigate(returnPath)}
             className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
           >
             ← Back to best games

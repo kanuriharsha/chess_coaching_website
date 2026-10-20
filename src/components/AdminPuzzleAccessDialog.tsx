@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BookOpen, Crown, Loader2, Puzzle, Save, Trophy } from 'lucide-react';
+import { BookOpen, Loader2, Puzzle, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,25 +34,21 @@ interface AssetGrantSettings {
   allowedIds: string[];
 }
 
+interface GrantableColumn {
+  id: string;
+  title: string;
+  contents: GrantableContentItem[];
+}
+
+interface ColumnGrantSettings {
+  enabled: boolean;
+  allowedContentIds: string[];
+}
+
 type AssetAccessKey = 'openingAccess' | 'famousMatesAccess' | 'bestGamesAccess';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function parseContentItems(value: unknown, nameKey: 'name' | 'title', sectionName: string): GrantableContentItem[] {
-  if (!Array.isArray(value)) throw new Error(`The puzzle-access API did not return ${sectionName}.`);
-  return value.map(item => {
-    const name = isRecord(item) ? item[nameKey] : null;
-    if (
-      !isRecord(item) ||
-      typeof item._id !== 'string' ||
-      typeof name !== 'string'
-    ) {
-      throw new Error(`The puzzle-access API returned invalid ${sectionName} data.`);
-    }
-    return { id: item._id, name };
-  });
 }
 
 function parseAssetGrant(value: unknown, idsKey: string, sectionName: string): AssetGrantSettings {
@@ -92,16 +88,13 @@ export default function AdminPuzzleAccessDialog({
   const [categories, setCategories] = useState<GrantableCategory[]>([]);
   const [puzzleAccess, setPuzzleAccess] = useState<Record<string, PuzzleGrantSettings>>({});
   const [specificPuzzlesInputs, setSpecificPuzzlesInputs] = useState<Record<string, string>>({});
-  const [contentItems, setContentItems] = useState<Record<AssetAccessKey, GrantableContentItem[]>>({
-    openingAccess: [],
-    famousMatesAccess: [],
-    bestGamesAccess: []
-  });
   const [assetAccess, setAssetAccess] = useState<Record<AssetAccessKey, AssetGrantSettings>>({
     openingAccess: { enabled: false, allowedIds: [] },
     famousMatesAccess: { enabled: false, allowedIds: [] },
     bestGamesAccess: { enabled: false, allowedIds: [] }
   });
+  const [columns, setColumns] = useState<GrantableColumn[]>([]);
+  const [columnAccess, setColumnAccess] = useState<Record<string, ColumnGrantSettings>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -117,6 +110,8 @@ export default function AdminPuzzleAccessDialog({
       setCategories([]);
       setPuzzleAccess({});
       setSpecificPuzzlesInputs({});
+      setColumns([]);
+      setColumnAccess({});
       try {
         const response = await fetch(`${API_BASE_URL}/superadmin/admins/${adminId}/puzzle-access`, {
           headers: { Authorization: 'Bearer ' + token }
@@ -135,7 +130,9 @@ export default function AdminPuzzleAccessDialog({
           !('bestGames' in data) ||
           !('openingAccess' in data) ||
           !('famousMatesAccess' in data) ||
-          !('bestGamesAccess' in data)
+          !('bestGamesAccess' in data) ||
+          !Array.isArray(data.columns) ||
+          !isRecord(data.columnAccess)
         ) {
           const responseFields = isRecord(data) ? Object.keys(data).join(', ') : typeof data;
           throw new Error(
@@ -161,9 +158,39 @@ export default function AdminPuzzleAccessDialog({
             icon: typeof rawCategory.icon === 'string' ? rawCategory.icon : undefined
           });
         }
-        const parsedOpenings = parseContentItems(data.openings, 'name', 'openings');
-        const parsedFamousMates = parseContentItems(data.famousMates, 'name', 'famous mates');
-        const parsedBestGames = parseContentItems(data.bestGames, 'title', 'best games');
+        const parsedColumns: GrantableColumn[] = data.columns.map(rawColumn => {
+          if (
+            !isRecord(rawColumn) ||
+            typeof rawColumn._id !== 'string' ||
+            typeof rawColumn.title !== 'string' ||
+            !Array.isArray(rawColumn.contents)
+          ) throw new Error('The puzzle-access API returned invalid column data.');
+          return {
+            id: rawColumn._id,
+            title: rawColumn.title,
+            contents: rawColumn.contents.map(rawContent => {
+              if (
+                !isRecord(rawContent) ||
+                typeof rawContent._id !== 'string' ||
+                typeof rawContent.title !== 'string'
+              ) throw new Error('The puzzle-access API returned invalid column content data.');
+              return { id: rawContent._id, name: rawContent.title };
+            })
+          };
+        });
+        const parsedColumnAccess: Record<string, ColumnGrantSettings> = {};
+        for (const [columnId, rawSettings] of Object.entries(data.columnAccess)) {
+          if (
+            !isRecord(rawSettings) ||
+            typeof rawSettings.enabled !== 'boolean' ||
+            !Array.isArray(rawSettings.allowedContentIds) ||
+            rawSettings.allowedContentIds.some(id => typeof id !== 'string')
+          ) throw new Error(`The puzzle-access API returned invalid column access for ${columnId}.`);
+          parsedColumnAccess[columnId] = {
+            enabled: rawSettings.enabled,
+            allowedContentIds: rawSettings.allowedContentIds as string[]
+          };
+        }
         const parsedAssetAccess: Record<AssetAccessKey, AssetGrantSettings> = {
           openingAccess: parseAssetGrant(data.openingAccess, 'allowedOpenings', 'opening'),
           famousMatesAccess: parseAssetGrant(data.famousMatesAccess, 'allowedMates', 'famous mates'),
@@ -172,12 +199,12 @@ export default function AdminPuzzleAccessDialog({
 
         if (!cancelled) {
           setCategories(parsedCategories);
-          setContentItems({
-            openingAccess: parsedOpenings,
-            famousMatesAccess: parsedFamousMates,
-            bestGamesAccess: parsedBestGames
-          });
           setAssetAccess(parsedAssetAccess);
+          setColumns(parsedColumns);
+          const grantableColumnIds = new Set(parsedColumns.map(column => column.id));
+          setColumnAccess(Object.fromEntries(
+            Object.entries(parsedColumnAccess).filter(([columnId]) => grantableColumnIds.has(columnId))
+          ));
           const normalizedAccess: Record<string, PuzzleGrantSettings> = {};
           const specificInputs: Record<string, string> = {};
           parsedCategories.forEach(({ category }) => {
@@ -243,16 +270,15 @@ export default function AdminPuzzleAccessDialog({
     }));
   };
 
-  const updateAssetAccess = (section: AssetAccessKey, settings: AssetGrantSettings) => {
-    setAssetAccess(current => ({ ...current, [section]: settings }));
-  };
-
-  const toggleAssetItem = (section: AssetAccessKey, itemId: string, checked: boolean) => {
-    const current = assetAccess[section];
-    const allowedIds = checked
-      ? [...new Set([...current.allowedIds, itemId])]
-      : current.allowedIds.filter(id => id !== itemId);
-    updateAssetAccess(section, { ...current, enabled: true, allowedIds });
+  const toggleColumnItem = (column: GrantableColumn, contentId: string, checked: boolean) => {
+    const current = columnAccess[column.id] || { enabled: false, allowedContentIds: [] };
+    const allowedContentIds = checked
+      ? [...new Set([...current.allowedContentIds, contentId])]
+      : current.allowedContentIds.filter(id => id !== contentId);
+    setColumnAccess(existing => ({
+      ...existing,
+      [column.id]: { enabled: true, allowedContentIds }
+    }));
   };
 
   const saveAccess = async () => {
@@ -314,7 +340,8 @@ export default function AdminPuzzleAccessDialog({
           bestGamesAccess: {
             enabled: assetAccess.bestGamesAccess.enabled,
             allowedGames: assetAccess.bestGamesAccess.allowedIds
-          }
+          },
+          columnAccess
         })
       });
       if (!response.ok) {
@@ -360,17 +387,6 @@ export default function AdminPuzzleAccessDialog({
     }
     return sum + (settings.limit > 0 ? Math.min(settings.limit, total) : total);
   }, 0);
-  const assetSections: {
-    key: AssetAccessKey;
-    title: string;
-    noun: string;
-    icon: typeof BookOpen;
-  }[] = [
-    { key: 'openingAccess', title: 'Opening Access', noun: 'opening', icon: BookOpen },
-    { key: 'famousMatesAccess', title: 'Famous Mates Access', noun: 'famous mate', icon: Crown },
-    { key: 'bestGamesAccess', title: 'Best Games Access', noun: 'best game', icon: Trophy }
-  ];
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
@@ -381,7 +397,7 @@ export default function AdminPuzzleAccessDialog({
           </DialogTitle>
         </DialogHeader>
         <DialogDescription>
-          Grant puzzles, openings, famous mates, and best games to this admin. They can assign granted content to their students, but cannot edit content created by you.
+          Grant puzzles and column content to this admin. Standard columns appear after the admin adds that type; custom columns appear when both of you have a column with the same title. The admin can share granted items with students but cannot edit your content.
         </DialogDescription>
 
         {isLoading ? (
@@ -392,13 +408,15 @@ export default function AdminPuzzleAccessDialog({
           <p className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
             {loadError}
           </p>
-        ) : categories.length === 0 ? (
-          <p className="rounded-md border border-border p-6 text-center text-sm text-muted-foreground">
-            There are no enabled puzzles created by this superadmin to grant.
-          </p>
         ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {categories.map(({ category, name, icon, total }) => {
+          <div className="space-y-4">
+            {categories.length === 0 ? (
+              <p className="rounded-md border border-border p-4 text-sm text-muted-foreground">
+                There are no enabled puzzles to grant.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {categories.map(({ category, name, icon, total }) => {
               const settings = puzzleAccess[category] || createDefaultSettings();
               const isEnabled = settings.enabled;
               return (
@@ -504,67 +522,51 @@ export default function AdminPuzzleAccessDialog({
                   </div>
                 </div>
               );
-            })}
+                })}
+              </div>
+            )}
           </div>
         )}
 
         {!isLoading && !loadError && (
           <div className="space-y-5">
-            {assetSections.map(({ key, title, noun, icon: Icon }) => {
-              const items = contentItems[key];
-              const settings = assetAccess[key];
+            {columns.map(column => {
+              const settings = columnAccess[column.id] || { enabled: false, allowedContentIds: [] };
               return (
-                <section key={key} className="rounded-lg border border-border p-4">
+                <section key={column.id} className="rounded-lg border border-border p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <h3 className="flex items-center gap-2 font-semibold">
-                      <Icon className="h-5 w-5" />
-                      {title}
+                      <BookOpen className="h-5 w-5" />
+                      {column.title}
                     </h3>
                     <Switch
                       checked={settings.enabled}
-                      onCheckedChange={enabled => updateAssetAccess(key, {
-                        enabled,
-                        allowedIds: []
-                      })}
-                      aria-label={`Grant ${title.toLowerCase()}`}
+                      onCheckedChange={enabled => setColumnAccess(current => ({
+                        ...current,
+                        [column.id]: { ...settings, enabled }
+                      }))}
+                      aria-label={`Grant ${column.title}`}
                     />
                   </div>
-                  {settings.enabled && (
-                    <>
-                      {items.length > 0 ? (
-                        <div className="max-h-52 space-y-1 overflow-y-auto border-t border-border pt-2">
-                          <div className="flex items-center justify-between gap-2 px-2 py-1">
-                            <p className="text-xs text-muted-foreground">
-                              Select only the {noun}s you want this admin to access.
-                            </p>
-                          </div>
-                          {items.map(item => (
-                            <label
-                              key={item.id}
-                              className="flex cursor-pointer items-center gap-2 rounded p-2 hover:bg-secondary/50"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={settings.allowedIds.includes(item.id)}
-                                onChange={event => toggleAssetItem(key, item.id, event.target.checked)}
-                                className="rounded border-gray-300"
-                              />
-                              <span className="flex-1 text-sm">{item.name}</span>
-                            </label>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="border-t border-border pt-3 text-sm text-muted-foreground">
-                          No enabled {noun}s are available to grant.
-                        </p>
-                      )}
-                      {/* <p className="mt-2 text-xs text-muted-foreground">
-                        `${settings.allowedIds.length} ${noun}${settings.allowedIds.length === 1 ? '' : 's'} selected.`
-                      </p> */}
-                    </>
-                  )}
-                  {!settings.enabled && (
-                    <p className="text-xs text-muted-foreground">{title} not granted.</p>
+                  {settings.enabled ? column.contents.length ? (
+                    <div className="max-h-52 space-y-1 overflow-y-auto border-t border-border pt-2">
+                      <p className="px-2 py-1 text-xs text-muted-foreground">Select which of your items this admin may share with students.</p>
+                      {column.contents.map(content => (
+                        <label key={content.id} className="flex cursor-pointer items-center gap-2 rounded p-2 hover:bg-secondary/50">
+                          <input
+                            type="checkbox"
+                            checked={settings.allowedContentIds.includes(content.id)}
+                            onChange={event => toggleColumnItem(column, content.id, event.target.checked)}
+                            className="rounded border-gray-300"
+                          />
+                          <span className="flex-1 text-sm">{content.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="border-t border-border pt-3 text-sm text-muted-foreground">No enabled content is available to grant.</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">Column not granted.</p>
                   )}
                 </section>
               );

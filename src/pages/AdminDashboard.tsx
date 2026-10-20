@@ -48,7 +48,10 @@ import {
 
   Crown,
   Layers,
-  KeyRound
+  KeyRound,
+  Star,
+  Lightbulb,
+  Swords
 
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -62,6 +65,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import AdminPuzzleAccessDialog from '@/components/AdminPuzzleAccessDialog';
+import ColumnStudentAccess, { StudentColumnAccess } from '@/components/ColumnStudentAccess';
+import { useQueries } from '@tanstack/react-query';
+import { columnContentsQueryOptions, useColumns } from '@/hooks/useColumns';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ;
 
@@ -165,6 +171,7 @@ interface ContentAccess {
     enabled: boolean;
     allowedGames: string[];
   };
+  columnAccess: Record<string, StudentColumnAccess>;
 }
 
 interface AttendanceRecord {
@@ -234,6 +241,17 @@ const PUZZLE_CATEGORIES = [
 
 const AdminDashboard = () => {
   const { user, token, getAllUsers, updateUser, deleteUser, register } = useAuth();
+  const { data: columns = [], error: columnsError } = useColumns(token);
+  const columnContentQueries = useQueries({
+    queries: columns.map(column => columnContentsQueryOptions(token, column._id))
+  });
+  const columnContentsLoading = columnContentQueries.some(query => query.isLoading);
+  const columnContentsError = columnContentQueries.some(query => query.error);
+  const populatedColumns = columns.flatMap((column, index) => {
+    if (column.isEnabled === false) return [];
+    const contents = (columnContentQueries[index]?.data || []).filter(content => content.isEnabled !== false);
+    return contents.length ? [{ column, contents }] : [];
+  });
   const [searchParams] = useSearchParams();
   const initialTab = searchParams.get('tab');
   const [stats, setStats] = useState<Stats>({ totalStudents: 0, activeStudents: 0, totalPuzzles: 0, totalOpenings: 0, totalFamousMates: 0, totalBestGames: 0 });
@@ -399,9 +417,15 @@ const AdminDashboard = () => {
   const [puzzleCounts, setPuzzleCounts] = useState<{ [key: string]: number }>({});
   const [puzzleCategoryVisibility, setPuzzleCategoryVisibility] = useState<Array<{ categoryId: string; isEnabled?: boolean; allowedGroups?: string[]; groupsConfigured?: boolean }>>([]);
   // Bulk selective access UI state
-  const [bulkSelectionType, setBulkSelectionType] = useState<'openings' | 'famousMates' | 'bestGames'>('openings');
+  const [bulkSelectionColumnId, setBulkSelectionColumnId] = useState('');
   const [selectedContentItemId, setSelectedContentItemId] = useState<string | null>(null);
   const [selectedStudentsForBulk, setSelectedStudentsForBulk] = useState<{ [userId: string]: boolean }>({});
+  const activeBulkColumnId = populatedColumns.some(({ column }) =>
+    column._id === bulkSelectionColumnId
+  ) ? bulkSelectionColumnId : populatedColumns[0]?.column._id || '';
+  const selectedBulkColumn = populatedColumns.find(({ column }) =>
+    column._id === activeBulkColumnId
+  );
 
   // Attendance states
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
@@ -977,12 +1001,7 @@ const AdminDashboard = () => {
       } else if (activeTab === 'groups') {
         pendingLoads.push(loadDashboardResource('groups', loaders.loadGroups));
       } else if (activeTab === 'access') {
-        const resourceLoaders: Record<typeof bulkSelectionType, () => Promise<boolean>> = {
-          openings: loaders.loadOpenings,
-          famousMates: loaders.loadFamousMates,
-          bestGames: loaders.loadBestGames
-        };
-        pendingLoads.push(loadDashboardResource(bulkSelectionType, resourceLoaders[bulkSelectionType]));
+        // Column content is loaded and cached by the shared columns queries above.
       } else if (activeTab === 'openings') {
         pendingLoads.push(loadDashboardResource('openings', loaders.loadOpenings));
       } else if (activeTab === 'famousmates') {
@@ -998,7 +1017,7 @@ const AdminDashboard = () => {
     };
 
     void loadActiveTabData();
-  }, [activeTab, bulkSelectionType, user?.role]);
+  }, [activeTab, user?.role]);
 
   // Calculate puzzle counts by category
   useEffect(() => {
@@ -1074,33 +1093,10 @@ const AdminDashboard = () => {
         try {
           const access = await getUserContentAccessRef.current(stu.id);
 
-          if (bulkSelectionType === 'openings') {
-            const list = access.openingAccess?.allowedOpenings || [];
-            if (list.length === 0 && access.openingAccess?.enabled) {
-              // all unlocked -> mark true
-              map[stu.id] = true;
-            } else {
-              map[stu.id] = list.includes(selectedContentItemId!);
-            }
-          }
-
-          if (bulkSelectionType === 'famousMates') {
-            const list = access.famousMatesAccess?.allowedMates || [];
-            if (list.length === 0 && access.famousMatesAccess?.enabled) {
-              map[stu.id] = true;
-            } else {
-              map[stu.id] = list.includes(selectedContentItemId!);
-            }
-          }
-
-          if (bulkSelectionType === 'bestGames') {
-            const list = access.bestGamesAccess?.allowedGames || [];
-            if (list.length === 0 && access.bestGamesAccess?.enabled) {
-              map[stu.id] = true;
-            } else {
-              map[stu.id] = list.includes(selectedContentItemId!);
-            }
-          }
+          const settings = access.columnAccess?.[activeBulkColumnId];
+          const allowedIds = settings?.allowedContentIds || [];
+          map[stu.id] = settings?.enabled === true &&
+            (allowedIds.length === 0 || allowedIds.includes(selectedContentItemId!));
         } catch (err) {
           console.error(`Failed to load content access for user ${stu.id}:`, err);
         }
@@ -1113,7 +1109,7 @@ const AdminDashboard = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, selectedContentItemId, bulkSelectionType, users]);
+  }, [activeTab, selectedContentItemId, activeBulkColumnId, users]);
 
   // Content Access functions
   const loadUserContentAccess = async (userId: string) => {
@@ -1171,9 +1167,7 @@ const AdminDashboard = () => {
         },
         body: JSON.stringify({
           puzzleAccess: userContentAccess.puzzleAccess,
-          openingAccess: userContentAccess.openingAccess,
-          famousMatesAccess: userContentAccess.famousMatesAccess,
-          bestGamesAccess: userContentAccess.bestGamesAccess
+          columnAccess: userContentAccess.columnAccess || {}
         })
       });
 
@@ -3027,8 +3021,25 @@ const AdminDashboard = () => {
     { label: 'Total Students', value: stats.totalStudents, icon: Users, color: 'text-primary' },
     { label: 'Active Students', value: stats.activeStudents, icon: UserCheck, color: 'text-success' },
     { label: 'Total Puzzles', value: stats.totalPuzzles, icon: Puzzle, color: 'text-accent' },
-    { label: 'Total Openings', value: stats.totalOpenings, icon: BookOpen, color: 'text-warning' },
-    { label: 'Best Games', value: stats.totalBestGames, icon: Trophy, color: 'text-brilliant' },
+    ...populatedColumns.map(({ column, contents }) => {
+      const ColumnIcon = ({
+        BookOpen,
+        Trophy,
+        Crown,
+        Puzzle,
+        Star,
+        Target,
+        Lightbulb,
+        Swords
+      } as Record<string, typeof BookOpen>)[column.icon] || BookOpen;
+      return {
+        label: column.title,
+        value: contents.length,
+        icon: ColumnIcon,
+        color: 'text-warning',
+        href: `/columns/${column._id}`
+      };
+    }),
   ];
   const filteredUsers = users.filter(u => {
     if (groupFilter === 'all') return true;
@@ -3215,22 +3226,32 @@ const AdminDashboard = () => {
             </Dialog>
 
             {/* Stats Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-              {statCards.map((stat, index) => (
-                <div key={index} className="card-premium p-5">
-                  <div className="flex items-center justify-between mb-3">
-                    <stat.icon className={`w-6 h-6 ${stat.color}`} />
+            {columnsError || columnContentQueries.some(query => query.error) ? (
+              <p className="mb-4 text-sm text-destructive">Some column content could not be loaded. Refresh the page to try again.</p>
+            ) : null}
+            <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+              {statCards.map((stat) => {
+                const card = (
+                  <div className="card-premium h-full p-5">
+                    <div className="mb-3 flex items-center justify-between">
+                      <stat.icon className={`h-6 w-6 ${stat.color}`} />
+                    </div>
+                    <p className="text-2xl font-bold text-foreground">{stat.value}</p>
+                    <p className="text-sm text-muted-foreground">{stat.label}</p>
                   </div>
-                  <p className="text-2xl font-bold text-foreground">{stat.value}</p>
-                  <p className="text-sm text-muted-foreground">{stat.label}</p>
-                </div>
-              ))}
+                );
+                return 'href' in stat ? (
+                  <Link key={stat.label} to={stat.href} className="block transition-transform hover:-translate-y-0.5">
+                    {card}
+                  </Link>
+                ) : <div key={stat.label}>{card}</div>;
+              })}
             </div>
 
         {/* Tabs for Management */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
 
-          <TabsList className={`w-full mb-6 h-auto flex-wrap md:grid ${user?.role === 'superadmin' ? 'md:grid-cols-7' : 'md:grid-cols-6'}`}>
+          <TabsList className="mb-6 h-auto w-full flex-wrap justify-start gap-1">
             <TabsTrigger value="users" className="flex items-center gap-2 flex-1 min-w-[60px]">
               <Users className="w-4 h-4" /> <span className="hidden sm:inline">Users</span>
             </TabsTrigger>
@@ -3241,21 +3262,74 @@ const AdminDashboard = () => {
             <TabsTrigger value="access" className="flex items-center gap-2 flex-1 min-w-[60px]">
               <Settings className="w-4 h-4" /> <span className="hidden sm:inline">Content Access</span>
             </TabsTrigger>
-            <TabsTrigger value="openings" className="flex items-center gap-2 flex-1 min-w-[60px]">
-              <BookOpen className="w-4 h-4" /> <span className="hidden sm:inline">Openings</span>
-            </TabsTrigger>
-            <TabsTrigger value="famousmates" className="flex items-center gap-2 flex-1 min-w-[60px]">
-              <Crown className="w-4 h-4" /> <span className="hidden sm:inline">Famous Mates</span>
-            </TabsTrigger>
-            <TabsTrigger value="bestgames" className="flex items-center gap-2 flex-1 min-w-[60px]">
-              <Trophy className="w-4 h-4" /> <span className="hidden sm:inline">Best Games</span>
-            </TabsTrigger>
+            {populatedColumns.map(({ column }) => {
+              const ColumnIcon = ({
+                BookOpen,
+                Trophy,
+                Crown,
+                Puzzle,
+                Star,
+                Target,
+                Lightbulb,
+                Swords
+              } as Record<string, typeof BookOpen>)[column.icon] || BookOpen;
+              return (
+                <TabsTrigger key={column._id} value={`column-${column._id}`} className="flex min-w-[60px] flex-1 items-center gap-2">
+                  <ColumnIcon className="h-4 w-4" />
+                  <span>{column.title}</span>
+                </TabsTrigger>
+              );
+            })}
             {user?.role === 'superadmin' && (
               <TabsTrigger value="admins" className="flex items-center gap-2 flex-1 min-w-[60px]">
                 <UserCheck className="w-4 h-4" /> <span className="hidden sm:inline">Admin Management</span>
               </TabsTrigger>
             )}
           </TabsList>
+
+          {populatedColumns.map(({ column, contents }) => (
+            <TabsContent key={column._id} value={`column-${column._id}`}>
+              <div className="card-premium space-y-5 p-6">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-serif text-xl font-semibold">{column.title}</h2>
+                    <p className="text-sm text-muted-foreground">
+                      {contents.length} {contents.length === 1 ? 'item' : 'items'} added to this column
+                    </p>
+                  </div>
+                  <Button asChild variant="outline">
+                    <Link to={`/columns/${column._id}`}>Manage Column</Link>
+                  </Button>
+                </div>
+                <div className="grid gap-3">
+                  {contents.map(content => (
+                    <Link
+                      key={content._id}
+                      to={`/columns/${column._id}`}
+                      className="flex items-start justify-between gap-4 rounded-lg border bg-secondary/30 p-4 transition-colors hover:bg-secondary/60"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-foreground">
+                          {content.title || content.name || 'Untitled content'}
+                        </p>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {[content.category, content.players, `${content.moves?.length || 0} moves`]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </p>
+                        {content.description && (
+                          <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{content.description}</p>
+                        )}
+                      </div>
+                      <span className={`shrink-0 text-xs ${content.isEnabled === false ? 'text-muted-foreground' : 'text-success'}`}>
+                        {content.isEnabled === false ? 'Disabled' : 'Enabled'}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            </TabsContent>
+          ))}
 
           {/* Users Tab */}
           <TabsContent value="users">
@@ -3922,176 +3996,18 @@ const AdminDashboard = () => {
                       </div>
                     </div>
 
-                    {/* Opening Access */}
-                    <div>
-                      <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                        <BookOpen className="w-5 h-5" /> Opening Access
-                      </h3>
-                      <div className="p-4 bg-secondary/50 rounded-lg space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium">Enable Openings</span>
-                          <Switch
-                            checked={userContentAccess.openingAccess?.enabled || false}
-                            onCheckedChange={(checked) => setUserContentAccess({
-                              ...userContentAccess,
-                              openingAccess: { ...userContentAccess.openingAccess, enabled: checked, allowedOpenings: checked ? [] : [] }
-                            })}
-                          />
-                        </div>
-                        
-                        {userContentAccess.openingAccess?.enabled && openings.length > 0 && (
-                          <div className="space-y-2 max-h-60 overflow-y-auto border-t border-border pt-3">
-                            <p className="text-xs text-muted-foreground mb-2">Select which openings to unlock:</p>
-                            {openings.map((opening) => {
-                              const isAllowed = userContentAccess.openingAccess?.allowedOpenings?.includes(opening._id || '') || false;
-                              return (
-                                <label key={opening._id} className="flex items-center gap-2 p-2 rounded hover:bg-secondary/50 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={isAllowed}
-                                    onChange={(e) => {
-                                      const currentAllowed = userContentAccess.openingAccess?.allowedOpenings || [];
-                                      const newAllowed = e.target.checked
-                                        ? [...currentAllowed, opening._id!]
-                                        : currentAllowed.filter(id => id !== opening._id);
-                                      setUserContentAccess({
-                                        ...userContentAccess,
-                                        openingAccess: { ...userContentAccess.openingAccess, enabled: true, allowedOpenings: newAllowed }
-                                      });
-                                    }}
-                                    className="rounded border-gray-300"
-                                  />
-                                  <span className="text-sm flex-1">{opening.name}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        )}
-                        
-                        <p className="text-xs text-muted-foreground">
-                          {!userContentAccess.openingAccess?.enabled 
-                            ? '🔒 All openings are locked'
-                            : userContentAccess.openingAccess?.allowedOpenings?.length === 0
-                              ? '✓ All openings unlocked'
-                              : `✓ ${userContentAccess.openingAccess?.allowedOpenings?.length} opening(s) unlocked`
-                          }
-                        </p>
+                    <section className="space-y-3">
+                      <div>
+                        <h3 className="text-lg font-semibold">Column Access</h3>
+                        <p className="text-sm text-muted-foreground">Allow this student to see all or selected enabled content in each column.</p>
                       </div>
-                    </div>
-
-                    {/* Famous Mates Access */}
-                    <div>
-                      <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                        <Crown className="w-5 h-5" /> Famous Mates Access
-                      </h3>
-                      <div className="p-4 bg-secondary/50 rounded-lg space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium">Enable Famous Mates</span>
-                          <Switch
-                            checked={userContentAccess.famousMatesAccess?.enabled || false}
-                            onCheckedChange={(checked) => setUserContentAccess({
-                              ...userContentAccess,
-                              famousMatesAccess: { ...userContentAccess.famousMatesAccess, enabled: checked, allowedMates: checked ? [] : [] }
-                            })}
-                          />
-                        </div>
-                        
-                        {userContentAccess.famousMatesAccess?.enabled && famousMates.length > 0 && (
-                          <div className="space-y-2 max-h-60 overflow-y-auto border-t border-border pt-3">
-                            <p className="text-xs text-muted-foreground mb-2">Select which famous mates to unlock:</p>
-                            {famousMates.map((mate) => {
-                              const isAllowed = userContentAccess.famousMatesAccess?.allowedMates?.includes(mate._id || '') || false;
-                              return (
-                                <label key={mate._id} className="flex items-center gap-2 p-2 rounded hover:bg-secondary/50 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={isAllowed}
-                                    onChange={(e) => {
-                                      const currentAllowed = userContentAccess.famousMatesAccess?.allowedMates || [];
-                                      const newAllowed = e.target.checked
-                                        ? [...currentAllowed, mate._id!]
-                                        : currentAllowed.filter(id => id !== mate._id);
-                                      setUserContentAccess({
-                                        ...userContentAccess,
-                                        famousMatesAccess: { ...userContentAccess.famousMatesAccess, enabled: true, allowedMates: newAllowed }
-                                      });
-                                    }}
-                                    className="rounded border-gray-300"
-                                  />
-                                  <span className="text-sm flex-1">{mate.name}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
+                      <ColumnStudentAccess
+                        value={userContentAccess.columnAccess || {}}
+                        onChange={columnAccess => setUserContentAccess(current =>
+                          current ? { ...current, columnAccess } : current
                         )}
-                        
-                        <p className="text-xs text-muted-foreground">
-                          {!userContentAccess.famousMatesAccess?.enabled 
-                            ? '🔒 All famous mates are locked'
-                            : userContentAccess.famousMatesAccess?.allowedMates?.length === 0
-                              ? '✓ All famous mates unlocked'
-                              : `✓ ${userContentAccess.famousMatesAccess?.allowedMates?.length} mate(s) unlocked`
-                          }
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Best Games Access */}
-                    <div>
-                      <h3 className="font-semibold text-lg mb-4 flex items-center gap-2">
-                        <Trophy className="w-5 h-5" /> Best Games Access
-                      </h3>
-                      <div className="p-4 bg-secondary/50 rounded-lg space-y-3">
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium">Enable Best Games</span>
-                          <Switch
-                            checked={userContentAccess.bestGamesAccess?.enabled || false}
-                            onCheckedChange={(checked) => setUserContentAccess({
-                              ...userContentAccess,
-                              bestGamesAccess: { ...userContentAccess.bestGamesAccess, enabled: checked, allowedGames: checked ? [] : [] }
-                            })}
-                          />
-                        </div>
-                        
-                        {userContentAccess.bestGamesAccess?.enabled && bestGames.length > 0 && (
-                          <div className="space-y-2 max-h-60 overflow-y-auto border-t border-border pt-3">
-                            <p className="text-xs text-muted-foreground mb-2">Select which best games to unlock:</p>
-                            {bestGames.map((game) => {
-                              const isAllowed = userContentAccess.bestGamesAccess?.allowedGames?.includes(game._id || '') || false;
-                              return (
-                                <label key={game._id} className="flex items-center gap-2 p-2 rounded hover:bg-secondary/50 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={isAllowed}
-                                    onChange={(e) => {
-                                      const currentAllowed = userContentAccess.bestGamesAccess?.allowedGames || [];
-                                      const newAllowed = e.target.checked
-                                        ? [...currentAllowed, game._id!]
-                                        : currentAllowed.filter(id => id !== game._id);
-                                      setUserContentAccess({
-                                        ...userContentAccess,
-                                        bestGamesAccess: { ...userContentAccess.bestGamesAccess, enabled: true, allowedGames: newAllowed }
-                                      });
-                                    }}
-                                    className="rounded border-gray-300"
-                                  />
-                                  <span className="text-sm flex-1">{game.title}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        )}
-                        
-                        <p className="text-xs text-muted-foreground">
-                          {!userContentAccess.bestGamesAccess?.enabled 
-                            ? '🔒 All best games are locked'
-                            : userContentAccess.bestGamesAccess?.allowedGames?.length === 0
-                              ? '✓ All best games unlocked'
-                              : `✓ ${userContentAccess.bestGamesAccess?.allowedGames?.length} game(s) unlocked`
-                          }
-                        </p>
-                      </div>
-                    </div>
+                      />
+                    </section>
 
                     <Button onClick={handleUpdateContentAccess} className="w-full">
                       <Save className="w-4 h-4 mr-2" /> Save Content Access
@@ -4203,38 +4119,48 @@ const AdminDashboard = () => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
                   <div>
                     <Label>Content Type</Label>
-                    <Select value={bulkSelectionType} onValueChange={(val: any) => { setBulkSelectionType(val); setSelectedContentItemId(null); }}>
+                    <Select
+                      value={activeBulkColumnId}
+                      onValueChange={value => { setBulkSelectionColumnId(value); setSelectedContentItemId(null); }}
+                      disabled={columnContentsLoading || populatedColumns.length === 0}
+                    >
                       <SelectTrigger>
-                        <SelectValue />
+                        <SelectValue placeholder={columnContentsLoading ? 'Loading columns…' : 'No columns with content'} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="openings">Openings</SelectItem>
-                        <SelectItem value="famousMates">Famous Mates</SelectItem>
-                        <SelectItem value="bestGames">Best Games</SelectItem>
+                        {populatedColumns.map(({ column }) => (
+                          <SelectItem key={column._id} value={column._id}>{column.title}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
 
                   <div className="md:col-span-2">
                     <Label>Select Item</Label>
-                    <Select value={selectedContentItemId || ''} onValueChange={(val: any) => setSelectedContentItemId(val || null)}>
+                    <Select
+                      value={selectedContentItemId || ''}
+                      onValueChange={value => setSelectedContentItemId(value || null)}
+                      disabled={!selectedBulkColumn}
+                    >
                       <SelectTrigger>
-                        <SelectValue />
+                        <SelectValue placeholder="Select content" />
                       </SelectTrigger>
                       <SelectContent>
-                        {bulkSelectionType === 'openings' && openings.map(o => (
-                          <SelectItem key={o._id} value={o._id}>{o.name}</SelectItem>
-                        ))}
-                        {bulkSelectionType === 'famousMates' && famousMates.map(f => (
-                          <SelectItem key={f._id} value={f._id}>{f.name}</SelectItem>
-                        ))}
-                        {bulkSelectionType === 'bestGames' && bestGames.map(b => (
-                          <SelectItem key={b._id} value={b._id}>{b.title}</SelectItem>
+                        {selectedBulkColumn?.contents.map(content => (
+                          <SelectItem key={content._id} value={content._id}>
+                            {content.title || content.name || 'Untitled content'}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
+                {(columnsError || columnContentsError) && (
+                  <p className="mb-3 text-sm text-destructive">Unable to load columns. Please refresh and try again.</p>
+                )}
+                {!columnsError && !columnContentsError && !columnContentsLoading && populatedColumns.length === 0 && (
+                  <p className="mb-3 text-sm text-muted-foreground">No columns with enabled content are available for student access.</p>
+                )}
 
                 <div className="mb-3">
                   <div className="flex items-center justify-between mb-2">
@@ -4263,7 +4189,10 @@ const AdminDashboard = () => {
 
                 <div className="flex gap-3">
                   <Button onClick={async () => {
-                    if (!selectedContentItemId) {
+                    const selectedContent = selectedBulkColumn?.contents.find(content =>
+                      content._id === selectedContentItemId
+                    );
+                    if (!selectedBulkColumn || !selectedContent) {
                       toast.error('Please select an item');
                       return;
                     }
@@ -4279,85 +4208,28 @@ const AdminDashboard = () => {
                     const results = await Promise.allSettled(studentList.map(async (stu) => {
                       try {
                         const access = await getUserContentAccess(stu.id);
+                        const current = access.columnAccess?.[selectedBulkColumn.column._id] ||
+                          { enabled: false, allowedContentIds: [] };
+                        const isCurrentlyAllowed = current.enabled &&
+                          (current.allowedContentIds.length === 0 ||
+                            current.allowedContentIds.includes(selectedContent._id));
+                        const shouldAllow = !!selectedStudentsForBulk[stu.id];
+                        if (isCurrentlyAllowed === shouldAllow) return { ok: true, userId: stu.id };
 
-                        // compute new access per user
-                        if (bulkSelectionType === 'openings') {
-                          let openingAccess = access.openingAccess || { enabled: false, allowedOpenings: [] };
-                          let accessChanged = false;
-                          const currentlyHas = openingAccess.enabled &&
-                            ((openingAccess.allowedOpenings?.length || 0) === 0 ||
-                              openingAccess.allowedOpenings.includes(selectedContentItemId!));
-                          const shouldHave = !!selectedStudentsForBulk[stu.id];
-
-                          if (shouldHave && !currentlyHas) {
-                            // add
-                            const newAllowed = Array.from(new Set([...(openingAccess.allowedOpenings || []), selectedContentItemId!]));
-                            openingAccess = { enabled: true, allowedOpenings: newAllowed };
-                            accessChanged = true;
-                          } else if (!shouldHave && currentlyHas) {
-                            // remove
-                            // if allowedOpenings empty means "all unlocked" — convert to explicit list then remove
-                            let currentList = openingAccess.allowedOpenings || [];
-                            if (openingAccess.enabled && currentList.length === 0) {
-                              currentList = openings.map(o => o._id!).filter(Boolean) as string[];
-                            }
-                            const newAllowed = currentList.filter(id => id !== selectedContentItemId);
-                            openingAccess = { enabled: newAllowed.length === 0 ? false : true, allowedOpenings: newAllowed };
-                            accessChanged = true;
+                        const allowedIds = current.enabled && current.allowedContentIds.length === 0
+                          ? selectedBulkColumn.contents.map(content => content._id)
+                          : [...current.allowedContentIds];
+                        const updatedAllowedIds = shouldAllow
+                          ? [...new Set([...allowedIds, selectedContent._id])]
+                          : allowedIds.filter(id => id !== selectedContent._id);
+                        const columnAccess = {
+                          ...(access.columnAccess || {}),
+                          [selectedBulkColumn.column._id]: {
+                            enabled: shouldAllow || updatedAllowedIds.length > 0,
+                            allowedContentIds: updatedAllowedIds
                           }
-
-                          if (accessChanged) await updateUserContentAccess(stu.id, { openingAccess });
-                        }
-
-                        if (bulkSelectionType === 'famousMates') {
-                          let famousMatesAccess = access.famousMatesAccess || { enabled: false, allowedMates: [] };
-                          let accessChanged = false;
-                          const currentlyHas = famousMatesAccess.enabled &&
-                            ((famousMatesAccess.allowedMates?.length || 0) === 0 ||
-                              famousMatesAccess.allowedMates.includes(selectedContentItemId!));
-                          const shouldHave = !!selectedStudentsForBulk[stu.id];
-
-                          if (shouldHave && !currentlyHas) {
-                            const newAllowed = Array.from(new Set([...(famousMatesAccess.allowedMates || []), selectedContentItemId!]));
-                            famousMatesAccess = { enabled: true, allowedMates: newAllowed };
-                            accessChanged = true;
-                          } else if (!shouldHave && currentlyHas) {
-                            let currentList = famousMatesAccess.allowedMates || [];
-                            if (famousMatesAccess.enabled && currentList.length === 0) {
-                              currentList = famousMates.map(f => f._id!).filter(Boolean) as string[];
-                            }
-                            const newAllowed = currentList.filter(id => id !== selectedContentItemId);
-                            famousMatesAccess = { enabled: newAllowed.length === 0 ? false : true, allowedMates: newAllowed };
-                            accessChanged = true;
-                          }
-
-                          if (accessChanged) await updateUserContentAccess(stu.id, { famousMatesAccess });
-                        }
-
-                        if (bulkSelectionType === 'bestGames') {
-                          let bestGamesAccess = access.bestGamesAccess || { enabled: false, allowedGames: [] };
-                          let accessChanged = false;
-                          const currentlyHas = bestGamesAccess.enabled &&
-                            ((bestGamesAccess.allowedGames?.length || 0) === 0 ||
-                              bestGamesAccess.allowedGames.includes(selectedContentItemId!));
-                          const shouldHave = !!selectedStudentsForBulk[stu.id];
-
-                          if (shouldHave && !currentlyHas) {
-                            const newAllowed = Array.from(new Set([...(bestGamesAccess.allowedGames || []), selectedContentItemId!]));
-                            bestGamesAccess = { enabled: true, allowedGames: newAllowed };
-                            accessChanged = true;
-                          } else if (!shouldHave && currentlyHas) {
-                            let currentList = bestGamesAccess.allowedGames || [];
-                            if (bestGamesAccess.enabled && currentList.length === 0) {
-                              currentList = bestGames.map(b => b._id!).filter(Boolean) as string[];
-                            }
-                            const newAllowed = currentList.filter(id => id !== selectedContentItemId);
-                            bestGamesAccess = { enabled: newAllowed.length === 0 ? false : true, allowedGames: newAllowed };
-                            accessChanged = true;
-                          }
-
-                          if (accessChanged) await updateUserContentAccess(stu.id, { bestGamesAccess });
-                        }
+                        };
+                        await updateUserContentAccess(stu.id, { columnAccess });
 
                         return { ok: true, userId: stu.id };
                       } catch (err) {
@@ -4365,7 +4237,9 @@ const AdminDashboard = () => {
                       }
                     }));
 
-                    const succeeded = results.filter(r => (r as any).status === 'fulfilled' && (r as any).value.ok).length;
+                    const succeeded = results.filter(result =>
+                      result.status === 'fulfilled' && result.value.ok
+                    ).length;
                     toast.dismiss();
                     if (succeeded === studentList.length) {
                       toast.success(`Updated access for ${succeeded} students`);

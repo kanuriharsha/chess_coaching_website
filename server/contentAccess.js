@@ -48,6 +48,55 @@ export function filterVisibleItems(items, access, section, allowedIdsField) {
   });
 }
 
+export function filterVisibleColumnContents(items, access, column, viewer, grantedContentIds = null) {
+  if (viewer?.role === 'admin' || viewer?.role === 'superadmin') return items;
+  if (viewer?.role !== 'student' || column?.isEnabled === false) return [];
+
+  const settings = access?.columnAccess?.[String(column._id)];
+  if (settings?.enabled !== true) return [];
+  const allowedIds = Array.isArray(settings.allowedContentIds)
+    ? new Set(settings.allowedContentIds.map(String))
+    : new Set();
+  const grantIds = grantedContentIds ? new Set(grantedContentIds.map(String)) : null;
+  return items.filter(item =>
+    item.isEnabled !== false &&
+    (allowedIds.size === 0 || allowedIds.has(String(item._id ?? item.id))) &&
+    (!grantIds || grantIds.has(String(item._id ?? item.id)))
+  );
+}
+
+export function areColumnsCompatible(sourceColumn, adminColumn) {
+  if (sourceColumn.contentType !== adminColumn.contentType) return false;
+  if (sourceColumn.contentType !== 'generic') return true;
+  return String(sourceColumn.title || '').trim().toLowerCase() ===
+    String(adminColumn.title || '').trim().toLowerCase();
+}
+
+export function getGrantedColumnContentIds(access, column) {
+  const settings = access?.columnAccess?.[String(column._id)];
+  if (settings) {
+    return settings.enabled === true && Array.isArray(settings.allowedContentIds)
+      ? [...new Set(settings.allowedContentIds.map(String))]
+      : [];
+  }
+  const legacyGrants = {
+    opening: ['openingAccess', 'allowedOpenings'],
+    famousMate: ['famousMatesAccess', 'allowedMates'],
+    bestGame: ['bestGamesAccess', 'allowedGames']
+  };
+  const [accessKey, idsKey] = legacyGrants[column.contentType] || [];
+  if (accessKey && access?.[accessKey]?.enabled === true) {
+    return [...new Set((access[accessKey][idsKey] || []).map(String))];
+  }
+  return [];
+}
+
+export function filterColumnsForAdmin(columns, adminColumns) {
+  return columns.filter(sourceColumn =>
+    adminColumns.some(adminColumn => areColumnsCompatible(sourceColumn, adminColumn))
+  );
+}
+
 function isPuzzleCategoryVisible(categorySettings, viewer) {
   if (categorySettings?.isEnabled === false) return false;
   if (!categorySettings?.groupsConfigured) return true;

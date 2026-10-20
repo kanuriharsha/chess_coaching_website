@@ -14,6 +14,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ChevronLeft, ChevronRight, SkipBack, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
+import { useColumns } from '@/hooks/useColumns';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ;
 
@@ -24,10 +26,17 @@ interface Move {
 }
 
 const OpeningEditor = () => {
-  const { id } = useParams();
+  const { id: legacyId, columnId, contentId } = useParams();
+  const id = contentId || legacyId;
   const navigate = useNavigate();
   const { token, user } = useAuth();
+  const queryClient = useQueryClient();
+  const { data: columns = [], isLoading: columnsLoading } = useColumns(token);
   const isEditMode = !!id;
+  const returnPath = columnId ? `/columns/${columnId}` : '/openings';
+  const currentColumn = columns.find(column => column._id === columnId);
+  const isCustomColumn = currentColumn?.contentType === 'generic';
+  const contentLabel = isCustomColumn ? currentColumn?.title || 'Column' : 'Opening';
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -45,6 +54,10 @@ const OpeningEditor = () => {
   const [setupFen, setSetupFen] = useState<string>('');
 
   useEffect(() => {
+    if (!isEditMode && isCustomColumn) setCategory('General');
+  }, [isCustomColumn, isEditMode]);
+
+  useEffect(() => {
     if (isEditMode && id) {
       loadOpening(id);
     }
@@ -59,17 +72,30 @@ const OpeningEditor = () => {
       </AppLayout>
     );
   }
+  if (columnId && columnsLoading) {
+    return <AppLayout><p className="py-16 text-center text-muted-foreground">Loading editor…</p></AppLayout>;
+  }
 
   const loadOpening = async (openingId: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/openings/${openingId}`, {
+      const endpoint = columnId
+        ? `${API_BASE_URL}/columns/${columnId}/contents`
+        : `${API_BASE_URL}/openings/${openingId}`;
+      const response = await fetch(endpoint, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
       if (response.ok) {
-        const opening = await response.json();
-        setName(opening.name);
+        const responseData = await response.json();
+        const opening = columnId
+          ? responseData.find((item: { _id: string }) => item._id === openingId)
+          : responseData;
+        if (!opening) {
+          toast.error(`Failed to load ${contentLabel.toLowerCase()}`);
+          return;
+        }
+        setName(opening.name || opening.title);
         setDescription(opening.description);
         setCategory(opening.category);
         setMoves(opening.moves || []);
@@ -109,11 +135,11 @@ const OpeningEditor = () => {
             return;
           }
         }
-        toast.error('Failed to load opening');
+        toast.error(`Failed to load ${contentLabel.toLowerCase()}`);
       }
     } catch (error) {
-      console.error('Load opening error:', error);
-      toast.error('Error loading opening');
+      console.error(`Load ${contentLabel.toLowerCase()} error:`, error);
+      toast.error(`Error loading ${contentLabel.toLowerCase()}`);
     }
   };
 
@@ -232,7 +258,7 @@ const OpeningEditor = () => {
 
   const saveOpening = async () => {
     if (!name.trim()) {
-      toast.error('Please enter a name for the opening');
+      toast.error(`Please enter a name for ${contentLabel.toLowerCase()}`);
       return;
     }
     if (moves.length === 0) {
@@ -243,7 +269,7 @@ const OpeningEditor = () => {
     const openingData = {
       name: name.trim(),
       description: description.trim(),
-      category,
+      category: category.trim() || (isCustomColumn ? 'General' : category),
       startFen: setupFen || undefined, // Include custom starting position
       moves,
       isEnabled: true,
@@ -251,8 +277,12 @@ const OpeningEditor = () => {
 
     try {
       const url = isEditMode
-        ? `${API_BASE_URL}/openings/${id}`
-        : `${API_BASE_URL}/openings`;
+        ? columnId
+          ? `${API_BASE_URL}/columns/${columnId}/contents/${id}`
+          : `${API_BASE_URL}/openings/${id}`
+        : columnId
+          ? `${API_BASE_URL}/columns/${columnId}/contents`
+          : `${API_BASE_URL}/openings`;
       
       const method = isEditMode ? 'PUT' : 'POST';
 
@@ -266,14 +296,15 @@ const OpeningEditor = () => {
       });
 
       if (response.ok) {
-        toast.success(isEditMode ? 'Opening updated successfully' : 'Opening created successfully');
-        navigate('/openings');
+        if (columnId) await queryClient.invalidateQueries({ queryKey: ['column-contents', token, columnId] });
+        toast.success(`${contentLabel} ${isEditMode ? 'updated' : 'created'} successfully`);
+        navigate(returnPath);
       } else {
-        toast.error('Failed to save opening');
+        toast.error(`Failed to save ${contentLabel.toLowerCase()}`);
       }
     } catch (error) {
-      console.error('Save opening error:', error);
-      toast.error('Error saving opening');
+      console.error(`Save ${contentLabel.toLowerCase()} error:`, error);
+      toast.error(`Error saving ${contentLabel.toLowerCase()}`);
     }
   };
 
@@ -283,16 +314,18 @@ const OpeningEditor = () => {
         {/* Header */}
         <div className="mb-6">
           <button
-            onClick={() => navigate('/openings')}
+            onClick={() => navigate(returnPath)}
             className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
           >
-            ← Back to openings
+            ← Back to {isCustomColumn ? currentColumn?.title || 'column' : 'openings'}
           </button>
           <h1 className="font-serif text-3xl md:text-4xl font-bold text-foreground mb-2">
-            {isEditMode ? 'Edit Opening' : 'Create New Opening'}
+            {isEditMode ? `Edit ${contentLabel}` : `Create New ${contentLabel}`}
           </h1>
           <p className="text-muted-foreground">
-            {isEditMode ? 'Modify the opening details and moves' : 'Add a new opening to your collection'}
+            {isEditMode
+              ? `Modify the ${contentLabel.toLowerCase()} details and moves`
+              : `Add a new ${contentLabel.toLowerCase()} to your collection`}
           </p>
         </div>
 
@@ -399,17 +432,17 @@ const OpeningEditor = () => {
             )}
           </div>
 
-          {/* Right: Opening Info and Moves */}
+          {/* Right: Content Info and Moves */}
           <div className="space-y-4">
-            {/* Opening Details Form */}
+            {/* Content Details Form */}
             <div className="card-premium p-5 space-y-4">
-              <h3 className="font-medium">Opening Details</h3>
+              <h3 className="font-medium">{contentLabel} Details</h3>
               
               <div className="space-y-2">
                 <Label htmlFor="name">Name *</Label>
                 <Input
                   id="name"
-                  placeholder="e.g., Italian Game"
+                  placeholder={isCustomColumn ? `e.g., ${currentColumn?.title || 'Column'} study` : 'e.g., Italian Game'}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />
@@ -419,7 +452,7 @@ const OpeningEditor = () => {
                 <Label htmlFor="description">Description *</Label>
                 <Textarea
                   id="description"
-                  placeholder="Brief description of the opening"
+                  placeholder={`Brief description of the ${contentLabel.toLowerCase()}`}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   rows={3}
@@ -427,20 +460,29 @@ const OpeningEditor = () => {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="category">Category *</Label>
-                <Select value={category} onValueChange={setCategory}>
-                  <SelectTrigger id="category">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Open Games">Open Games</SelectItem>
-                    <SelectItem value="Semi-Open Games">Semi-Open Games</SelectItem>
-                    <SelectItem value="Closed Games">Closed Games</SelectItem>
-                    <SelectItem value="Semi-Closed Games">Semi-Closed Games</SelectItem>
-                    <SelectItem value="Flank Openings">Flank Openings</SelectItem>
-                    <SelectItem value="Indian Defenses">Indian Defenses</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="category">Category{isCustomColumn ? ' (optional)' : ' *'}</Label>
+                {isCustomColumn ? (
+                  <Input
+                    id="category"
+                    value={category}
+                    onChange={event => setCategory(event.target.value)}
+                    placeholder="General"
+                  />
+                ) : (
+                  <Select value={category} onValueChange={setCategory}>
+                    <SelectTrigger id="category">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Open Games">Open Games</SelectItem>
+                      <SelectItem value="Semi-Open Games">Semi-Open Games</SelectItem>
+                      <SelectItem value="Closed Games">Closed Games</SelectItem>
+                      <SelectItem value="Semi-Closed Games">Semi-Closed Games</SelectItem>
+                      <SelectItem value="Flank Openings">Flank Openings</SelectItem>
+                      <SelectItem value="Indian Defenses">Indian Defenses</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
 
               {/* Board Setup Mode Toggle */}
@@ -575,7 +617,7 @@ const OpeningEditor = () => {
               disabled={!name.trim() || moves.length === 0}
             >
               <Save className="w-4 h-4 mr-2" />
-              {isEditMode ? 'Update Opening' : 'Create Opening'}
+              {isEditMode ? `Update ${contentLabel}` : `Create ${contentLabel}`}
             </Button>
           </div>
         </div>

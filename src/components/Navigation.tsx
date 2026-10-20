@@ -16,31 +16,51 @@ import {
   PlusCircle,
   Skull,
   Users,
+  Star,
+  Target,
+  Lightbulb,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useColumns } from '@/hooks/useColumns';
 
 const Navigation = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, token } = useAuth();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { data: columns = [], error: columnsError } = useColumns(token);
+
+  useEffect(() => {
+    if (columnsError) console.error('Load navigation columns error:', columnsError);
+  }, [columnsError]);
+
+  const iconForColumn = (name: string) => ({
+    BookOpen,
+    Trophy,
+    Crown,
+    Puzzle,
+    Star,
+    Target,
+    Lightbulb,
+    Swords
+  }[name] || BookOpen);
 
   const navItems = [
     ...(isAdminRole(user?.role)
     ? [{ to: '/admin', icon: LayoutDashboard, label: 'Dashboard' }]
-    : []),
-    ...(user?.role === 'superadmin'
-    ? [{ to: '/admin-management', icon: Users, label: 'Admin Management' }]
     : []),
     ...(!isAdminRole(user?.role)
     ? [{ to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' }]
     : []),
     { to: '/puzzles', icon: Puzzle, label: 'Puzzles' },
     { to: '/games', icon: Swords, label: 'Games' },
-    { to: '/openings', icon: BookOpen, label: 'Openings' },
-    { to: '/famous-mates', icon: Crown, label: 'Famous Mates' },
-    { to: '/best-games', icon: Trophy, label: 'Best Games' },
-    { to: '/profile', icon: User, label: 'Profile' },
+    ...(user?.role === 'superadmin'
+      ? [{ to: '/admin-management', icon: Users, label: 'Admin Management' }]
+      : []),
   ];
+  const bottomNavItems = [
+    ...navItems.filter(item => item.label !== 'Admin Management'),
+    { to: '/profile', icon: User, label: 'Profile' }
+  ].slice(0, 4);
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -83,6 +103,49 @@ const Navigation = () => {
               {item.label}
             </NavLink>
           ))}
+          {columns.map(column => {
+            const Icon = iconForColumn(column.icon);
+            return (
+              <NavLink
+                key={column._id}
+                to={`/columns/${column._id}`}
+                className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
+                  isActive(`/columns/${column._id}`)
+                    ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md'
+                    : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                }`}
+              >
+                <Icon className="w-5 h-5" />
+                <span className="truncate">{column.title}</span>
+              </NavLink>
+            );
+          })}
+          {user && (
+            <NavLink
+              to="/profile"
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
+                isActive('/profile')
+                  ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md'
+                  : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+              }`}
+            >
+              <User className="w-5 h-5" />
+              Profile
+            </NavLink>
+          )}
+          {isAdminRole(user?.role) && (
+            <NavLink
+              to="/columns/manage"
+              className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
+                isActive('/columns/manage')
+                  ? 'bg-sidebar-primary text-sidebar-primary-foreground shadow-md'
+                  : 'text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+              }`}
+            >
+              <PlusCircle className="w-5 h-5" />
+              Add Columns
+            </NavLink>
+          )}
         </div>
 
         {/* User Section */}
@@ -111,7 +174,7 @@ const Navigation = () => {
       {/* Mobile Navigation - Bottom Bar */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50">
         <div className="flex justify-around items-center py-2 px-4">
-          {navItems.slice(0, 4).map((item) => (
+          {bottomNavItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -153,7 +216,7 @@ const Navigation = () => {
               </button>
             </div>
             <div className="p-4 space-y-1">
-              {navItems.map((item) => (
+              {navItems.filter(item => item.label !== 'Admin Management').map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}
@@ -172,6 +235,58 @@ const Navigation = () => {
                   {item.label}
                 </NavLink>
               ))}
+              {columns.map(column => {
+                const Icon = iconForColumn(column.icon);
+                return (
+                  <NavLink
+                    key={column._id}
+                    to={`/columns/${column._id}`}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${
+                      isActive(`/columns/${column._id}`) ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-secondary'
+                    }`}
+                  >
+                    <Icon className="w-5 h-5" />
+                    {column.title}
+                  </NavLink>
+                );
+              })}
+              {user?.role === 'superadmin' && (
+                <NavLink
+                  to="/admin-management"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${
+                    isActive('/admin-management') ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-secondary'
+                  }`}
+                >
+                  <Users className="w-5 h-5" />
+                  Admin Management
+                </NavLink>
+              )}
+              {user && (
+                <NavLink
+                  to="/profile"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${
+                    isActive('/profile') ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-secondary'
+                  }`}
+                >
+                  <User className="w-5 h-5" />
+                  Profile
+                </NavLink>
+              )}
+              {isAdminRole(user?.role) && (
+                <NavLink
+                  to="/columns/manage"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium ${
+                    isActive('/columns/manage') ? 'bg-primary text-primary-foreground' : 'text-foreground hover:bg-secondary'
+                  }`}
+                >
+                  <PlusCircle className="w-5 h-5" />
+                  Add Columns
+                </NavLink>
+              )}
             </div>
             <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-border">
               <button

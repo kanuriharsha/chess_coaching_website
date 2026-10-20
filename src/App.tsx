@@ -20,6 +20,9 @@ import AdminDashboard from "./pages/AdminDashboard";
 import AdminManagement from "./pages/AdminManagement";
 import Dashboard from "./pages/Dashboard";
 import PuzzleManager from "./pages/PuzzleManager";
+import ColumnManager from "./pages/ColumnManager";
+import ColumnContents from "./pages/ColumnContents";
+import ColumnTypeEditor from "./pages/ColumnTypeEditor";
 import NotFound from "./pages/NotFound";
 const queryClient = new QueryClient();
 
@@ -214,6 +217,38 @@ const AppRoutes = () => (
       element={
         <ProtectedRoute>
           <BestGameEditor />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/columns/manage"
+      element={
+        <ProtectedRoute>
+          <ColumnManager />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/columns/:columnId/create"
+      element={
+        <ProtectedRoute>
+          <ColumnTypeEditor />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/columns/:columnId/edit/:contentId"
+      element={
+        <ProtectedRoute>
+          <ColumnTypeEditor />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/columns/:columnId"
+      element={
+        <ProtectedRoute>
+          <ColumnContents />
         </ProtectedRoute>
       }
     />
