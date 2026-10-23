@@ -510,6 +510,9 @@ const contentAccessSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   // Puzzle access by category - Mixed allows any category key (including custom ones)
   puzzleAccess: { type: mongoose.Schema.Types.Mixed, default: {} },
+  practiceWithAiAccess: { type: mongoose.Schema.Types.Mixed, default: {} },
+  // Retained for migrating students who previously received the legacy feature toggle.
+  practiceWithAiEnabled: { type: Boolean, default: false },
   // Opening access
   openingAccess: {
     enabled: { type: Boolean, default: false },
@@ -770,7 +773,7 @@ async function belongToAdminGroups(groupIds, adminId) {
   return ownedGroups === uniqueIds.length;
 }
 
-async function getVisiblePuzzles(viewer, category) {
+async function getVisiblePuzzles(viewer, category, accessKey = 'puzzleAccess') {
   const adminId = getContentOwnerId(viewer);
   const ownershipQuery = viewer.role === 'superadmin'
     ? { adminId }
@@ -793,7 +796,7 @@ async function getVisiblePuzzles(viewer, category) {
       isOwned: String(puzzle.adminId) === String(viewer._id)
     }));
   }
-  return filterVisiblePuzzles(puzzles, access, categorySettings, viewer);
+  return filterVisiblePuzzles(puzzles, access, categorySettings, viewer, accessKey);
 }
 
 // Get compact puzzle progress and recommendations for the admin access modal.
@@ -2348,7 +2351,8 @@ app.get('/api/puzzles', async (req, res) => {
     const viewer = await getAuthenticatedUser(req, '_id role groupId adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
-    const puzzles = await getVisiblePuzzles(viewer);
+    const accessKey = req.query.access === 'practice' ? 'practiceWithAiAccess' : 'puzzleAccess';
+    const puzzles = await getVisiblePuzzles(viewer, undefined, accessKey);
     res.json(puzzles);
   } catch (error) {
     console.error('Get puzzles error:', error);
@@ -2362,7 +2366,8 @@ app.get('/api/puzzles/category/:category', async (req, res) => {
     const viewer = await getAuthenticatedUser(req, '_id role groupId adminId');
     if (!viewer) return res.status(401).json({ message: 'Unauthorized' });
 
-    const puzzles = await getVisiblePuzzles(viewer, req.params.category);
+    const accessKey = req.query.access === 'practice' ? 'practiceWithAiAccess' : 'puzzleAccess';
+    const puzzles = await getVisiblePuzzles(viewer, req.params.category, accessKey);
     res.json(puzzles);
   } catch (error) {
     console.error('Get puzzles by category error:', error);
@@ -3049,6 +3054,7 @@ app.get('/api/content-access/:userId', async (req, res) => {
     if (!access) {
       access = await ContentAccess.create({
         userId: req.params.userId,
+        practiceWithAiEnabled: false,
         puzzleAccess: {
           'mate-in-1': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
           'mate-in-2': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
@@ -3062,7 +3068,14 @@ app.get('/api/content-access/:userId', async (req, res) => {
       });
     }
 
-    res.json(access);
+    const accessData = access.toObject();
+    if (
+      Object.keys(accessData.practiceWithAiAccess || {}).length === 0 &&
+      access.practiceWithAiEnabled
+    ) {
+      accessData.practiceWithAiAccess = access.puzzleAccess || {};
+    }
+    res.json(accessData);
   } catch (error) {
     console.error('Get content access error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -3083,6 +3096,7 @@ app.get('/api/my-content-access', async (req, res) => {
     if (!access) {
       access = await ContentAccess.create({
         userId: decoded.id,
+        practiceWithAiEnabled: false,
         puzzleAccess: {
           'mate-in-1': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
           'mate-in-2': { enabled: false, limit: 0, rangeStart: null, rangeEnd: null, specificPuzzles: [] },
@@ -3096,7 +3110,14 @@ app.get('/api/my-content-access', async (req, res) => {
       });
     }
 
-    res.json(access);
+    const accessData = access.toObject();
+    if (
+      Object.keys(accessData.practiceWithAiAccess || {}).length === 0 &&
+      access.practiceWithAiEnabled
+    ) {
+      accessData.practiceWithAiAccess = access.puzzleAccess || {};
+    }
+    res.json(accessData);
   } catch (error) {
     console.error('Get my content access error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -3122,7 +3143,24 @@ app.put('/api/content-access/:userId', async (req, res) => {
     }).select('_id');
     if (!targetStudent) return res.status(404).json({ message: 'User not found' });
 
-    const { puzzleAccess, openingAccess, famousMatesAccess, bestGamesAccess, columnAccess } = req.body;
+    const {
+      practiceWithAiEnabled,
+      practiceWithAiAccess,
+      puzzleAccess,
+      openingAccess,
+      famousMatesAccess,
+      bestGamesAccess,
+      columnAccess
+    } = req.body;
+    if (practiceWithAiEnabled !== undefined && typeof practiceWithAiEnabled !== 'boolean') {
+      return res.status(400).json({ message: 'Invalid Practice with AI access setting' });
+    }
+    if (
+      practiceWithAiAccess !== undefined &&
+      (!practiceWithAiAccess || typeof practiceWithAiAccess !== 'object' || Array.isArray(practiceWithAiAccess))
+    ) {
+      return res.status(400).json({ message: 'Invalid Practice with AI puzzle access settings' });
+    }
     if (columnAccess !== undefined) {
       if (!columnAccess || typeof columnAccess !== 'object' || Array.isArray(columnAccess)) {
         return res.status(400).json({ message: 'Invalid column access settings' });
@@ -3204,6 +3242,8 @@ app.put('/api/content-access/:userId', async (req, res) => {
     if (!access) {
       access = await ContentAccess.create({
         userId: req.params.userId,
+        practiceWithAiEnabled: practiceWithAiEnabled === true,
+        practiceWithAiAccess: practiceWithAiAccess || (practiceWithAiEnabled ? puzzleAccess || {} : {}),
         puzzleAccess: puzzleAccess || {},
         openingAccess: openingAccess || { enabled: false, allowedOpenings: [] },
         famousMatesAccess: famousMatesAccess || { enabled: false, allowedMates: [] },
@@ -3211,6 +3251,14 @@ app.put('/api/content-access/:userId', async (req, res) => {
         columnAccess: columnAccess || {}
       });
     } else {
+      if (practiceWithAiEnabled !== undefined) {
+        access.practiceWithAiEnabled = practiceWithAiEnabled;
+      }
+      if (practiceWithAiAccess !== undefined) {
+        access.practiceWithAiAccess = practiceWithAiAccess;
+        access.markModified('practiceWithAiAccess');
+        access.practiceWithAiEnabled = false;
+      }
       if (puzzleAccess) {
         access.puzzleAccess = puzzleAccess;
         access.markModified('puzzleAccess'); // Required for Mixed type fields

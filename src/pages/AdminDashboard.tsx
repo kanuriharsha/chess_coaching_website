@@ -156,6 +156,9 @@ interface PuzzleData {
 
 interface ContentAccess {
   userId: string;
+  practiceWithAiAccess?: {
+    [key: string]: { enabled: boolean; limit: number; rangeStart?: number; rangeEnd?: number; specificPuzzles?: number[] };
+  };
   puzzleAccess: {
     [key: string]: { enabled: boolean; limit: number; rangeStart?: number; rangeEnd?: number; specificPuzzles?: number[] };
   };
@@ -413,6 +416,7 @@ const AdminDashboard = () => {
   const [accessLoadError, setAccessLoadError] = useState<string | null>(null);
   const [puzzleRecommendations, setPuzzleRecommendations] = useState<PuzzleRecommendations | null>(null);
   const [specificPuzzlesInputs, setSpecificPuzzlesInputs] = useState<Record<string, string>>({});
+  const [specificPracticePuzzlesInputs, setSpecificPracticePuzzlesInputs] = useState<Record<string, string>>({});
   const [showAccessModal, setShowAccessModal] = useState(false);
   const [puzzleCounts, setPuzzleCounts] = useState<{ [key: string]: number }>({});
   const [puzzleCategoryVisibility, setPuzzleCategoryVisibility] = useState<Array<{ categoryId: string; isEnabled?: boolean; allowedGroups?: string[]; groupsConfigured?: boolean }>>([]);
@@ -1125,6 +1129,14 @@ const AdminDashboard = () => {
         }
         setSpecificPuzzlesInputs(rawInputs);
       }
+      if (data.practiceWithAiAccess) {
+        const rawInputs: Record<string, string> = {};
+        for (const catId of Object.keys(data.practiceWithAiAccess)) {
+          const nums: number[] = data.practiceWithAiAccess[catId]?.specificPuzzles || [];
+          rawInputs[catId] = nums.join(', ');
+        }
+        setSpecificPracticePuzzlesInputs(rawInputs);
+      }
     } catch (error) {
       console.error('Load content access error:', error);
       const message = error instanceof Error ? error.message : 'Failed to load student access settings';
@@ -1166,6 +1178,7 @@ const AdminDashboard = () => {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
+          practiceWithAiAccess: userContentAccess.practiceWithAiAccess || {},
           puzzleAccess: userContentAccess.puzzleAccess,
           columnAccess: userContentAccess.columnAccess || {}
         })
@@ -1192,6 +1205,24 @@ const AdminDashboard = () => {
         ...userContentAccess.puzzleAccess,
         [category]: {
           ...userContentAccess.puzzleAccess[category],
+          [field]: value
+        }
+      }
+    });
+  };
+
+  const updatePracticeWithAiAccess = (
+    category: string,
+    field: 'enabled' | 'limit' | 'rangeStart' | 'rangeEnd' | 'specificPuzzles',
+    value: boolean | number | null | number[]
+  ) => {
+    if (!userContentAccess) return;
+    setUserContentAccess({
+      ...userContentAccess,
+      practiceWithAiAccess: {
+        ...userContentAccess.practiceWithAiAccess,
+        [category]: {
+          ...userContentAccess.practiceWithAiAccess?.[category],
           [field]: value
         }
       }
@@ -3903,9 +3934,100 @@ const AdminDashboard = () => {
                   </p>
                 )}
                 {userContentAccess && (
-                  <div className="space-y-6 mt-4">
+                  <div className="mt-4 flex flex-col gap-6">
+                    <div className="order-2">
+                      <div className="mb-4 flex items-center justify-between gap-3">
+                        <h3 className="flex items-center gap-2 text-lg font-semibold">
+                          <Target className="h-5 w-5" /> Practice with AI Access
+                        </h3>
+                        <p className="text-sm text-muted-foreground">Assign puzzles available in Practice with AI.</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        {allPuzzleCategories
+                          .filter(cat => (puzzleCounts[cat.id] || 0) > 0)
+                          .filter(cat => isCategoryVisibleForStudent(cat.id, selectedUserForAccess))
+                          .map(cat => {
+                            const access = userContentAccess.practiceWithAiAccess?.[cat.id];
+                            const enabled = access?.enabled === true;
+                            const puzzleCount = puzzleCounts[cat.id] || 0;
+                            return (
+                              <div key={cat.id} className="rounded-lg bg-secondary/50 p-4">
+                                <div className="mb-3 flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xl">{cat.icon}</span>
+                                    <span className="font-medium">{cat.name}</span>
+                                  </div>
+                                  <Switch
+                                    checked={enabled}
+                                    onCheckedChange={checked => updatePracticeWithAiAccess(cat.id, 'enabled', checked)}
+                                    aria-label={`Practice with AI access for ${cat.name}`}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <Label className="text-sm text-muted-foreground">Puzzle Limit:</Label>
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      max={puzzleCount || 100}
+                                      value={access?.limit || 0}
+                                      onChange={event => updatePracticeWithAiAccess(cat.id, 'limit', parseInt(event.target.value) || 0)}
+                                      className="h-8 w-20"
+                                      disabled={!enabled}
+                                    />
+                                    <span className="text-sm text-muted-foreground">/ {puzzleCount} available</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Label className="text-sm text-muted-foreground">Range:</Label>
+                                    <Input
+                                      type="number"
+                                      min="1"
+                                      max={puzzleCount || 100}
+                                      placeholder="Start"
+                                      value={access?.rangeStart || ''}
+                                      onChange={event => updatePracticeWithAiAccess(cat.id, 'rangeStart', event.target.value ? parseInt(event.target.value) : null)}
+                                      className="h-8 w-16"
+                                      disabled={!enabled}
+                                    />
+                                    <span className="text-sm text-muted-foreground">to</span>
+                                    <Input
+                                      type="number"
+                                      min="1"
+                                      max={puzzleCount || 100}
+                                      placeholder="End"
+                                      value={access?.rangeEnd || ''}
+                                      onChange={event => updatePracticeWithAiAccess(cat.id, 'rangeEnd', event.target.value ? parseInt(event.target.value) : null)}
+                                      className="h-8 w-16"
+                                      disabled={!enabled}
+                                    />
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Label className="whitespace-nowrap text-sm text-muted-foreground">Specific #s:</Label>
+                                    <Input
+                                      type="text"
+                                      placeholder="e.g. 11,12,16,18"
+                                      value={specificPracticePuzzlesInputs[cat.id] ?? (access?.specificPuzzles || []).join(', ')}
+                                      onChange={event => setSpecificPracticePuzzlesInputs(previous => ({ ...previous, [cat.id]: event.target.value }))}
+                                      onBlur={event => {
+                                        const numbers = event.target.value.split(',')
+                                          .map(value => parseInt(value.trim()))
+                                          .filter(number => !isNaN(number) && number > 0);
+                                        updatePracticeWithAiAccess(cat.id, 'specificPuzzles', numbers);
+                                        setSpecificPracticePuzzlesInputs(previous => ({ ...previous, [cat.id]: numbers.join(', ') }));
+                                      }}
+                                      className="h-8 flex-1"
+                                      disabled={!enabled}
+                                    />
+                                  </div>
+                                  {enabled && <p className="text-xs text-amber-600">Range + Specific #s are combined (union)</p>}
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
                     {/* Puzzle Access */}
-                    <div>
+                    <div className="order-1">
                       <div className="flex items-center justify-between gap-3 mb-4">
                         <h3 className="font-semibold text-lg flex items-center gap-2">
                           <Puzzle className="w-5 h-5" /> Puzzle Access
@@ -3996,7 +4118,7 @@ const AdminDashboard = () => {
                       </div>
                     </div>
 
-                    <section className="space-y-3">
+                    <section className="order-3 space-y-3">
                       <div>
                         <h3 className="text-lg font-semibold">Column Access</h3>
                         <p className="text-sm text-muted-foreground">Allow this student to see all or selected enabled content in each column.</p>
@@ -4009,7 +4131,7 @@ const AdminDashboard = () => {
                       />
                     </section>
 
-                    <Button onClick={handleUpdateContentAccess} className="w-full">
+                    <Button onClick={handleUpdateContentAccess} className="order-4 w-full">
                       <Save className="w-4 h-4 mr-2" /> Save Content Access
                     </Button>
                   </div>

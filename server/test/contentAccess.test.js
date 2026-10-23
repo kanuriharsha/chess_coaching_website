@@ -241,6 +241,31 @@ test('puzzle permissions retain locked card metadata while enforcing category, g
   );
 });
 
+test('Practice with AI puzzle assignments are independent from Puzzles assignments', () => {
+  const puzzles = [1, 2, 3].map(position => ({
+    _id: `p${position}`,
+    category: 'forks',
+    name: `Puzzle ${position}`,
+    isEnabled: true,
+    fen: 'protected-fen'
+  }));
+  const access = {
+    puzzleAccess: { forks: { enabled: true, limit: 1 } },
+    practiceWithAiAccess: { forks: { enabled: true, limit: 2 } }
+  };
+  const viewer = { _id: 'student', role: 'student' };
+
+  assert.deepEqual(
+    filterVisiblePuzzles(puzzles, access, [], viewer).map(puzzle => puzzle.isLocked),
+    [false, true, true]
+  );
+  assert.deepEqual(
+    filterVisiblePuzzles(puzzles, access, [], viewer, 'practiceWithAiAccess')
+      .map(puzzle => puzzle.isLocked),
+    [false, false, true]
+  );
+});
+
 test('admins retain all puzzle access regardless of student visibility settings', () => {
   const puzzles = [{ _id: 'p1', category: 'mate-in-1', isEnabled: false }];
   assert.deepEqual(

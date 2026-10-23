@@ -104,8 +104,8 @@ function isPuzzleCategoryVisible(categorySettings, viewer) {
   return !!groupId && (categorySettings.allowedGroups || []).some(id => String(id) === groupId);
 }
 
-function isPuzzleAllowedByAccess(access, category, position) {
-  const settings = access?.puzzleAccess?.[category];
+function isPuzzleAllowedByAccess(access, category, position, accessKey = 'puzzleAccess') {
+  const settings = access?.[accessKey]?.[category];
   if (settings?.enabled !== true) return false;
 
   const rangeStart = Number(settings.rangeStart);
@@ -125,7 +125,7 @@ function isPuzzleAllowedByAccess(access, category, position) {
   return limit <= 0 || position <= limit;
 }
 
-export function filterVisiblePuzzles(puzzles, access, categorySettings, viewer) {
+export function filterVisiblePuzzles(puzzles, access, categorySettings, viewer, accessKey = 'puzzleAccess') {
   if (viewer.role === 'admin' || viewer.role === 'superadmin') return puzzles;
 
   const settingsByCategory = new Map(categorySettings.map(settings => [settings.categoryId, settings]));
@@ -137,7 +137,7 @@ export function filterVisiblePuzzles(puzzles, access, categorySettings, viewer) 
 
     const categorySettingsForPuzzle = settingsByCategory.get(puzzleCategory);
     if (!isPuzzleCategoryVisible(categorySettingsForPuzzle, viewer)) return visible;
-    const isLocked = !isPuzzleAllowedByAccess(access, puzzleCategory, categoryPosition);
+    const isLocked = !isPuzzleAllowedByAccess(access, puzzleCategory, categoryPosition, accessKey);
 
     const puzzleData = typeof puzzle.toObject === 'function' ? puzzle.toObject() : puzzle;
     if (isLocked) {

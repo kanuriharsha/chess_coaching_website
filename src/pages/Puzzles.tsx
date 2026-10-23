@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Chess, Square } from 'chess.js';
+import { Chess, Move, Square } from 'chess.js';
 import ChessBoard from '@/components/ChessBoard';
 import PromotionDialog from '@/components/PromotionDialog';
 import { isPromotionMove } from '@/lib/chess';
@@ -11,12 +11,63 @@ import { Lock, CheckCircle, Puzzle as PuzzleIcon, ArrowRight, ArrowLeft, RotateC
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { useChessSound } from '@/hooks/useChessSound';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
 import type { MoveNode } from '@/components/VisualBoardEditor';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ;
+
+interface PuzzlesProps {
+  practiceMode?: boolean;
+}
+
+const delay = (milliseconds: number) =>
+  new Promise<void>(resolve => window.setTimeout(resolve, milliseconds));
+
+const getStockfishMove = (fen: string): Promise<string> => new Promise((resolve, reject) => {
+  let worker: Worker;
+  try {
+    worker = new Worker('/stockfish-18-lite-single.js');
+  } catch (error) {
+    reject(error);
+    return;
+  }
+
+  const timeout = window.setTimeout(() => finish(new Error('Stockfish did not respond in time.')), 30000);
+  const finish = (error?: Error, move?: string) => {
+    window.clearTimeout(timeout);
+    worker.terminate();
+    if (error) reject(error);
+    else if (move) resolve(move);
+    else reject(new Error('Stockfish returned no legal move.'));
+  };
+
+  worker.onerror = () => finish(new Error('Stockfish could not analyze this position.'));
+  worker.onmessage = (event: MessageEvent<string>) => {
+    const line = String(event.data).trim();
+    if (line === 'uciok') {
+      worker.postMessage('isready');
+    } else if (line === 'readyok') {
+      worker.postMessage(`position fen ${fen}`);
+      worker.postMessage('go depth 12');
+    } else if (line.startsWith('bestmove ')) {
+      const move = line.match(/^bestmove\s+([a-h][1-8][a-h][1-8][qrbn]?)/)?.[1];
+      finish(undefined, move);
+    }
+  };
+  worker.postMessage('uci');
+});
 
 interface HistoryStep {
   fen: string;
@@ -72,6 +123,15 @@ interface UserWithGroup {
 }
 
 interface ContentAccess {
+  practiceWithAiAccess?: {
+    [category: string]: {
+      enabled: boolean;
+      limit: number;
+      rangeStart?: number;
+      rangeEnd?: number;
+      specificPuzzles?: number[];
+    };
+  };
   puzzleAccess: {
     [category: string]: {
       enabled: boolean;
@@ -101,7 +161,7 @@ const defaultCategories: PuzzleCategory[] = [
   { id: 'traps', name: 'Traps', description: 'Lure your opponent', count: 0, unlocked: true, accessLimit: 0, icon: '♙' },
 ];
 
-const Puzzles = () => {
+const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
   const { user, token } = useAuth();
   const navigate = useNavigate();
   const { trackPageVisit, trackPuzzleAttempt } = useActivityTracker();
@@ -122,10 +182,18 @@ const Puzzles = () => {
   const [lastMove, setLastMove] = useState<{ from: Square; to: Square } | null>(null);
   const [showHint, setShowHint] = useState(false);
   const [contentAccess, setContentAccess] = useState<ContentAccess | null>(null);
+  const [contentAccessLoadError, setContentAccessLoadError] = useState<string | null>(null);
   const { playSound } = useChessSound();
   const [currentMoveIndex, setCurrentMoveIndex] = useState(0); // Track which move in the solution we're on (legacy flat-array fallback)
   const [currentNodeId, setCurrentNodeId] = useState<string | null>(null); // Tree-based: ID of the last correctly-played node
   const [preloadedMoveExecuted, setPreloadedMoveExecuted] = useState(false); // Track if preloaded move has been executed
+  const [isProcessingMove, setIsProcessingMove] = useState(false);
+  const [practiceFollowingSolution, setPracticeFollowingSolution] = useState(true);
+  const [practiceOffSolutionMoveCount, setPracticeOffSolutionMoveCount] = useState(0);
+  const [showPracticeResetDialog, setShowPracticeResetDialog] = useState(false);
+  const [practiceResetPromptDismissed, setPracticeResetPromptDismissed] = useState(false);
+  const [practiceResetWarningVisible, setPracticeResetWarningVisible] = useState(false);
+  const practiceResetDecisionResolver = useRef<((continueWithAI: boolean) => void) | null>(null);
   const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white'); // Fixed orientation per puzzle
   const [moveHistory, setMoveHistory] = useState<HistoryStep[]>([]); // Full move history for Back/Next navigation
   const [historyIndex, setHistoryIndex] = useState<number>(0); // Current index in moveHistory being viewed
@@ -151,16 +219,16 @@ const Puzzles = () => {
 
   // Track page visit
   useEffect(() => {
-    trackPageVisit('Puzzles');
-  }, []);
+    trackPageVisit(practiceMode ? 'Practice' : 'Puzzles');
+  }, [practiceMode, trackPageVisit]);
 
   // Track category change
   useEffect(() => {
     if (selectedCategory) {
       const categoryName = puzzleCategories.find(c => c.id === selectedCategory)?.name || selectedCategory;
-      trackPageVisit(`Puzzles - ${categoryName}`);
+      trackPageVisit(`${practiceMode ? 'Practice' : 'Puzzles'} - ${categoryName}`);
     }
-  }, [selectedCategory]);
+  }, [selectedCategory, practiceMode]);
 
   useEffect(() => {
     // Load puzzle categories from server first, then load puzzles with those categories
@@ -346,6 +414,7 @@ const Puzzles = () => {
     }
 
     console.log('Puzzle has preloaded move:', currentPuzzle.preloadedMove);
+    if (practiceMode) setIsProcessingMove(true);
     const timer = setTimeout(() => {
       // The preloaded move is made by the OPPOSITE color of who's solving
       // If puzzle is "White to move", preloaded move is Black's move
@@ -386,13 +455,15 @@ const Puzzles = () => {
         } else {
           console.error('Invalid preloaded move:', currentPuzzle.preloadedMove);
         }
+        if (practiceMode) setIsProcessingMove(false);
       } catch (error) {
         console.error('Error executing preloaded move:', error);
+        if (practiceMode) setIsProcessingMove(false);
       }
     }, 500); // 0.5 second delay
 
     return timer;
-  }, [currentPuzzle, playSound]);
+  }, [currentPuzzle, playSound, practiceMode]);
 
   // Reset puzzle state whenever current puzzle changes
   useEffect(() => {
@@ -405,6 +476,11 @@ const Puzzles = () => {
       setCurrentMoveIndex(0);
       setCurrentNodeId(null);
       setPreloadedMoveExecuted(false);
+      setIsProcessingMove(false);
+      setPracticeFollowingSolution(true);
+      setPracticeOffSolutionMoveCount(0);
+      setPracticeResetPromptDismissed(false);
+      setPracticeResetWarningVisible(false);
       setMoveHistory([]);
       setHistoryIndex(0);
       return;
@@ -420,6 +496,11 @@ const Puzzles = () => {
       setCurrentMoveIndex(0); // Critical: Reset move index for new puzzle
       setCurrentNodeId(null); // Reset tree traversal pointer
       setPreloadedMoveExecuted(false); // Reset preloaded move flag
+      setIsProcessingMove(false);
+      setPracticeFollowingSolution(true);
+      setPracticeOffSolutionMoveCount(0);
+      setPracticeResetPromptDismissed(false);
+      setPracticeResetWarningVisible(false);
 
       const initialStep: HistoryStep = { fen: currentPuzzle.fen, label: 'Start position' };
       setMoveHistory([initialStep]);
@@ -431,7 +512,7 @@ const Puzzles = () => {
 
       // Execute preloaded move if specified
       const timer = executePreloadedMove();
-      if (!currentPuzzle.preloadedMove?.trim()) {
+      if (!currentPuzzle.preloadedMove?.trim() && !practiceMode) {
         playSound('move');
       }
 
@@ -441,7 +522,7 @@ const Puzzles = () => {
         }
       };
     }
-  }, [currentPuzzle?._id, currentPuzzleIndex, executePreloadedMove, playSound]);
+  }, [currentPuzzle?._id, currentPuzzleIndex, executePreloadedMove, playSound, practiceMode]);
 
   const loadContentAccess = async () => {
     try {
@@ -450,18 +531,20 @@ const Puzzles = () => {
           'Authorization': `Bearer ${token}`,
         },
       });
-      if (response.ok) {
-        const access = await response.json();
-        setContentAccess(access);
-      }
+      if (!response.ok) throw new Error(`Failed to load content access (HTTP ${response.status})`);
+      const access = await response.json();
+      setContentAccess(access);
+      setContentAccessLoadError(null);
     } catch (error) {
       console.error('Load content access error:', error);
+      setContentAccessLoadError(error instanceof Error ? error.message : 'Failed to load content access');
     }
   };
 
   const loadPuzzles = async (cats: Array<{ id: string, name: string, description?: string, icon?: string }> = [], orderData: CategoryOrder[] = []) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/puzzles`, {
+      const accessQuery = practiceMode ? '?access=practice' : '';
+      const response = await fetch(`${API_BASE_URL}/puzzles${accessQuery}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
@@ -528,13 +611,22 @@ const Puzzles = () => {
   const hasAccessToCategory = (categoryId: string): boolean => {
     if (isAdmin) return true;
     if (!contentAccess) return false;
-    return contentAccess.puzzleAccess?.[categoryId]?.enabled || false;
+    const categoryAccess = practiceMode
+      ? contentAccess.practiceWithAiAccess?.[categoryId]
+      : contentAccess.puzzleAccess?.[categoryId];
+    return categoryAccess?.enabled === true;
   };
 
   const getAccessLimit = (categoryId: string): number => {
     if (isAdmin) return 0;
-    return contentAccess?.puzzleAccess?.[categoryId]?.limit || 0;
+    const categoryAccess = practiceMode
+      ? contentAccess?.practiceWithAiAccess?.[categoryId]
+      : contentAccess?.puzzleAccess?.[categoryId];
+    return categoryAccess?.limit || 0;
   };
+
+  const hasAnyPracticeAccess = isAdmin || Object.values(contentAccess?.practiceWithAiAccess || {})
+    .some(access => access.enabled === true);
 
   const isCategoryVisibleToStudent = (category: PuzzleCategory): boolean => {
     if (category.isEnabled === false) return false;
@@ -571,7 +663,8 @@ const Puzzles = () => {
     setIsLoadingCategoryPuzzles(true);
     setCategoryPuzzleLoadError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/puzzles/category/${category}`, {
+      const accessQuery = practiceMode ? '?access=practice' : '';
+      const response = await fetch(`${API_BASE_URL}/puzzles/category/${category}${accessQuery}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!response.ok) {
@@ -652,6 +745,18 @@ const Puzzles = () => {
   const treeChildren = (tree: MoveNode[], nodeId: string | null) =>
     tree.filter(n => n.parentId === nodeId);
 
+  const requestPracticeResetDecision = useCallback(() => new Promise<boolean>(resolve => {
+    practiceResetDecisionResolver.current = resolve;
+    setShowPracticeResetDialog(true);
+  }), []);
+
+  const resolvePracticeResetDecision = useCallback((continueWithAI: boolean) => {
+    setShowPracticeResetDialog(false);
+    const resolve = practiceResetDecisionResolver.current;
+    practiceResetDecisionResolver.current = null;
+    resolve?.(continueWithAI);
+  }, []);
+
   /** Check whether a played move matches a tree node (SAN or from+to) */
   const nodeMatchesMove = (
     nodeMove: string,
@@ -662,6 +767,178 @@ const Puzzles = () => {
     const fromTo = (move.from + move.to).toLowerCase();
     return alts.some(alt => sanLower === alt || fromTo === alt || move.to.toLowerCase() === alt);
   };
+
+  const processPracticeMove = useCallback(async (
+    gameAfterPlayerMove: Chess,
+    playerMove: Move,
+    previousFen: string,
+    playerStep: HistoryStep
+  ) => {
+    if (!currentPuzzle) return;
+
+    setIsProcessingMove(true);
+    playSound('move');
+
+    try {
+      const completePractice = () => {
+        setSolved(true);
+        playSound('checkmate');
+        toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', {
+          description: 'You solved the puzzle!'
+        });
+        void trackPuzzleAttempt(
+          currentPuzzle._id,
+          currentPuzzle.name,
+          selectedCategory || currentPuzzle.category,
+          'passed',
+          attempts + 1,
+          crypto.randomUUID(),
+          currentPuzzle.originalIndex || currentPuzzleIndex + 1
+        );
+      };
+      let opponentMoveSan: string | null = null;
+      let opponentNodeId: string | null = null;
+      let followsSolution = practiceFollowingSolution;
+
+      if (followsSolution && currentPuzzle.moveTree?.length) {
+        const matchedNode = treeChildren(currentPuzzle.moveTree, currentNodeId)
+          .find(node => nodeMatchesMove(node.move, playerMove));
+        if (!matchedNode) {
+          followsSolution = false;
+        } else {
+          const opponentNode = treeChildren(currentPuzzle.moveTree, matchedNode.id)[0];
+          setCurrentNodeId(matchedNode.id);
+          if (opponentNode) {
+            opponentMoveSan = opponentNode.move.split(',')[0].trim();
+            opponentNodeId = opponentNode.id;
+          }
+        }
+      } else if (followsSolution) {
+        const expectedMove = currentPuzzle.solution[currentMoveIndex];
+        const isLastStep = currentMoveIndex + 1 >= currentPuzzle.solution.length;
+        const isMateCategory = currentPuzzle.category.startsWith('mate-in-');
+        followsSolution = !!expectedMove && isMoveCorrect(
+          expectedMove,
+          playerMove,
+          gameAfterPlayerMove,
+          isLastStep,
+          isMateCategory
+        );
+        if (followsSolution) {
+          setCurrentMoveIndex(currentMoveIndex + 1);
+          opponentMoveSan = currentPuzzle.solution[currentMoveIndex + 1]?.split(',')[0].trim() || null;
+        }
+      }
+
+      if (!followsSolution) {
+        setPracticeFollowingSolution(false);
+        const nextOffSolutionMoveCount = practiceOffSolutionMoveCount + 1;
+        setPracticeOffSolutionMoveCount(nextOffSolutionMoveCount);
+        if (nextOffSolutionMoveCount >= 3 && !practiceResetPromptDismissed) {
+          const continueWithAI = await requestPracticeResetDecision();
+          if (!continueWithAI) return;
+          setPracticeResetPromptDismissed(true);
+          setPracticeResetWarningVisible(true);
+        }
+      }
+      await delay(400);
+
+      if (gameAfterPlayerMove.isGameOver()) {
+        setMoveHistory(previous => {
+          const nextHistory = [...previous, playerStep];
+          setHistoryIndex(nextHistory.length - 1);
+          return nextHistory;
+        });
+        completePractice();
+        return;
+      }
+
+      if (followsSolution && !opponentMoveSan) {
+        setMoveHistory(previous => {
+          const nextHistory = [...previous, playerStep];
+          setHistoryIndex(nextHistory.length - 1);
+          return nextHistory;
+        });
+        completePractice();
+        return;
+      }
+
+      const updatedGame = new Chess(gameAfterPlayerMove.fen());
+      if (followsSolution && opponentMoveSan) {
+        const opponentMove = updatedGame.move(opponentMoveSan);
+        if (!opponentMove) throw new Error('The saved solution contains an invalid response move.');
+        if (opponentNodeId) setCurrentNodeId(opponentNodeId);
+        else setCurrentMoveIndex(currentMoveIndex + 2);
+      } else {
+        const bestMove = await getStockfishMove(gameAfterPlayerMove.fen());
+        const uciMove = bestMove.match(/^([a-h][1-8])([a-h][1-8])([qrbn])?$/);
+        if (!uciMove) throw new Error('Stockfish returned a move in an unsupported format.');
+        const opponentMove = updatedGame.move({
+          from: uciMove[1],
+          to: uciMove[2],
+          ...(uciMove[3] ? { promotion: uciMove[3] } : {})
+        });
+        if (!opponentMove) throw new Error('Stockfish returned an illegal response move.');
+        setCurrentNodeId(null);
+      }
+
+      const playedMoves = updatedGame.history({ verbose: true });
+      const opponentMove = playedMoves[playedMoves.length - 1];
+      if (!opponentMove) throw new Error('The opponent response was not recorded.');
+      const opponentFrom = opponentMove.from as Square;
+      const opponentTo = opponentMove.to as Square;
+      setGame(updatedGame);
+      setLastMove({ from: opponentFrom, to: opponentTo });
+      playSound('move');
+
+      const opponentStep: HistoryStep = {
+        fen: updatedGame.fen(),
+        san: opponentMove.san,
+        from: opponentFrom,
+        to: opponentTo,
+        label: `Opponent: ${opponentMove.san}`
+      };
+      setMoveHistory(previous => {
+        const nextHistory = [...previous, playerStep, opponentStep];
+        setHistoryIndex(nextHistory.length - 1);
+        return nextHistory;
+      });
+      const savedLineCompleted = followsSolution && (
+        currentPuzzle.moveTree?.length
+          ? !!opponentNodeId && treeChildren(currentPuzzle.moveTree, opponentNodeId).length === 0
+          : currentMoveIndex + 2 >= currentPuzzle.solution.length
+      );
+      if (updatedGame.isGameOver() || savedLineCompleted) completePractice();
+    } catch (error) {
+      console.error('Practice response error:', error);
+      setGame(new Chess(previousFen));
+      setCurrentNodeId(currentNodeId);
+      setCurrentMoveIndex(currentMoveIndex);
+      setPracticeFollowingSolution(practiceFollowingSolution);
+      const previousStep = moveHistory[historyIndex];
+      setLastMove(previousStep?.from && previousStep?.to
+        ? { from: previousStep.from, to: previousStep.to }
+        : null);
+      toast.error(error instanceof Error ? error.message : 'Could not calculate the opponent response.');
+    } finally {
+      setIsProcessingMove(false);
+    }
+  }, [
+    currentPuzzle,
+    attempts,
+    currentPuzzleIndex,
+    selectedCategory,
+    currentMoveIndex,
+    currentNodeId,
+    historyIndex,
+    moveHistory,
+    practiceFollowingSolution,
+    practiceOffSolutionMoveCount,
+    practiceResetPromptDismissed,
+    requestPracticeResetDecision,
+    playSound,
+    trackPuzzleAttempt
+  ]);
 
   /**
    * Puzzle Move Handler - supports both tree-based and legacy flat-array solutions.
@@ -703,6 +980,11 @@ const Puzzles = () => {
         to: toSq,
         label: `Your move: ${move.san}`
       };
+
+      if (practiceMode) {
+        void processPracticeMove(gameCopy, move, game.fen(), playerStep);
+        return true;
+      }
 
       // ── TREE-BASED SOLVING ────────────────────────────────────────────────
       if (currentPuzzle.moveTree && currentPuzzle.moveTree.length > 0) {
@@ -842,7 +1124,7 @@ const Puzzles = () => {
 
       return true;
     },
-    [game, solved, playSound, currentPuzzle, attempts, selectedCategory, puzzleCategories, trackPuzzleAttempt, currentMoveIndex, currentNodeId]
+    [game, solved, playSound, currentPuzzle, attempts, selectedCategory, puzzleCategories, trackPuzzleAttempt, currentMoveIndex, currentNodeId, practiceMode, processPracticeMove]
   );
 
   // Promotion modal state for puzzles
@@ -882,6 +1164,11 @@ const Puzzles = () => {
         to: toSq,
         label: `Your move: ${mv.san}`
       };
+
+      if (practiceMode) {
+        void processPracticeMove(gameCopy, mv, game.fen(), playerStep);
+        return;
+      }
 
       // ── TREE-BASED SOLVING ────────────────────────────────────────────────
       if (currentPuzzle.moveTree && currentPuzzle.moveTree.length > 0) {
@@ -1034,6 +1321,11 @@ const Puzzles = () => {
     setCurrentMoveIndex(0); // Reset move index
     setCurrentNodeId(null); // Reset tree traversal pointer
     setPreloadedMoveExecuted(false); // Reset preloaded move flag
+    setIsProcessingMove(false);
+    setPracticeFollowingSolution(true);
+    setPracticeOffSolutionMoveCount(0);
+    setPracticeResetPromptDismissed(false);
+    setPracticeResetWarningVisible(false);
 
     // Execute preloaded move again on reattempt
     executePreloadedMove();
@@ -1162,13 +1454,15 @@ const Puzzles = () => {
         <div className="flex items-center justify-between mb-3">
           <div>
             <h1 className="font-serif text-xl md:text-2xl font-bold text-foreground">
-              Puzzles
+              {practiceMode ? 'Practice' : 'Puzzles'}
             </h1>
             <p className="text-xs text-muted-foreground hidden md:block">
-              Sharpen your tactics with carefully selected puzzles
+              {practiceMode
+                ? 'Practice chess positions and play against AI to understand your mistakes'
+                : 'Sharpen your tactics with carefully selected puzzles'}
             </p>
           </div>
-          {isAdmin && !selectedCategory && (
+          {isAdmin && !practiceMode && !selectedCategory && (
             <div className="flex gap-2">
               {!isReorderMode ? (
                 <Button size="sm" variant="outline" onClick={enterReorderMode}>
@@ -1197,7 +1491,19 @@ const Puzzles = () => {
           )}
         </div>
 
-        {!selectedCategory ? (
+        {practiceMode && !isAdmin && !isInitializing &&
+          (contentAccessLoadError || !hasAnyPracticeAccess) ? (
+          <div className="rounded-lg border p-6 text-center" role={contentAccessLoadError ? 'alert' : 'status'}>
+            <p className="font-medium">
+              {contentAccessLoadError
+                ? 'Practice with AI access could not be verified.'
+                : 'Your coach has not enabled Practice with AI access.'}
+            </p>
+            {contentAccessLoadError && (
+              <p className="mt-2 text-sm text-muted-foreground">{contentAccessLoadError}</p>
+            )}
+          </div>
+        ) : !selectedCategory ? (
           /* Category Grid */
           <div className="pb-4">
             {isInitializing ? (
@@ -1263,7 +1569,7 @@ const Puzzles = () => {
               </div>
             ) : isAdmin && !hasPuzzles ? (
               <div className="text-center py-12">
-                <p className="text-muted-foreground">No content in Puzzles. Click the + Add button to add content.</p>
+                <p className="text-muted-foreground">No content in {practiceMode ? 'Practice' : 'Puzzles'}. Click the + Add button to add content.</p>
               </div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -1363,7 +1669,9 @@ const Puzzles = () => {
                       {!isAdmin && hasAccessToCategory(category.id) && (
                         <div className="mt-2">
                           {(() => {
-                            const accessCfg = contentAccess?.puzzleAccess?.[category.id];
+                            const accessCfg = practiceMode
+                              ? contentAccess?.practiceWithAiAccess?.[category.id]
+                              : contentAccess?.puzzleAccess?.[category.id];
                             const cfgHasRange = accessCfg?.rangeStart && accessCfg?.rangeEnd && accessCfg.rangeEnd >= accessCfg.rangeStart;
                             const cfgHasSpecific = accessCfg?.specificPuzzles && accessCfg.specificPuzzles.length > 0;
                             if (cfgHasRange || cfgHasSpecific) {
@@ -1488,33 +1796,82 @@ const Puzzles = () => {
             <div className="grid md:grid-cols-[1fr,300px] gap-4">
               {/* Board Area */}
               <div className="relative flex items-center justify-center">
-                {currentPuzzle?.isLocked && (
-                  <div className="absolute inset-0 bg-background/90 backdrop-blur-sm rounded-xl flex flex-col items-center justify-center z-10">
-                    <Lock className="w-10 h-10 text-muted-foreground mb-2" />
-                    <span className="text-sm font-medium text-foreground">Puzzle Locked</span>
+                <div className="w-full max-w-2xl">
+                  {practiceMode && (
+                    <div className="flex h-12 flex-col items-center justify-center" aria-live="polite">
+                      {practiceResetWarningVisible && (
+                        <p className="text-center text-sm font-medium text-foreground" role="status">
+                          You are doing this puzzle in wrong way, please reset.
+                        </p>
+                      )}
+                      {isProcessingMove && (
+                        <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground" role="status">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Opponent is thinking...</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="relative aspect-square w-full">
+                    {currentPuzzle?.isLocked && (
+                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-xl bg-background/90 backdrop-blur-sm">
+                        <Lock className="mb-2 h-10 w-10 text-muted-foreground" />
+                        <span className="text-sm font-medium text-foreground">Puzzle Locked</span>
+                      </div>
+                    )}
+                    <ChessBoard
+                      game={game}
+                      onMove={handleMove}
+                      orientation={boardOrientation}
+                      interactive={!solved && !isProcessingMove && !currentPuzzle?.isLocked && historyIndex === moveHistory.length - 1}
+                      lastMove={lastMove}
+                      suppressIllegalSound={practiceMode}
+                    />
                   </div>
-                )}
-                <div className="w-full max-w-2xl aspect-square">
-                  <ChessBoard
-                    game={game}
-                    onMove={handleMove}
-                    orientation={boardOrientation}
-                    interactive={!solved && !currentPuzzle?.isLocked && historyIndex === moveHistory.length - 1}
-                    lastMove={lastMove}
-                  />
                   <PromotionDialog
                     open={showPromotion}
                     onOpenChange={setShowPromotion}
                     onSelect={handlePromotionSelect}
                     color={(pendingPromotion && pendingPromotion.gameCopy.get(pendingPromotion.from)?.color) as 'w' | 'b' | undefined}
                   />
+                  {practiceMode && (
+                    <AlertDialog
+                      open={showPracticeResetDialog}
+                      onOpenChange={open => {
+                        if (!open) resolvePracticeResetDecision(true);
+                      }}
+                    >
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Reset this puzzle?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            You are doing this puzzle in wrong way, please reset.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogAction
+                            onClick={() => {
+                              resolvePracticeResetDecision(false);
+                              resetPuzzle();
+                            }}
+                          >
+                            Yes, reset the puzzle
+                          </AlertDialogAction>
+                          <AlertDialogCancel onClick={() => resolvePracticeResetDecision(true)}>
+                            No, continue with AI
+                          </AlertDialogCancel>
+
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  )}
                 </div>
               </div>
 
               {/* Side Panel - Controls */}
               <div className="flex flex-col gap-3">
                 {/* Preloaded Move Info - Show if puzzle has preloaded move and it hasn't been executed yet */}
-                {currentPuzzle?.preloadedMove && !preloadedMoveExecuted && (
+                {!practiceMode && currentPuzzle?.preloadedMove && !preloadedMoveExecuted && (
                   <div className="card-premium p-3 bg-blue-50 border border-blue-200">
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center animate-pulse">

@@ -37,6 +37,7 @@ interface ChessBoardProps {
   highlightSquares?: Square[];
   onSquareClick?: (square: string) => void;
   selectedSquare?: string | null;
+  suppressIllegalSound?: boolean;
 }
 
 const ChessBoard: React.FC<ChessBoardProps> = ({
@@ -48,6 +49,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
   highlightSquares = [],
   onSquareClick,
   selectedSquare: externalSelectedSquare,
+  suppressIllegalSound = false,
 }) => {
   const [internalSelectedSquare, setInternalSelectedSquare] = useState<Square | null>(null);
   const [possibleMoves, setPossibleMoves] = useState<Move[]>([]);
@@ -178,7 +180,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
         ? onMove?.(dragState.from, targetSquare)
         : false;
 
-      if (!isLegalTarget) {
+      if (!isLegalTarget && !suppressIllegalSound) {
         playSound('illegal');
       }
 
@@ -190,7 +192,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
 
     setDragState(null);
     event.preventDefault();
-  }, [dragState, onMove, playSound, possibleMoves]);
+  }, [dragState, onMove, playSound, possibleMoves, suppressIllegalSound]);
 
   const handlePointerCancel = useCallback((event: React.PointerEvent) => {
     if (!dragState || event.pointerId !== dragState.pointerId) return;

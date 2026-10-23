@@ -87,6 +87,28 @@ export default function ColumnContents() {
   const sans = useMemo(() => selected?.moves?.map(moveSan) || [], [selected]);
 
   useEffect(() => {
+    if (!selected) return;
+
+    const handleMoveNavigation = (event: KeyboardEvent) => {
+      if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || target.closest('input, textarea, select, [role="combobox"], [contenteditable="true"]'))
+      ) return;
+
+      event.preventDefault();
+      setMoveIndex(index => event.key === 'ArrowLeft'
+        ? Math.max(-1, index - 1)
+        : Math.min(sans.length - 1, index + 1)
+      );
+    };
+
+    window.addEventListener('keydown', handleMoveNavigation);
+    return () => window.removeEventListener('keydown', handleMoveNavigation);
+  }, [selected, sans.length]);
+
+  useEffect(() => {
     if (!selected) {
       setGame(new Chess());
       setMoveIndex(-1);
@@ -231,6 +253,9 @@ export default function ColumnContents() {
                   <Button variant="outline" size="icon" onClick={() => setMoveIndex(index => Math.min(sans.length - 1, index + 1))} disabled={moveIndex >= sans.length - 1} aria-label="Next move"><ChevronRight className="h-5 w-5" /></Button>
                   <Button variant="outline" size="icon" onClick={() => setMoveIndex(sans.length - 1)} disabled={moveIndex >= sans.length - 1} aria-label="Go to end"><SkipForward className="h-5 w-5" /></Button>
                 </div>
+                <p className="mt-2 text-center text-xs text-muted-foreground">
+                  Use the ← and → arrow keys to move through the game.
+                </p>
               </div>
               <div className="space-y-4">
                 <div className="card-premium p-5">
@@ -260,14 +285,28 @@ export default function ColumnContents() {
                       return (
                         <div key={index} className="contents">
                           <span className="text-muted-foreground">{index + 1}.</span>
-                          <button onClick={() => setMoveIndex(whiteIndex)} className={`text-left hover:text-primary ${moveIndex === whiteIndex ? 'font-bold text-primary' : ''}`}>
+                          <button
+                            onClick={() => setMoveIndex(whiteIndex)}
+                            className={`rounded-lg border px-2 py-2 text-left transition-colors ${
+                              moveIndex === whiteIndex
+                                ? 'border-[#A6B398] bg-[#DEE1D7] font-semibold text-[#577240]'
+                                : 'border-transparent hover:bg-secondary hover:text-primary'
+                            }`}
+                          >
                             {moveSan(whiteMove)}
                             {selected.highlights?.includes(whiteIndex) && <Star className="ml-1 inline h-3 w-3 fill-current text-amber-500" />}
                             {whiteDetail?.evaluation && <span className="ml-1 text-xs">({whiteDetail.evaluation})</span>}
                             {whiteDetail?.comment && <span className="block text-xs text-muted-foreground">{whiteDetail.comment}</span>}
                           </button>
                           {blackMove ? (
-                            <button onClick={() => setMoveIndex(blackIndex)} className={`text-left hover:text-primary ${moveIndex === blackIndex ? 'font-bold text-primary' : ''}`}>
+                            <button
+                              onClick={() => setMoveIndex(blackIndex)}
+                              className={`rounded-lg border px-2 py-2 text-left transition-colors ${
+                                moveIndex === blackIndex
+                                  ? 'border-[#A6B398] bg-[#DEE1D7] font-semibold text-[#577240]'
+                                  : 'border-transparent hover:bg-secondary hover:text-primary'
+                              }`}
+                            >
                               {moveSan(blackMove)}
                               {selected.highlights?.includes(blackIndex) && <Star className="ml-1 inline h-3 w-3 fill-current text-amber-500" />}
                               {blackDetail?.evaluation && <span className="ml-1 text-xs">({blackDetail.evaluation})</span>}

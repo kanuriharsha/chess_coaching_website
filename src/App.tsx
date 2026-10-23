@@ -8,6 +8,7 @@ import Login from "./pages/Login";
 import Onboarding from "./pages/Onboarding";
 import AdminOnboarding from "./pages/AdminOnboarding";
 import Puzzles from "./pages/Puzzles";
+import Practice from "./pages/Practice";
 import Games from "./pages/Games";
 import Openings from "./pages/Openings";
 import OpeningEditor from "./pages/OpeningEditor";
@@ -137,6 +138,14 @@ const AppRoutes = () => (
       element={
         <ProtectedRoute>
           <Puzzles />
+        </ProtectedRoute>
+      }
+    />
+    <Route
+      path="/practice"
+      element={
+        <ProtectedRoute>
+          <Practice />
         </ProtectedRoute>
       }
     />
