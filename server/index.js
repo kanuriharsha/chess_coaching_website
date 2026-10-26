@@ -2297,7 +2297,10 @@ app.post('/api/users/:id/puzzle-attempt', async (req, res) => {
     const puzzleAccessViewer = await User.findById(targetUser._id)
       .select('_id role groupId adminId');
     if (!puzzleAccessViewer) return res.status(404).json({ message: 'Student not found' });
-    const visiblePuzzles = await getVisiblePuzzles(puzzleAccessViewer, puzzle.category);
+    const accessKey = details.practiceMode === true
+      ? 'practiceWithAiAccess'
+      : 'puzzleAccess';
+    const visiblePuzzles = await getVisiblePuzzles(puzzleAccessViewer, puzzle.category, accessKey);
     const canAccessPuzzle = visiblePuzzles.some(item =>
       String(item._id) === String(puzzle._id) && !item.isLocked
     );

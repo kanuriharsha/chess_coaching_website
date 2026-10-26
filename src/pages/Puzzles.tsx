@@ -861,7 +861,8 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
           'passed',
           attempts + 1,
           crypto.randomUUID(),
-          currentPuzzle.originalIndex || currentPuzzleIndex + 1
+          currentPuzzle.originalIndex || currentPuzzleIndex + 1,
+          true
         );
       };
       const currentCategoryName =

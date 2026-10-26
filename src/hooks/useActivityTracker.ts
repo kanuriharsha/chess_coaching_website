@@ -19,6 +19,7 @@ export interface ActivityRecord {
     attemptId?: string;
     result?: 'passed' | 'failed';
     timeSpent?: number;
+    practiceMode?: boolean;
   };
 }
 
@@ -40,7 +41,8 @@ export const useActivityTracker = () => {
     result: 'passed' | 'failed',
     attemptNumber: number,
     attemptId?: string,
-    puzzleNumber?: number // Optional puzzle number (1-based index)
+    puzzleNumber?: number, // Optional puzzle number (1-based index)
+    practiceMode = false
   ) => {
     if (!user || !token || isAdminRole(user.role)) return;
 
@@ -64,7 +66,8 @@ export const useActivityTracker = () => {
         category,
         attempts: attemptNumber,
         attemptId: attemptId || crypto.randomUUID(),
-        result
+        result,
+        practiceMode
       }
     });
   }, [user, token]);
