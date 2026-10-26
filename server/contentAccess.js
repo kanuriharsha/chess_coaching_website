@@ -135,6 +135,11 @@ export function filterVisiblePuzzles(puzzles, access, categorySettings, viewer, 
     const categoryPosition = (positionsByCategory.get(puzzleCategory) || 0) + 1;
     positionsByCategory.set(puzzleCategory, categoryPosition);
 
+    if (
+      accessKey === 'practiceWithAiAccess' &&
+      access?.practiceWithAiAccess?.[puzzleCategory]?.hidden === true
+    ) return visible;
+
     const categorySettingsForPuzzle = settingsByCategory.get(puzzleCategory);
     if (!isPuzzleCategoryVisible(categorySettingsForPuzzle, viewer)) return visible;
     const isLocked = !isPuzzleAllowedByAccess(access, puzzleCategory, categoryPosition, accessKey);

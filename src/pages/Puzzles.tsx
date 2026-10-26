@@ -153,6 +153,7 @@ interface ContentAccess {
   practiceWithAiAccess?: {
     [category: string]: {
       enabled: boolean;
+      hidden?: boolean;
       limit: number;
       rangeStart?: number;
       rangeEnd?: number;
@@ -1673,7 +1674,11 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                   // Within same lock group, preserve admin order
                   return (a.order_index ?? 999) - (b.order_index ?? 999);
                   })
-                  .filter(category => isAdmin || isCategoryVisibleToStudent(category))
+                  .filter(category =>
+                    isAdmin ||
+                    (isCategoryVisibleToStudent(category) &&
+                      (!practiceMode || contentAccess?.practiceWithAiAccess?.[category.id]?.hidden !== true))
+                  )
                   .map((category) => {
                   const isAccessLocked = !isAdmin && (!hasAccessToCategory(category.id) || category.isLocked);
                   const isEmptyLocked = category.count === 0 && !isAdmin;

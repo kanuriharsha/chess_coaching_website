@@ -264,6 +264,16 @@ test('Practice with AI puzzle assignments are independent from Puzzles assignmen
       .map(puzzle => puzzle.isLocked),
     [false, false, true]
   );
+  assert.deepEqual(
+    filterVisiblePuzzles(
+      puzzles,
+      { ...access, practiceWithAiAccess: { forks: { enabled: true, hidden: true } } },
+      [],
+      viewer,
+      'practiceWithAiAccess'
+    ),
+    []
+  );
 });
 
 test('admins retain all puzzle access regardless of student visibility settings', () => {

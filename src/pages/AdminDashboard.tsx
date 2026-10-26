@@ -41,6 +41,7 @@ import {
   GraduationCap,
   RotateCcw,
   RefreshCw,
+  Loader2,
   Gamepad2,
   Play,
   Timer,
@@ -157,7 +158,7 @@ interface PuzzleData {
 interface ContentAccess {
   userId: string;
   practiceWithAiAccess?: {
-    [key: string]: { enabled: boolean; limit: number; rangeStart?: number; rangeEnd?: number; specificPuzzles?: number[] };
+    [key: string]: { enabled: boolean; hidden?: boolean; limit: number; rangeStart?: number; rangeEnd?: number; specificPuzzles?: number[] };
   };
   puzzleAccess: {
     [key: string]: { enabled: boolean; limit: number; rangeStart?: number; rangeEnd?: number; specificPuzzles?: number[] };
@@ -418,7 +419,7 @@ const AdminDashboard = () => {
   const [specificPracticePuzzlesInputs, setSpecificPracticePuzzlesInputs] = useState<Record<string, string>>({});
   const [showAccessModal, setShowAccessModal] = useState(false);
   const [puzzleCounts, setPuzzleCounts] = useState<{ [key: string]: number }>({});
-  const [puzzleCategoryVisibility, setPuzzleCategoryVisibility] = useState<Array<{ categoryId: string; isEnabled?: boolean; allowedGroups?: string[]; groupsConfigured?: boolean }>>([]);
+  const [isLoadingAccessPuzzles, setIsLoadingAccessPuzzles] = useState(false);
   // Bulk selective access UI state
   const [bulkSelectionColumnId, setBulkSelectionColumnId] = useState('');
   const [selectedContentItemId, setSelectedContentItemId] = useState<string | null>(null);
@@ -516,30 +517,6 @@ const AdminDashboard = () => {
     });
     return categories;
   }, [customCategories, puzzles]);
-
-  const loadPuzzleCategoryVisibility = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/puzzle-category-order`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!response.ok) throw new Error('Failed to load puzzle category visibility');
-      setPuzzleCategoryVisibility(await response.json());
-      return true;
-    } catch (error) {
-      console.error('Load puzzle category visibility error:', error);
-      return false;
-    }
-  };
-
-  const isCategoryVisibleForStudent = (categoryId: string, student: User | null): boolean => {
-    const settings = puzzleCategoryVisibility.find(item => item.categoryId === categoryId);
-    if (!settings) return true;
-    if (settings.isEnabled === false) return false;
-    if (!settings.groupsConfigured) return true;
-    const groupId = String(student?.groupId || '');
-    return !!groupId && settings.allowedGroups.map(String).includes(groupId);
-  };
-
 
   // ============ GROUP FUNCTIONS ============
   const loadGroups = async () => {
@@ -1124,10 +1101,15 @@ const AdminDashboard = () => {
     const accessLoaded = await loadUserContentAccess(u.id);
     if (!accessLoaded) return;
 
+    setIsLoadingAccessPuzzles(true);
+    const puzzlesLoad = loadDashboardResource('puzzles', loadPuzzles);
+    void puzzlesLoad.then(
+      () => setIsLoadingAccessPuzzles(false),
+      () => setIsLoadingAccessPuzzles(false)
+    );
     await Promise.all([
-      loadDashboardResource('puzzles', loadPuzzles),
+      puzzlesLoad,
       loadDashboardResource('customPuzzleCategories', loadCustomCategoriesFromAPI),
-      loadDashboardResource('puzzleCategoryVisibility', loadPuzzleCategoryVisibility),
       loadPuzzleRecommendations(u.id)
     ]);
   };
@@ -1163,7 +1145,7 @@ const AdminDashboard = () => {
 
   const updatePracticeWithAiAccess = (
     category: string,
-    field: 'enabled' | 'limit' | 'rangeStart' | 'rangeEnd' | 'specificPuzzles',
+    field: 'enabled' | 'hidden' | 'limit' | 'rangeStart' | 'rangeEnd' | 'specificPuzzles',
     value: boolean | number | null | number[]
   ) => {
     if (!userContentAccess) return;
@@ -3885,9 +3867,9 @@ const AdminDashboard = () => {
                 )}
                 {userContentAccess && (
                   <div className="mt-4 flex flex-col gap-6">
-                    <div className="order-2">
-                      <details className="group rounded-lg border p-4">
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                    <div className="order-1">
+                      <div className="rounded-lg border p-4">
+                        <div className="flex items-center justify-between gap-3">
                           <div>
                             <h3 className="flex items-center gap-2 text-lg font-semibold">
                               <Puzzle className="h-5 w-5" /> Puzzles with AI Access
@@ -3901,12 +3883,16 @@ const AdminDashboard = () => {
                               </div>
                             )}
                           </div>
-                          <ChevronRight className="h-5 w-5 shrink-0 transition-transform group-open:rotate-90" />
-                        </summary>
-                        <div className="mt-4 grid grid-cols-2 gap-4">
+                        </div>
+                        {isLoadingAccessPuzzles ? (
+                          <div className="mt-6 flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground" role="status">
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                            <span>Loading puzzles...</span>
+                          </div>
+                        ) : (
+                          <div className="mt-4 grid grid-cols-2 gap-4">
                         {allPuzzleCategories
                           .filter(cat => (puzzleCounts[cat.id] || 0) > 0)
-                          .filter(cat => isCategoryVisibleForStudent(cat.id, selectedUserForAccess))
                           .map(cat => {
                             const access = userContentAccess.practiceWithAiAccess?.[cat.id];
                             const enabled = access?.enabled === true;
@@ -3923,16 +3909,30 @@ const AdminDashboard = () => {
                               : 'Loading recommendation...';
                             return (
                               <div key={cat.id} className={`rounded-lg p-4 transition-colors ${hasIncomplete ? 'border-2 border-red-400 bg-red-100' : 'bg-secondary/50'}`}>
-                                <div className="mb-3 flex items-center justify-between">
+                                <div className="mb-3 flex items-center justify-between gap-3">
                                   <div className="flex items-center gap-2">
                                     <span className="text-xl">{cat.icon}</span>
                                     <span className="font-medium">{cat.name}</span>
                                   </div>
-                                  <Switch
-                                    checked={enabled}
-                                    onCheckedChange={checked => updatePracticeWithAiAccess(cat.id, 'enabled', checked)}
-                                    aria-label={`Puzzles with AI access for ${cat.name}`}
-                                  />
+                                  <div className="flex flex-col items-end gap-2">
+                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                      <span>Access</span>
+                                      <Switch
+                                        checked={enabled}
+                                        onCheckedChange={checked => updatePracticeWithAiAccess(cat.id, 'enabled', checked)}
+                                        aria-label={`Puzzles with AI access for ${cat.name}`}
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                      <EyeOff className="h-3.5 w-3.5" />
+                                      <span>Hide for student</span>
+                                      <Switch
+                                        checked={access?.hidden === true}
+                                        onCheckedChange={checked => updatePracticeWithAiAccess(cat.id, 'hidden', checked)}
+                                        aria-label={`Hide ${cat.name} for student`}
+                                      />
+                                    </div>
+                                  </div>
                                 </div>
                                 <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs">
                                   {recommendation ? (
@@ -4027,8 +4027,9 @@ const AdminDashboard = () => {
                               </div>
                             );
                           })}
-                        </div>
-                      </details>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <section className="order-3 space-y-3">
                       <div>
