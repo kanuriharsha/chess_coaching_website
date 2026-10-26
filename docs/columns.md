@@ -25,20 +25,15 @@ into column permissions.
    npm --prefix server run migrate:columns
    ```
 
-3. Before writing migrated data, the script copies every existing collection in
-   the database, plus the migration's target collections if they do not yet exist,
-   into timestamped `backup_<timestamp>_<collection>` collections in the same
-   database. Prior backup collections are excluded to avoid recursively backing up
-   backups. It verifies document counts and aborts if any collection backup is
-   incomplete.
+3. The migration does not create database backup collections. Ensure any required
+   backup or rollback plan is handled separately before running it.
 4. The migration uses stable IDs for legacy columns and preserves each legacy
    content `_id`; this is how existing student and Super Admin grants map to the
    new records. It uses insert-only upserts for content and columns and merges only
    missing permission keys, so rerunning it does not duplicate or overwrite content
    created after migration.
 5. Verify the reported record count, inspect the new collections and their
-   permissions, then restart the server and deploy the frontend. Keep the timestamped
-   backup collections until verification and rollback retention requirements are met.
+   permissions, then restart the server and deploy the frontend.
 
 The legacy collections are intentionally retained; the migration does not drop or
 rewrite them. This permits rollback and preserves unrelated APIs while clients move

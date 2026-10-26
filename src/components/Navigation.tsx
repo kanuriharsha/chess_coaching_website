@@ -51,8 +51,7 @@ const Navigation = () => {
     ...(!isAdminRole(user?.role)
     ? [{ to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' }]
     : []),
-    { to: '/puzzles', icon: Puzzle, label: 'Puzzles' },
-    { to: '/practice', icon: Target, label: 'Practice with AI' },
+    { to: '/puzzles', icon: Puzzle, label: 'Puzzles with AI' },
     { to: '/games', icon: Swords, label: 'Games' },
     ...(user?.role === 'superadmin'
       ? [{ to: '/admin-management', icon: Users, label: 'Admin Management' }]

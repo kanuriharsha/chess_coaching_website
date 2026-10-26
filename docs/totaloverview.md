@@ -44,7 +44,7 @@ All application screens are React routes defined in `src/App.tsx`. Except for lo
 | `/dashboard` | Student dashboard | Displays puzzle progress, weekly metrics, and streak/progress summaries. Legacy activity charts have no retained history. Admin accounts are redirected to `/admin`; some presentation data, including weekly goals and initial chart placeholders, is generated client-side. |
 | `/admin` | Admin dashboard | Student/user administration, content access, puzzle/content management, attendance, group management, fee tracking, and progress views. Legacy activity-history views have no retained history. |
 | `/puzzle-manager` | Puzzle manager | Puzzle administration workspace. |
-| `/puzzles` | Puzzles | Categorized chess puzzle practice with board interaction, hints, progress tracking, and category/access controls. Category loading, empty, and failed-request states are shown separately. |
+| `/puzzles` | Puzzles with AI | The single puzzle experience, with AI play, board interaction, hints, progress tracking, and category/access controls. The former `/practice` URL redirects here. |
 | `/games` | Games | Local play against a computer and live coach game requests/play. Uses chess.js for local move rules and Socket.IO for live sessions. |
 | `/openings` | Openings | Browse and step through opening lines and move commentary. |
 | `/openings/create` | Opening editor | Create an opening with a visual board/move editor. |

@@ -562,6 +562,20 @@ async function getContentAccessForUser(userId) {
   return ContentAccess.findOne({ userId }).lean();
 }
 
+function getPracticeWithAiAccess(access) {
+  const puzzleAccess = access?.puzzleAccess && typeof access.puzzleAccess === 'object' &&
+    !Array.isArray(access.puzzleAccess)
+    ? access.puzzleAccess
+    : {};
+  const practiceAccess = access?.practiceWithAiAccess;
+  return {
+    ...puzzleAccess,
+    ...(practiceAccess && typeof practiceAccess === 'object' && !Array.isArray(practiceAccess)
+      ? practiceAccess
+      : {})
+  };
+}
+
 async function getResolvedAdminPuzzleAccess(adminId) {
   const access = await AdminPuzzleAccess.findOne({ adminId })
     .select('grantedBy puzzleAccess puzzleIds openingAccess famousMatesAccess bestGamesAccess columnAccess')
@@ -796,7 +810,10 @@ async function getVisiblePuzzles(viewer, category, accessKey = 'puzzleAccess') {
       isOwned: String(puzzle.adminId) === String(viewer._id)
     }));
   }
-  return filterVisiblePuzzles(puzzles, access, categorySettings, viewer, accessKey);
+  const effectiveAccess = accessKey === 'practiceWithAiAccess'
+    ? { ...access, practiceWithAiAccess: getPracticeWithAiAccess(access) }
+    : access;
+  return filterVisiblePuzzles(puzzles, effectiveAccess, categorySettings, viewer, accessKey);
 }
 
 // Get compact puzzle progress and recommendations for the admin access modal.
@@ -3069,12 +3086,7 @@ app.get('/api/content-access/:userId', async (req, res) => {
     }
 
     const accessData = access.toObject();
-    if (
-      Object.keys(accessData.practiceWithAiAccess || {}).length === 0 &&
-      access.practiceWithAiEnabled
-    ) {
-      accessData.practiceWithAiAccess = access.puzzleAccess || {};
-    }
+    accessData.practiceWithAiAccess = getPracticeWithAiAccess(accessData);
     res.json(accessData);
   } catch (error) {
     console.error('Get content access error:', error);
@@ -3111,12 +3123,7 @@ app.get('/api/my-content-access', async (req, res) => {
     }
 
     const accessData = access.toObject();
-    if (
-      Object.keys(accessData.practiceWithAiAccess || {}).length === 0 &&
-      access.practiceWithAiEnabled
-    ) {
-      accessData.practiceWithAiAccess = access.puzzleAccess || {};
-    }
+    accessData.practiceWithAiAccess = getPracticeWithAiAccess(accessData);
     res.json(accessData);
   } catch (error) {
     console.error('Get my content access error:', error);
@@ -3153,13 +3160,13 @@ app.put('/api/content-access/:userId', async (req, res) => {
       columnAccess
     } = req.body;
     if (practiceWithAiEnabled !== undefined && typeof practiceWithAiEnabled !== 'boolean') {
-      return res.status(400).json({ message: 'Invalid Practice with AI access setting' });
+      return res.status(400).json({ message: 'Invalid Puzzles with AI access setting' });
     }
     if (
       practiceWithAiAccess !== undefined &&
       (!practiceWithAiAccess || typeof practiceWithAiAccess !== 'object' || Array.isArray(practiceWithAiAccess))
     ) {
-      return res.status(400).json({ message: 'Invalid Practice with AI puzzle access settings' });
+      return res.status(400).json({ message: 'Invalid Puzzles with AI puzzle access settings' });
     }
     if (columnAccess !== undefined) {
       if (!columnAccess || typeof columnAccess !== 'object' || Array.isArray(columnAccess)) {

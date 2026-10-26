@@ -415,7 +415,6 @@ const AdminDashboard = () => {
   const [userContentAccess, setUserContentAccess] = useState<ContentAccess | null>(null);
   const [accessLoadError, setAccessLoadError] = useState<string | null>(null);
   const [puzzleRecommendations, setPuzzleRecommendations] = useState<PuzzleRecommendations | null>(null);
-  const [specificPuzzlesInputs, setSpecificPuzzlesInputs] = useState<Record<string, string>>({});
   const [specificPracticePuzzlesInputs, setSpecificPracticePuzzlesInputs] = useState<Record<string, string>>({});
   const [showAccessModal, setShowAccessModal] = useState(false);
   const [puzzleCounts, setPuzzleCounts] = useState<{ [key: string]: number }>({});
@@ -841,42 +840,11 @@ const AdminDashboard = () => {
 
   // Check if user has incomplete puzzles in the assigned range for a category
   // Check if user has incomplete puzzles in the assigned range for a category
-  const hasIncompletePuzzlesInRange = (categoryId: string): boolean => {
-    if (!userContentAccess?.puzzleAccess?.[categoryId]?.enabled) return false;
-    
-    const access = userContentAccess.puzzleAccess[categoryId];
-    const rangeStart = access.rangeStart;
-    const rangeEnd = access.rangeEnd;
-    const specificPuzzles = access.specificPuzzles;
-    
-    const categoryProgress = puzzleRecommendations?.categories.find(p => p.category === categoryId);
-    if (!categoryProgress) return false;
-
-    // Build combined enabled set from range + specific (merged)
-    const hasRange = rangeStart && rangeEnd && rangeEnd >= rangeStart;
-    const hasSpecific = specificPuzzles && specificPuzzles.length > 0;
-    if (!hasRange && !hasSpecific) return false;
-
-    const enabledSet = new Set<number>();
-    if (hasRange) {
-      for (let i = rangeStart!; i <= rangeEnd!; i++) enabledSet.add(i);
-    }
-    if (hasSpecific) {
-      for (const n of specificPuzzles!) enabledSet.add(n);
-    }
-    const enabledNums = Array.from(enabledSet).sort((a, b) => a - b);
-
-    for (const puzzleNum of enabledNums) {
-      if (!categoryProgress.solvedPuzzleNumbers.includes(puzzleNum)) return true;
-    }
-    return false;
-  };
-
-  // Get list of incomplete puzzles in the assigned range for a category
+  // Get incomplete puzzles included in the selected access grant.
   const getIncompletePuzzles = (categoryId: string): { number: number; name: string }[] => {
-    if (!userContentAccess?.puzzleAccess?.[categoryId]?.enabled) return [];
-    
-    const access = userContentAccess.puzzleAccess[categoryId];
+    const access = userContentAccess?.practiceWithAiAccess?.[categoryId];
+    if (!access?.enabled) return [];
+
     const rangeStart = access.rangeStart;
     const rangeEnd = access.rangeEnd;
     const specificPuzzles = access.specificPuzzles;
@@ -889,7 +857,6 @@ const AdminDashboard = () => {
     // Build combined enabled set from range + specific (merged)
     const hasRange = rangeStart && rangeEnd && rangeEnd >= rangeStart;
     const hasSpecific = specificPuzzles && specificPuzzles.length > 0;
-    if (!hasRange && !hasSpecific) return [];
 
     const enabledSet = new Set<number>();
     if (hasRange) {
@@ -897,6 +864,12 @@ const AdminDashboard = () => {
     }
     if (hasSpecific) {
       for (const n of specificPuzzles!) enabledSet.add(n);
+    }
+    if (!hasRange && !hasSpecific) {
+      const count = access.limit > 0
+        ? Math.min(access.limit, categoryProgress.total)
+        : categoryProgress.total;
+      for (let i = 1; i <= count; i++) enabledSet.add(i);
     }
     const enabledNums = Array.from(enabledSet).sort((a, b) => a - b);
 
@@ -1121,14 +1094,6 @@ const AdminDashboard = () => {
       const data = await getUserContentAccess(userId);
       setUserContentAccess(data);
       setAccessLoadError(null);
-      if (data.puzzleAccess) {
-        const rawInputs: Record<string, string> = {};
-        for (const catId of Object.keys(data.puzzleAccess)) {
-          const nums: number[] = data.puzzleAccess[catId]?.specificPuzzles || [];
-          rawInputs[catId] = nums.join(', ');
-        }
-        setSpecificPuzzlesInputs(rawInputs);
-      }
       if (data.practiceWithAiAccess) {
         const rawInputs: Record<string, string> = {};
         for (const catId of Object.keys(data.practiceWithAiAccess)) {
@@ -1194,21 +1159,6 @@ const AdminDashboard = () => {
     } catch (error) {
       toast.error('Failed to update content access');
     }
-  };
-
-  const updatePuzzleAccess = (category: string, field: 'enabled' | 'limit' | 'rangeStart' | 'rangeEnd' | 'specificPuzzles', value: boolean | number | null | number[]) => {
-    if (!userContentAccess) return;
-    
-    setUserContentAccess({
-      ...userContentAccess,
-      puzzleAccess: {
-        ...userContentAccess.puzzleAccess,
-        [category]: {
-          ...userContentAccess.puzzleAccess[category],
-          [field]: value
-        }
-      }
-    });
   };
 
   const updatePracticeWithAiAccess = (
@@ -3936,13 +3886,24 @@ const AdminDashboard = () => {
                 {userContentAccess && (
                   <div className="mt-4 flex flex-col gap-6">
                     <div className="order-2">
-                      <div className="mb-4 flex items-center justify-between gap-3">
-                        <h3 className="flex items-center gap-2 text-lg font-semibold">
-                          <Target className="h-5 w-5" /> Practice with AI Access
-                        </h3>
-                        <p className="text-sm text-muted-foreground">Assign puzzles available in Practice with AI.</p>
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
+                      <details className="group rounded-lg border p-4">
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                          <div>
+                            <h3 className="flex items-center gap-2 text-lg font-semibold">
+                              <Puzzle className="h-5 w-5" /> Puzzles with AI Access
+                            </h3>
+                            {/* <p className="text-sm text-muted-foreground">Assign puzzles available in Puzzles with AI.</p> */}
+                            {puzzleRecommendations && (
+                              <div className="text-sm text-muted-foreground">
+                                <span>Average Progress: {puzzleRecommendations.averageProgress.toFixed(1)}%</span>
+                                <span className="ml-3">Total Remaining: {puzzleRecommendations.totalRemaining}</span>
+                                <span className="ml-3">Total Puzzles: {puzzles.length}</span>
+                              </div>
+                            )}
+                          </div>
+                          <ChevronRight className="h-5 w-5 shrink-0 transition-transform group-open:rotate-90" />
+                        </summary>
+                        <div className="mt-4 grid grid-cols-2 gap-4">
                         {allPuzzleCategories
                           .filter(cat => (puzzleCounts[cat.id] || 0) > 0)
                           .filter(cat => isCategoryVisibleForStudent(cat.id, selectedUserForAccess))
@@ -3950,8 +3911,18 @@ const AdminDashboard = () => {
                             const access = userContentAccess.practiceWithAiAccess?.[cat.id];
                             const enabled = access?.enabled === true;
                             const puzzleCount = puzzleCounts[cat.id] || 0;
+                            const incompletePuzzles = getIncompletePuzzles(cat.id);
+                            const hasIncomplete = incompletePuzzles.length > 0;
+                            const recommendation = puzzleRecommendations?.categories.find(item => item.category === cat.id);
+                            const recommendationText = recommendation
+                              ? recommendation.recommendationType === 'catch_up'
+                                ? `Give puzzles up to #${recommendation.recommendedEnd}`
+                                : recommendation.recommendedStart
+                                  ? `Continue from #${recommendation.recommendedStart}`
+                                  : 'Completed'
+                              : 'Loading recommendation...';
                             return (
-                              <div key={cat.id} className="rounded-lg bg-secondary/50 p-4">
+                              <div key={cat.id} className={`rounded-lg p-4 transition-colors ${hasIncomplete ? 'border-2 border-red-400 bg-red-100' : 'bg-secondary/50'}`}>
                                 <div className="mb-3 flex items-center justify-between">
                                   <div className="flex items-center gap-2">
                                     <span className="text-xl">{cat.icon}</span>
@@ -3960,8 +3931,23 @@ const AdminDashboard = () => {
                                   <Switch
                                     checked={enabled}
                                     onCheckedChange={checked => updatePracticeWithAiAccess(cat.id, 'enabled', checked)}
-                                    aria-label={`Practice with AI access for ${cat.name}`}
+                                    aria-label={`Puzzles with AI access for ${cat.name}`}
                                   />
+                                </div>
+                                <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs">
+                                  {recommendation ? (
+                                    <>
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="text-muted-foreground">Progress</span>
+                                        <span className="font-medium">{recommendation.completed} / {recommendation.total} ({recommendation.progress.toFixed(1)}%)</span>
+                                      </div>
+                                      <div className="mt-1 flex items-center justify-between gap-2">
+                                        <span className="text-muted-foreground">Remaining</span>
+                                        <span className="font-medium">{recommendation.remaining}</span>
+                                      </div>
+                                      <p className="mt-1 font-medium text-primary">{recommendationText}</p>
+                                    </>
+                                  ) : <span className="text-muted-foreground">{recommendationText}</span>}
                                 </div>
                                 <div className="space-y-2">
                                   <div className="flex items-center gap-2">
@@ -4021,103 +4007,29 @@ const AdminDashboard = () => {
                                   </div>
                                   {enabled && <p className="text-xs text-amber-600">Range + Specific #s are combined (union)</p>}
                                 </div>
+                                <div className="mt-2 text-xs">
+                                  {enabled
+                                    ? <p className="text-muted-foreground">✓ Access settings can be adjusted manually below.</p>
+                                    : <p className="text-muted-foreground">🔒 Category locked</p>}
+                                </div>
+                                {enabled && getIncompletePuzzles(cat.id).length > 0 && (
+                                  <div className="mt-3 rounded-md border border-red-300 bg-red-50 p-2 text-xs">
+                                    <p className="mb-1 font-semibold text-red-700">Not Completed:</p>
+                                    <ul className="max-h-32 space-y-0.5 overflow-y-auto">
+                                      {incompletePuzzles.map(puzzle => (
+                                        <li key={puzzle.number} className="text-red-600">
+                                          Puzzle #{puzzle.number} ({puzzle.name})
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
-                      </div>
+                        </div>
+                      </details>
                     </div>
-                    {/* Puzzle Access */}
-                    <div className="order-1">
-                      <div className="flex items-center justify-between gap-3 mb-4">
-                        <h3 className="font-semibold text-lg flex items-center gap-2">
-                          <Puzzle className="w-5 h-5" /> Puzzle Access
-                        </h3>
-                        {puzzleRecommendations && (
-                          <div className="text-right text-sm">
-                            <p className="font-medium text-primary">Average Progress: {puzzleRecommendations.averageProgress.toFixed(1)}%</p>
-                            <p className="text-muted-foreground">Total Remaining: {puzzleRecommendations.totalRemaining}</p>
-                            <p className="text-muted-foreground">Total Puzzles: {puzzles.length}</p>
-                          </div>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        {allPuzzleCategories
-                          .filter(cat => (puzzleCounts[cat.id] || 0) > 0)
-                          .filter(cat => isCategoryVisibleForStudent(cat.id, selectedUserForAccess))
-                          .map((cat) => {
-                          const hasIncomplete = hasIncompletePuzzlesInRange(cat.id);
-                          const incompletePuzzles = getIncompletePuzzles(cat.id);
-                          const recommendation = puzzleRecommendations?.categories.find(item => item.category === cat.id);
-                          const recommendationText = recommendation
-                            ? recommendation.recommendationType === 'catch_up'
-                              ? `Give puzzles up to #${recommendation.recommendedEnd}`
-                              : recommendation.recommendedStart
-                                ? `Continue from #${recommendation.recommendedStart}`
-                                : 'Completed'
-                            : 'Loading recommendation...';
-                          return (
-                            <div key={cat.id} className={`p-4 rounded-lg transition-colors ${hasIncomplete ? 'bg-red-100 border-2 border-red-400' : 'bg-secondary/50'}`}>
-                              <div className="flex items-center justify-between mb-3">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xl">{cat.icon}</span>
-                                  <span className="font-medium">{cat.name}</span>
-                                </div>
-                                <Switch checked={userContentAccess.puzzleAccess?.[cat.id]?.enabled || false} onCheckedChange={(checked) => updatePuzzleAccess(cat.id, 'enabled', checked)} />
-                              </div>
-                              <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs">
-                                {recommendation ? (
-                                  <>
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="text-muted-foreground">Progress</span>
-                                      <span className="font-medium">{recommendation.completed} / {recommendation.total} ({recommendation.progress.toFixed(1)}%)</span>
-                                    </div>
-                                    <div className="flex items-center justify-between gap-2 mt-1">
-                                      <span className="text-muted-foreground">Remaining</span>
-                                      <span className="font-medium">{recommendation.remaining}</span>
-                                    </div>
-                                    <p className="mt-1 font-medium text-primary">{recommendationText}</p>
-                                  </>
-                                ) : <span className="text-muted-foreground">{recommendationText}</span>}
-                              </div>
-                              <div className="space-y-2">
-                                <div className="flex items-center gap-2">
-                                  <Label className="text-sm text-muted-foreground">Puzzle Limit:</Label>
-                                  <Input type="number" min="0" max={puzzleCounts[cat.id] || 100} value={userContentAccess.puzzleAccess?.[cat.id]?.limit || 0} onChange={(e) => updatePuzzleAccess(cat.id, 'limit', parseInt(e.target.value) || 0)} className="w-20 h-8" disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled} />
-                                  <span className="text-sm text-muted-foreground">/ {puzzleCounts[cat.id] || 0} available</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Label className="text-sm text-muted-foreground">Range:</Label>
-                                  <Input type="number" min="1" max={puzzleCounts[cat.id] || 100} placeholder="Start" value={userContentAccess.puzzleAccess?.[cat.id]?.rangeStart || ''} onChange={(e) => updatePuzzleAccess(cat.id, 'rangeStart', e.target.value ? parseInt(e.target.value) : null)} className="w-16 h-8" disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled} />
-                                  <span className="text-sm text-muted-foreground">to</span>
-                                  <Input type="number" min="1" max={puzzleCounts[cat.id] || 100} placeholder="End" value={userContentAccess.puzzleAccess?.[cat.id]?.rangeEnd || ''} onChange={(e) => updatePuzzleAccess(cat.id, 'rangeEnd', e.target.value ? parseInt(e.target.value) : null)} className="w-16 h-8" disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled} />
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Label className="text-sm text-muted-foreground whitespace-nowrap">Specific #s:</Label>
-                                  <Input type="text" placeholder="e.g. 11,12,16,18" value={specificPuzzlesInputs[cat.id] ?? (userContentAccess.puzzleAccess?.[cat.id]?.specificPuzzles || []).join(', ')} onChange={(e) => setSpecificPuzzlesInputs(prev => ({ ...prev, [cat.id]: e.target.value }))} onBlur={(e) => { const nums = e.target.value.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0); updatePuzzleAccess(cat.id, 'specificPuzzles', nums); setSpecificPuzzlesInputs(prev => ({ ...prev, [cat.id]: nums.join(', ') })); }} className="h-8 flex-1" disabled={!userContentAccess.puzzleAccess?.[cat.id]?.enabled} />
-                                </div>
-                                {userContentAccess.puzzleAccess?.[cat.id]?.enabled && <p className="text-xs text-amber-600">Range + Specific #s are combined (union)</p>}
-                              </div>
-                              <div className="text-xs mt-2">
-                                {userContentAccess.puzzleAccess?.[cat.id]?.enabled ? <p className="text-muted-foreground">✓ Access settings can be adjusted manually below.</p> : <p className="text-muted-foreground">🔒 Category locked</p>}
-                              </div>
-                              {userContentAccess.puzzleAccess?.[cat.id]?.enabled && incompletePuzzles.length > 0 && (
-                                <div className="mt-3 rounded-md border border-red-300 bg-red-50 p-2 text-xs">
-                                  <p className="mb-1 font-semibold text-red-700">Not Completed:</p>
-                                  <ul className="max-h-32 space-y-0.5 overflow-y-auto">
-                                    {incompletePuzzles.map((puzzle) => (
-                                      <li key={puzzle.number} className="text-red-600">
-                                        Puzzle #{puzzle.number} ({puzzle.name})
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-
                     <section className="order-3 space-y-3">
                       <div>
                         <h3 className="text-lg font-semibold">Column Access</h3>

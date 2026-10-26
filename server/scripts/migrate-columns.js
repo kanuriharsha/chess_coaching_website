@@ -10,7 +10,6 @@ const legacyTypes = [
   { source: 'bestgames', type: 'bestGame', title: 'Best Games', icon: 'Trophy', accessKey: 'bestGamesAccess', idsKey: 'allowedGames' },
   { source: 'famousmates', type: 'famousMate', title: 'Famous Mates', icon: 'Crown', accessKey: 'famousMatesAccess', idsKey: 'allowedMates' }
 ];
-const migrationStamp = new Date().toISOString().replace(/[-:.TZ]/g, '');
 const sourceDocuments = new Map();
 const columnsByOwnerType = new Map();
 const contentById = new Map();
@@ -21,32 +20,6 @@ function stableColumnId(adminId, type) {
 
 function keyFor(adminId, type) {
   return `${String(adminId)}:${type}`;
-}
-
-async function backupCollection(db, name) {
-  const source = db.collection(name);
-  const backupName = `backup_${migrationStamp}_${name}`;
-  const backup = db.collection(backupName);
-  let batch = [];
-  let backedUp = 0;
-  const cursor = source.find({}, { batchSize: 500 });
-  while (await cursor.hasNext()) {
-    batch.push(await cursor.next());
-    if (batch.length === 500) {
-      await backup.insertMany(batch, { ordered: true });
-      backedUp += batch.length;
-      batch = [];
-    }
-  }
-  if (batch.length) {
-    await backup.insertMany(batch, { ordered: true });
-    backedUp += batch.length;
-  }
-  const originalCount = await source.countDocuments({});
-  if (backedUp !== originalCount) {
-    throw new Error(`Backup count mismatch for ${name}: expected ${originalCount}, copied ${backedUp}`);
-  }
-  return { source: name, backup: backupName, documents: backedUp };
 }
 
 async function insertColumnContent(db, oldDocument, column, legacyType) {
@@ -240,30 +213,6 @@ async function migratePermissionRecords(db) {
 async function run() {
   await mongoose.connect(uri);
   const db = mongoose.connection.db;
-  const backups = [];
-  const collections = await db.listCollections({}, { nameOnly: true }).toArray();
-  const backupCollectionNames = new Set(collections
-    .map(collection => collection.name)
-    .filter(name => !name.startsWith('backup_') && !name.startsWith('system.')));
-  for (const collection of [
-    'openings',
-    'bestgames',
-    'famousmates',
-    'contentaccess',
-    'adminpuzzleaccess',
-    'columns',
-    'columncontents'
-  ]) {
-    backupCollectionNames.add(collection);
-  }
-  for (const collection of backupCollectionNames) {
-    backups.push(await backupCollection(db, collection));
-  }
-  console.log('Database backup completed before migration:');
-  for (const backup of backups) {
-    console.log(`  ${backup.source} -> ${backup.backup} (${backup.documents} documents)`);
-  }
-
   await migrateLegacyContent(db);
   await migratePermissionRecords(db);
   console.log(`Column migration complete: ${contentById.size} content records mapped.`);

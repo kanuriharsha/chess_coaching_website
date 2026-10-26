@@ -35,6 +35,33 @@ interface PuzzlesProps {
 const delay = (milliseconds: number) =>
   new Promise<void>(resolve => window.setTimeout(resolve, milliseconds));
 
+const mateInWordCounts: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15
+};
+
+const getMateInMoveCount = (categoryName: string): number | null => {
+  const match = categoryName.trim().match(
+    /^mate\s+in\b.*\b(1[0-5]|[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen)\s*$/i
+  );
+  if (!match) return null;
+  const value = match[1].toLowerCase();
+  return mateInWordCounts[value] ?? Number(value);
+};
+
 const getStockfishMove = (fen: string): Promise<string> => new Promise((resolve, reject) => {
   let worker: Worker;
   try {
@@ -161,6 +188,9 @@ const defaultCategories: PuzzleCategory[] = [
   { id: 'traps', name: 'Traps', description: 'Lure your opponent', count: 0, unlocked: true, accessLimit: 0, icon: '♙' },
 ];
 
+const isMateInCategory = (categoryId: string | undefined): boolean =>
+  /^mate[\s-]+in[\s-]+\d+$/i.test(categoryId || '');
+
 const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
   const { user, token } = useAuth();
   const navigate = useNavigate();
@@ -175,6 +205,9 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
   const [categoryPuzzles, setCategoryPuzzles] = useState<PuzzleData[]>([]);
   const [isLoadingCategoryPuzzles, setIsLoadingCategoryPuzzles] = useState(false);
   const [categoryPuzzleLoadError, setCategoryPuzzleLoadError] = useState<string | null>(null);
+  const [completedPuzzleIds, setCompletedPuzzleIds] = useState<Set<string>>(() => new Set());
+  const [puzzleProgressLoaded, setPuzzleProgressLoaded] = useState(false);
+  const [puzzleProgressError, setPuzzleProgressError] = useState<string | null>(null);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState(0);
   const [game, setGame] = useState(new Chess());
   const [solved, setSolved] = useState(false);
@@ -191,6 +224,8 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
   const [practiceFollowingSolution, setPracticeFollowingSolution] = useState(true);
   const [practiceOffSolutionMoveCount, setPracticeOffSolutionMoveCount] = useState(0);
   const [showPracticeResetDialog, setShowPracticeResetDialog] = useState(false);
+  const [showPracticeMoveLimitDialog, setShowPracticeMoveLimitDialog] = useState(false);
+  const [showPracticeLossDialog, setShowPracticeLossDialog] = useState(false);
   const [practiceResetPromptDismissed, setPracticeResetPromptDismissed] = useState(false);
   const [practiceResetWarningVisible, setPracticeResetWarningVisible] = useState(false);
   const practiceResetDecisionResolver = useRef<((continueWithAI: boolean) => void) | null>(null);
@@ -210,6 +245,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
   const isAdmin = isAdminRole(user?.role);
   const reorderablePuzzleCategories = puzzleCategories.filter(category => category.count > 0);
   const currentPuzzle = categoryPuzzles[currentPuzzleIndex];
+  const currentPuzzleId = currentPuzzle?._id;
   const getPuzzleDisplayNumber = (p: PuzzleData | undefined, idx: number) => {
     if (!p) return `#${idx + 1}`;
     const match = (p.name || '').match(/#(\d+)/);
@@ -219,16 +255,22 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
 
   // Track page visit
   useEffect(() => {
-    trackPageVisit(practiceMode ? 'Practice' : 'Puzzles');
+    trackPageVisit(practiceMode ? 'Puzzles with AI' : 'Puzzles');
   }, [practiceMode, trackPageVisit]);
 
   // Track category change
   useEffect(() => {
     if (selectedCategory) {
       const categoryName = puzzleCategories.find(c => c.id === selectedCategory)?.name || selectedCategory;
-      trackPageVisit(`${practiceMode ? 'Practice' : 'Puzzles'} - ${categoryName}`);
+      trackPageVisit(`${practiceMode ? 'Puzzles with AI' : 'Puzzles'} - ${categoryName}`);
     }
   }, [selectedCategory, practiceMode]);
+
+  useEffect(() => {
+    if (solved && currentPuzzleId) {
+      setCompletedPuzzleIds(previous => new Set(previous).add(currentPuzzleId));
+    }
+  }, [solved, currentPuzzleId]);
 
   useEffect(() => {
     // Load puzzle categories from server first, then load puzzles with those categories
@@ -240,11 +282,35 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
       await loadPuzzles(cats, orderData);
       if (!isAdmin) {
         await loadContentAccess();
+        try {
+          if (!user?.id) throw new Error('Student account could not be identified');
+          const response = await fetch(`${API_BASE_URL}/users/${user.id}/puzzle-progress`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (!response.ok) throw new Error(`Failed to load puzzle progress (HTTP ${response.status})`);
+          const progress: Array<{ puzzleDetails?: Array<{ puzzleId: string; solved: boolean }> }> =
+            await response.json();
+          setCompletedPuzzleIds(new Set(
+            progress.flatMap(category =>
+              (category.puzzleDetails || [])
+                .filter(puzzle => puzzle.solved)
+                .map(puzzle => puzzle.puzzleId)
+            )
+          ));
+          setPuzzleProgressError(null);
+        } catch (error) {
+          console.error('Load puzzle progress error:', error);
+          setPuzzleProgressError(error instanceof Error ? error.message : 'Failed to load puzzle progress');
+        } finally {
+          setPuzzleProgressLoaded(true);
+        }
+      } else {
+        setPuzzleProgressLoaded(true);
       }
       setIsInitializing(false);
     };
     init();
-  }, [isAdmin, token]);
+  }, [isAdmin, token, user?.id]);
 
   const loadGroups = async () => {
     try {
@@ -481,6 +547,8 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
       setPracticeOffSolutionMoveCount(0);
       setPracticeResetPromptDismissed(false);
       setPracticeResetWarningVisible(false);
+      setShowPracticeMoveLimitDialog(false);
+      setShowPracticeLossDialog(false);
       setMoveHistory([]);
       setHistoryIndex(0);
       return;
@@ -796,6 +864,11 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
           currentPuzzle.originalIndex || currentPuzzleIndex + 1
         );
       };
+      const currentCategoryName =
+        puzzleCategories.find(category => category.id === currentPuzzle.category)?.name ??
+        currentPuzzle.category;
+      const mateInMoves = getMateInMoveCount(currentCategoryName);
+      let mateMoveLimitReached = false;
       let opponentMoveSan: string | null = null;
       let opponentNodeId: string | null = null;
       let followsSolution = practiceFollowingSolution;
@@ -816,7 +889,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
       } else if (followsSolution) {
         const expectedMove = currentPuzzle.solution[currentMoveIndex];
         const isLastStep = currentMoveIndex + 1 >= currentPuzzle.solution.length;
-        const isMateCategory = currentPuzzle.category.startsWith('mate-in-');
+        const isMateCategory = isMateInCategory(currentPuzzle.category);
         followsSolution = !!expectedMove && isMoveCorrect(
           expectedMove,
           playerMove,
@@ -834,7 +907,8 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
         setPracticeFollowingSolution(false);
         const nextOffSolutionMoveCount = practiceOffSolutionMoveCount + 1;
         setPracticeOffSolutionMoveCount(nextOffSolutionMoveCount);
-        if (nextOffSolutionMoveCount >= 3 && !practiceResetPromptDismissed) {
+        mateMoveLimitReached = mateInMoves !== null && nextOffSolutionMoveCount >= mateInMoves;
+        if (mateInMoves === null && nextOffSolutionMoveCount >= 3 && !practiceResetPromptDismissed) {
           const continueWithAI = await requestPracticeResetDecision();
           if (!continueWithAI) return;
           setPracticeResetPromptDismissed(true);
@@ -849,7 +923,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
           setHistoryIndex(nextHistory.length - 1);
           return nextHistory;
         });
-        completePractice();
+        if (followsSolution) completePractice();
         return;
       }
 
@@ -908,7 +982,16 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
           ? !!opponentNodeId && treeChildren(currentPuzzle.moveTree, opponentNodeId).length === 0
           : currentMoveIndex + 2 >= currentPuzzle.solution.length
       );
-      if (updatedGame.isGameOver() || savedLineCompleted) completePractice();
+      const studentColor = boardOrientation === 'white' ? 'w' : 'b';
+      const studentWasCheckmated =
+        updatedGame.isCheckmate() && updatedGame.turn() === studentColor;
+      if (studentWasCheckmated || mateMoveLimitReached) {
+        await delay(1000);
+        if (studentWasCheckmated) setShowPracticeLossDialog(true);
+        else setShowPracticeMoveLimitDialog(true);
+        return;
+      }
+      if (savedLineCompleted) completePractice();
     } catch (error) {
       console.error('Practice response error:', error);
       setGame(new Chess(previousFen));
@@ -925,6 +1008,8 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
     }
   }, [
     currentPuzzle,
+    puzzleCategories,
+    boardOrientation,
     attempts,
     currentPuzzleIndex,
     selectedCategory,
@@ -968,7 +1053,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
       setAttempts(newAttempts);
 
       const categoryId = selectedCategory || '';
-      const isMateCategory = (currentPuzzle.category || '').startsWith('mate-in-');
+      const isMateCategory = isMateInCategory(currentPuzzle.category);
       const isLastFlatStep = currentMoveIndex + 1 >= currentPuzzle.solution.length;
 
       const fromSq = from as Square;
@@ -1153,7 +1238,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
       const attemptId = crypto.randomUUID();
       setAttempts(newAttempts);
       const categoryId = selectedCategory || '';
-      const isMateCategory = (currentPuzzle.category || '').startsWith('mate-in-');
+      const isMateCategory = isMateInCategory(currentPuzzle.category);
 
       const fromSq = from as Square;
       const toSq = to as Square;
@@ -1326,6 +1411,8 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
     setPracticeOffSolutionMoveCount(0);
     setPracticeResetPromptDismissed(false);
     setPracticeResetWarningVisible(false);
+    setShowPracticeMoveLimitDialog(false);
+    setShowPracticeLossDialog(false);
 
     // Execute preloaded move again on reattempt
     executePreloadedMove();
@@ -1454,15 +1541,15 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
         <div className="flex items-center justify-between mb-3">
           <div>
             <h1 className="font-serif text-xl md:text-2xl font-bold text-foreground">
-              {practiceMode ? 'Practice' : 'Puzzles'}
+              {practiceMode ? 'Puzzles with AI' : 'Puzzles'}
             </h1>
             <p className="text-xs text-muted-foreground hidden md:block">
               {practiceMode
-                ? 'Practice chess positions and play against AI to understand your mistakes'
+                ? 'Solve chess puzzles and play against AI to understand your moves'
                 : 'Sharpen your tactics with carefully selected puzzles'}
             </p>
           </div>
-          {isAdmin && !practiceMode && !selectedCategory && (
+          {isAdmin && !selectedCategory && (
             <div className="flex gap-2">
               {!isReorderMode ? (
                 <Button size="sm" variant="outline" onClick={enterReorderMode}>
@@ -1496,8 +1583,8 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
           <div className="rounded-lg border p-6 text-center" role={contentAccessLoadError ? 'alert' : 'status'}>
             <p className="font-medium">
               {contentAccessLoadError
-                ? 'Practice with AI access could not be verified.'
-                : 'Your coach has not enabled Practice with AI access.'}
+                ? 'Puzzles with AI access could not be verified.'
+                : 'Your coach has not enabled Puzzles with AI access.'}
             </p>
             {contentAccessLoadError && (
               <p className="mt-2 text-sm text-muted-foreground">{contentAccessLoadError}</p>
@@ -1569,7 +1656,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
               </div>
             ) : isAdmin && !hasPuzzles ? (
               <div className="text-center py-12">
-                <p className="text-muted-foreground">No content in {practiceMode ? 'Practice' : 'Puzzles'}. Click the + Add button to add content.</p>
+                <p className="text-muted-foreground">No content in {practiceMode ? 'Puzzles with AI' : 'Puzzles'}. Click the + Add button to add content.</p>
               </div>
             ) : (
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -1865,6 +1952,52 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                       </AlertDialogContent>
                     </AlertDialog>
                   )}
+                  {practiceMode && (
+                    <AlertDialog
+                      open={showPracticeMoveLimitDialog}
+                      onOpenChange={setShowPracticeMoveLimitDialog}
+                    >
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>You're out of moves! The king escapes.</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Reset the puzzle to try again.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogAction
+                            className="bg-primary text-primary-foreground hover:bg-primary/90 focus:ring-primary"
+                            onClick={resetPuzzle}
+                          >
+                            Reset Puzzle
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  )}
+                  {practiceMode && (
+                    <AlertDialog
+                      open={showPracticeLossDialog}
+                      onOpenChange={setShowPracticeLossDialog}
+                    >
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>The AI checkmated you</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            The AI has checkmated you !!!♟️ This puzzle is not completed. Reset the puzzle and try again.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogAction
+                            className="bg-primary text-primary-foreground hover:bg-primary/90 focus:ring-primary"
+                            onClick={resetPuzzle}
+                          >
+                            Reset puzzle
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  )}
                 </div>
               </div>
 
@@ -1922,6 +2055,23 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                       </div>
                     )}
                   </div>
+                  {practiceMode && !isAdmin && currentPuzzle && (
+                    <p className={`mb-3 text-xs font-medium ${
+                      solved || completedPuzzleIds.has(currentPuzzle._id)
+                        ? 'text-success'
+                        : puzzleProgressError
+                          ? 'text-muted-foreground'
+                          : 'text-destructive'
+                    }`} role="status">
+                      {solved || completedPuzzleIds.has(currentPuzzle._id)
+                        ? 'Completed'
+                        : !puzzleProgressLoaded
+                          ? 'Checking completion status...'
+                          : puzzleProgressError
+                            ? 'Completion status unavailable'
+                            : 'Not completed'}
+                    </p>
+                  )}
 
                   {/* Action Buttons */}
                   <div className="flex flex-col gap-2">
@@ -1995,7 +2145,11 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
 
                     <button
                       onClick={solved ? nextPuzzle : resetPuzzle}
-                      className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-sm font-medium"
+                      className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg transition-colors text-sm font-medium ${
+                        !solved
+                          ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                          : 'bg-primary text-primary-foreground hover:bg-primary/90'
+                      }`}
                     >
                       {solved ? <ArrowRight className="w-5 h-5 stroke-[3]" /> : <RotateCcw className="w-4 h-4" />}
                       {solved ? 'Next Puzzle' : 'Reset'}

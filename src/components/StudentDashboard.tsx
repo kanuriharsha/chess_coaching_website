@@ -449,7 +449,7 @@ const StudentDashboard: React.FC = () => {
           <div className="flex items-center justify-between">
             <CardTitle className="text-lg font-serif flex items-center gap-2">
               <Star className="w-5 h-5 text-warning" />
-              Recommended for You
+              Recommended Puzzles with AI
             </CardTitle>
             <a href="/puzzles" className="text-sm text-primary hover:underline">
               View All

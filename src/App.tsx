@@ -7,7 +7,6 @@ import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import Login from "./pages/Login";
 import Onboarding from "./pages/Onboarding";
 import AdminOnboarding from "./pages/AdminOnboarding";
-import Puzzles from "./pages/Puzzles";
 import Practice from "./pages/Practice";
 import Games from "./pages/Games";
 import Openings from "./pages/Openings";
@@ -137,7 +136,7 @@ const AppRoutes = () => (
       path="/puzzles"
       element={
         <ProtectedRoute>
-          <Puzzles />
+          <Practice />
         </ProtectedRoute>
       }
     />
@@ -145,7 +144,7 @@ const AppRoutes = () => (
       path="/practice"
       element={
         <ProtectedRoute>
-          <Practice />
+          <Navigate to="/puzzles" replace />
         </ProtectedRoute>
       }
     />
