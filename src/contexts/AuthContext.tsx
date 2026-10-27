@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { useTheme } from 'next-themes';
 
 // API Base URL - uses environment variable or defaults to localhost
 const API_BASE_URL = import.meta.env.VITE_API_URL;
@@ -26,6 +27,7 @@ export interface User {
   groupName?: string | null;
   isEnabled: boolean;
   onboardingComplete: boolean;
+  theme?: 0 | 1;
   joiningDate?: string;
   attendance?: AttendanceRecord[];
   achievements?: Achievement[];
@@ -60,12 +62,14 @@ interface AuthContextType {
   register: (username: string, password: string, role?: 'student') => Promise<boolean>;
   getAllUsers: () => Promise<User[]>;
   updateUser: (id: string, data: Partial<User & { password?: string }>) => Promise<boolean>;
+  updateTheme: (theme: 0 | 1) => Promise<boolean>;
   deleteUser: (id: string) => Promise<boolean>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { setTheme } = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -77,7 +81,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     
     if (storedToken && storedUser) {
       setToken(storedToken);
-      setUser(JSON.parse(storedUser));
+      const cachedUser: User = JSON.parse(storedUser);
+      cachedUser.theme = cachedUser.theme === 0 ? 0 : 1;
+      setUser(cachedUser);
+      setTheme(cachedUser.theme === 0 ? 'dark' : 'light');
       
       // Verify token is still valid
       verifyToken(storedToken);
@@ -96,8 +103,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       if (response.ok) {
         const userData = await response.json();
-        setUser(userData);
-        localStorage.setItem('chessCoach_user', JSON.stringify(userData));
+        const freshUser: User = { ...userData, theme: userData.theme === 0 ? 0 : 1 };
+        setUser(freshUser);
+        setTheme(freshUser.theme === 0 ? 'dark' : 'light');
+        localStorage.setItem('chessCoach_user', JSON.stringify(freshUser));
       } else {
         // Token invalid, clear storage
         logout();
@@ -121,10 +130,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (response.ok) {
         const data = await response.json();
-        setUser(data.user);
+        const signedInUser: User = { ...data.user, theme: data.user.theme === 0 ? 0 : 1 };
+        setUser(signedInUser);
+        setTheme(signedInUser.theme === 0 ? 'dark' : 'light');
         setToken(data.token);
         localStorage.setItem('chessCoach_token', data.token);
-        localStorage.setItem('chessCoach_user', JSON.stringify(data.user));
+        localStorage.setItem('chessCoach_user', JSON.stringify(signedInUser));
         return { success: true };
       }
 
@@ -178,6 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = () => {
     setUser(null);
     setToken(null);
+    setTheme('light');
     localStorage.removeItem('chessCoach_token');
     localStorage.removeItem('chessCoach_user');
   };
@@ -197,8 +209,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (response.ok) {
         const data = await response.json();
-        setUser(data.user);
-        localStorage.setItem('chessCoach_user', JSON.stringify(data.user));
+        const updatedUser: User = { ...data.user, theme: data.user.theme === 0 ? 0 : 1 };
+        setUser(updatedUser);
+        setTheme(updatedUser.theme === 0 ? 'dark' : 'light');
+        localStorage.setItem('chessCoach_user', JSON.stringify(updatedUser));
       }
     } catch (error) {
       console.error('Onboarding error:', error);
@@ -245,8 +259,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // If the updated user is the currently authenticated user, refresh local user state
         const updatedUser = body?.user;
         if (updatedUser && user && updatedUser.id === user.id) {
-          setUser(updatedUser);
-          localStorage.setItem('chessCoach_user', JSON.stringify(updatedUser));
+          const currentUser = { ...user, ...updatedUser, theme: updatedUser.theme === 0 ? 0 : user.theme ?? 1 };
+          setUser(currentUser);
+          localStorage.setItem('chessCoach_user', JSON.stringify(currentUser));
         }
       } catch (err) {
         // ignore parse errors, still return ok
@@ -255,6 +270,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return true;
     } catch (error) {
       console.error('Update user error:', error);
+      return false;
+    }
+  };
+
+  const updateTheme = async (theme: 0 | 1): Promise<boolean> => {
+    if (!token || !user) return false;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/theme`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ theme })
+      });
+      if (!response.ok) return false;
+
+      const updatedUser = { ...user, theme };
+      setUser(updatedUser);
+      setTheme(theme === 0 ? 'dark' : 'light');
+      localStorage.setItem('chessCoach_user', JSON.stringify(updatedUser));
+      return true;
+    } catch (error) {
+      console.error('Theme update error:', error);
       return false;
     }
   };
@@ -288,6 +328,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       getAllUsers,
       updateUser,
+      updateTheme,
       deleteUser
     }}>
       {children}

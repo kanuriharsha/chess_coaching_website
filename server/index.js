@@ -108,6 +108,7 @@ const Group = mongoose.model('Group', groupSchema, 'groups');
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   password: { type: String, required: true },
+  theme: { type: Number, enum: [0, 1], default: 1 },
   role: { type: String, enum: ['admin', 'superadmin', 'student'], default: 'student' },
   verificationStatus: { type: String, enum: ['under_review', 'verified', 'rejected'], default: undefined },
   adminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
@@ -1004,7 +1005,8 @@ app.post('/api/auth/login', async (req, res) => {
         isEnabled: foundUser.isEnabled,
         onboardingComplete: foundUser.onboardingComplete,
         profile: foundUser.profile,
-        groupId: foundUser.groupId
+        groupId: foundUser.groupId,
+        theme: foundUser.theme ?? 1
       }
     });
   } catch (error) {
@@ -1036,11 +1038,34 @@ app.get('/api/auth/me', async (req, res) => {
       isEnabled: user.isEnabled,
       onboardingComplete: user.onboardingComplete,
       profile: user.profile,
-      groupId: user.groupId
+      groupId: user.groupId,
+      theme: user.theme ?? 1
     });
   } catch (error) {
     console.error('Auth check error:', error);
     res.status(401).json({ message: 'Invalid token' });
+  }
+});
+
+app.patch('/api/auth/theme', async (req, res) => {
+  const { theme } = req.body || {};
+  if (theme !== 0 && theme !== 1) {
+    return res.status(400).json({ message: 'Theme must be 0 (dark) or 1 (light)' });
+  }
+
+  try {
+    const user = await getAuthenticatedUser(req, '_id theme isEnabled');
+    if (!user || user.isEnabled === false) {
+      return res.status(401).json({ message: 'Unauthorized' });
+    }
+
+    user.theme = theme;
+    user.updatedAt = new Date();
+    await user.save();
+    res.json({ theme: user.theme });
+  } catch (error) {
+    console.error('Theme update error:', error);
+    res.status(500).json({ message: 'Failed to update theme preference' });
   }
 });
 
@@ -1073,7 +1098,8 @@ app.put('/api/auth/onboarding', async (req, res) => {
         role: user.role,
         isEnabled: user.isEnabled,
         onboardingComplete: user.onboardingComplete,
-        profile: user.profile
+        profile: user.profile,
+        theme: user.theme ?? 1
       }
     });
   } catch (error) {

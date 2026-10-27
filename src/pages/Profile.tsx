@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
-import { User as UserIcon, Mail, Phone, MapPin, GraduationCap, Calendar, Trophy, Target, CalendarDays, Check, XCircle, Activity, Clock, TrendingUp } from 'lucide-react';
+import { User as UserIcon, Mail, Phone, MapPin, GraduationCap, Calendar, Trophy, Target, CalendarDays, Check, XCircle, Activity, Clock, TrendingUp, Moon, Sun } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ;
 
@@ -32,7 +33,7 @@ interface UserActivity {
 }
 
 const Profile = () => {
-  const { user, token } = useAuth();
+  const { user, token, updateTheme } = useAuth();
   const params = useParams();
   const userIdParam = params.userId;
 
@@ -48,6 +49,7 @@ const Profile = () => {
   const [puzzleProgress, setPuzzleProgress] = useState<PuzzleProgress[]>([]);
   const [recentActivity, setRecentActivity] = useState<UserActivity[]>([]);
   const [loading, setLoading] = useState(false);
+  const [isSavingTheme, setIsSavingTheme] = useState(false);
 
   const displayUser = targetUser || user;
   const profile = displayUser?.profile;
@@ -236,6 +238,18 @@ const Profile = () => {
     }
   };
 
+  const handleThemeChange = async (isDark: boolean) => {
+    setIsSavingTheme(true);
+    const saved = await updateTheme(isDark ? 0 : 1);
+    setIsSavingTheme(false);
+    if (!saved) {
+      toast.error('Unable to save theme preference');
+      return;
+    }
+    setTargetUser((current) => current ? { ...current, theme: isDark ? 0 : 1 } : current);
+    toast.success('Theme preference saved');
+  };
+
   // Calculate attendance stats
   const presentCount = attendance.filter(a => a.status === 'present').length;
   const absentCount = attendance.filter(a => a.status === 'absent').length;
@@ -382,6 +396,22 @@ const Profile = () => {
               </p>
               {profile?.classDesignation && (
                 <p className="text-sm text-primary mt-2">{profile.classDesignation}</p>
+              )}
+              {displayUser?.id === user?.id && (
+                <div className="mt-5 flex items-center justify-between border-t border-border pt-4 text-left">
+                  <div className="flex items-center gap-2">
+                    {displayUser.theme === 0
+                      ? <Moon className="h-4 w-4 text-primary" />
+                      : <Sun className="h-4 w-4 text-primary" />}
+                    <span className="text-sm font-medium text-foreground">Dark theme</span>
+                  </div>
+                  <Switch
+                    checked={displayUser.theme === 0}
+                    onCheckedChange={handleThemeChange}
+                    disabled={isSavingTheme}
+                    aria-label="Enable dark theme"
+                  />
+                </div>
               )}
             </div>
 

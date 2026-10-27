@@ -2129,7 +2129,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                     >
                       <AlertDialogContent>
                         <AlertDialogHeader>
-                          <AlertDialogTitle>You're out of moves! The king escapes.</AlertDialogTitle>
+                          <AlertDialogTitle>You're out of moves! Opponent king escapes.</AlertDialogTitle>
                           <AlertDialogDescription>
                             Reset the puzzle to try again.
                           </AlertDialogDescription>
@@ -2255,7 +2255,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                     {!solved && (
                       <button
                         onClick={() => setShowHint(true)}
-                        className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-warning/10 border border-warning/30 text-warning-foreground hover:bg-warning/20 transition-colors text-sm font-medium"
+                        className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-800 hover:bg-amber-500/25 dark:border-amber-400/40 dark:text-amber-200 dark:hover:bg-amber-400/20 transition-colors text-sm font-medium"
                       >
                         <Lightbulb className="w-4 h-4" />
                         Hint
@@ -2264,8 +2264,8 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
 
                     {/* Hint Message - Between Hint and Reset */}
                     {showHint && !solved && currentPuzzle && (
-                      <div className="p-2 bg-warning/10 border border-warning/30 rounded-lg">
-                        <div className="flex gap-2 text-xs text-warning-foreground">
+                      <div className="p-2 bg-amber-500/10 border border-amber-500/30 rounded-lg dark:border-amber-400/30">
+                        <div className="flex gap-2 text-xs text-amber-800 dark:text-amber-200">
                           <span>💡</span>
                           <p>{currentPuzzle.hint || 'Look carefully at the position'}</p>
                         </div>
