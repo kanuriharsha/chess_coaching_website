@@ -260,6 +260,12 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
         setInternalSelectedSquare(null);
         setPossibleMoves([]);
       }
+    } else {
+      // The pointer-down already selected this piece; ignore the click synthesized for the tap.
+      suppressNextClick.current = true;
+      window.setTimeout(() => {
+        suppressNextClick.current = false;
+      }, 0);
     }
 
     setDragState(null);
