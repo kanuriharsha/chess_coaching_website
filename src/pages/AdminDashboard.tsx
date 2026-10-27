@@ -2738,9 +2738,9 @@ const AdminDashboard = () => {
                             </p>
                             {activity.details && (
                               <div className="mt-1 text-xs text-muted-foreground">
-                                {activity.details.puzzleNumber && (
+                                {activity.details.puzzleName && (
                                   <span className="inline-flex items-center gap-1 mr-3 font-medium">
-                                    🧩 Puzzle {activity.details.puzzleNumber}
+                                    🧩 Puzzle {activity.details.puzzleName}
                                   </span>
                                 )}
                                 {activity.details.category && (
