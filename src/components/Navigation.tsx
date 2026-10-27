@@ -172,14 +172,14 @@ const Navigation = () => {
       </nav>
 
       {/* Mobile Navigation - Bottom Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50">
-        <div className="flex justify-around items-center py-2 px-4">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-card border-t border-border z-50 pb-[env(safe-area-inset-bottom)]">
+        <div className="grid grid-cols-5 items-center w-full py-2 px-1">
           {bottomNavItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               className={`
-                flex flex-col items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium
+                flex min-w-0 w-full flex-col items-center gap-1 px-1 py-2 rounded-lg text-[10px] font-medium
                 transition-all duration-200
                 ${
                   isActive(item.to)
@@ -188,15 +188,15 @@ const Navigation = () => {
                 }
               `}
             >
-              <item.icon className={`w-5 h-5 ${isActive(item.to) ? 'animate-scale-in' : ''}`} />
-              {item.label}
+                <item.icon className={`h-5 w-5 shrink-0 ${isActive(item.to) ? 'animate-scale-in' : ''}`} />
+                <span className="w-full whitespace-normal text-center leading-tight">{item.label}</span>
             </NavLink>
           ))}
           <button
             onClick={() => setMobileMenuOpen(true)}
-            className="flex flex-col items-center gap-1 px-3 py-2 rounded-lg text-xs font-medium text-muted-foreground"
+            className="flex min-w-0 w-full flex-col items-center gap-1 px-1 py-2 rounded-lg text-[10px] font-medium text-muted-foreground"
           >
-            <Menu className="w-5 h-5" />
+            <Menu className="h-5 w-5 shrink-0" />
             More
           </button>
         </div>
