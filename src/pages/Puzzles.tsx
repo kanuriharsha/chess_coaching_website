@@ -308,6 +308,10 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
     return `#${p?.originalIndex || idx + 1}`;
   };
 
+  useEffect(() => {
+    if (practiceMode) window.scrollTo(0, 0);
+  }, [practiceMode]);
+
   // Track page visit
   useEffect(() => {
     trackPageVisit(practiceMode ? 'Puzzles with AI' : 'Puzzles');
@@ -1651,7 +1655,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
   };
 
   return (
-    <AppLayout>
+    <AppLayout compactTopPadding={practiceMode}>
       <div className="animate-fade-in">
         {/* Compact Header */}
         <div className="flex items-center justify-between mb-3">
@@ -2040,7 +2044,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
               <div className="relative flex items-center justify-center">
                 <div className="w-full max-w-2xl">
                   {practiceMode && (
-                    <div className="flex h-12 flex-col items-center justify-center" aria-live="polite">
+                    <div className="flex h-12 flex-col items-center justify-center md:hidden" aria-live="polite">
                       {practiceResetWarningVisible && (
                         <p className="text-center text-sm font-medium text-foreground" role="status">
                           You are doing this puzzle in wrong way, please reset.
@@ -2081,33 +2085,6 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                       onSquareTap={handlePreloadedMoveTap}
                     />
                   </div>
-                  {isAdmin && practiceMode && (
-                    <div className="mt-3 flex flex-col items-center gap-2">
-                      {adminModeSwitchStatus && (
-                        <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground" role="status" aria-live="polite">
-                          {adminModeSwitchStatus.startsWith('switching-') && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-                          <span>
-                            {adminModeSwitchStatus === 'switching-ai' && 'Switching to AI mode'}
-                            {adminModeSwitchStatus === 'switching-analysis' && 'Switching to Analyze mode'}
-                            {adminModeSwitchStatus === 'switched-ai' && 'Switched to AI mode'}
-                            {adminModeSwitchStatus === 'switched-analysis' && 'Switched to Analyze mode'}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex items-center justify-center gap-2">
-                        <Switch
-                          id="admin-puzzle-analysis-mode"
-                          checked={adminAnalysisMode}
-                          onCheckedChange={handleAdminAnalysisModeChange}
-                          disabled={adminModeSwitchStatus?.startsWith('switching-')}
-                          aria-label="Analyze puzzle without AI responses"
-                        />
-                        <Label htmlFor="admin-puzzle-analysis-mode" className="text-sm">
-                          Analyze locally (move both sides without AI)
-                        </Label>
-                      </div>
-                    </div>
-                  )}
                   <PromotionDialog
                     open={showPromotion}
                     onOpenChange={setShowPromotion}
@@ -2208,6 +2185,13 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                         <p className="text-blue-700">Watch the position carefully</p>
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {practiceMode && isProcessingMove && (
+                  <div className="hidden card-premium items-center justify-center gap-2 p-3 text-sm text-muted-foreground md:flex" role="status" aria-live="polite">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Opponent is thinking...</span>
                   </div>
                 )}
 
@@ -2376,6 +2360,33 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                     />
                   </div>
                 </div>
+                {isAdmin && practiceMode && (
+                  <div className="card-premium flex flex-col items-center gap-2 p-3">
+                    {adminModeSwitchStatus && (
+                      <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+                        {adminModeSwitchStatus.startsWith('switching-') && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                        <span>
+                          {adminModeSwitchStatus === 'switching-ai' && 'Switching to AI mode'}
+                          {adminModeSwitchStatus === 'switching-analysis' && 'Switching to Analyze mode'}
+                          {adminModeSwitchStatus === 'switched-ai' && 'Switched to AI mode'}
+                          {adminModeSwitchStatus === 'switched-analysis' && 'Switched to Analyze mode'}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-center gap-2">
+                      <Switch
+                        id="admin-puzzle-analysis-mode"
+                        checked={adminAnalysisMode}
+                        onCheckedChange={handleAdminAnalysisModeChange}
+                        disabled={adminModeSwitchStatus?.startsWith('switching-')}
+                        aria-label="Analyze puzzle without AI responses"
+                      />
+                      <Label htmlFor="admin-puzzle-analysis-mode" className="text-sm">
+                        Analyze locally (move both sides without AI)
+                      </Label>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
