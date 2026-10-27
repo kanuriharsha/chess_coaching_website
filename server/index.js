@@ -2486,6 +2486,23 @@ app.delete('/api/puzzles/:id', async (req, res) => {
 
     const deletedPuzzle = await Puzzle.findOneAndDelete({ _id: req.params.id, adminId: requestingUser._id });
     if (!deletedPuzzle) return res.status(404).json({ message: 'Puzzle not found' });
+
+    const remainingPuzzles = await Puzzle.find({
+      adminId: requestingUser._id,
+      category: deletedPuzzle.category
+    })
+      .sort({ order: 1, createdAt: 1, _id: 1 })
+      .select('_id')
+      .lean();
+    if (remainingPuzzles.length > 0) {
+      await Puzzle.bulkWrite(remainingPuzzles.map((puzzle, index) => ({
+        updateOne: {
+          filter: { _id: puzzle._id, adminId: requestingUser._id },
+          update: { $set: { order: index + 1, updatedAt: new Date() } }
+        }
+      })));
+    }
+
     res.json({ success: true, message: 'Puzzle deleted' });
   } catch (error) {
     console.error('Delete puzzle error:', error);

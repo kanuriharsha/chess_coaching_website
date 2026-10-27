@@ -7,9 +7,10 @@ import { isPromotionMove } from '@/lib/chess';
 import AppLayout from '@/components/AppLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { isAdminRole } from '@/lib/roles';
-import { Lock, CheckCircle, Puzzle as PuzzleIcon, ArrowRight, ArrowLeft, RotateCcw, Lightbulb, ShieldOff, Plus, Edit3, GripVertical, Save, X, Loader2 } from 'lucide-react';
+import { Lock, CheckCircle, Puzzle as PuzzleIcon, ArrowRight, ArrowLeft, RotateCcw, Lightbulb, ShieldOff, Plus, Edit3, GripVertical, Save, X, Loader2, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import {
   AlertDialog,
@@ -192,6 +193,56 @@ const defaultCategories: PuzzleCategory[] = [
 const isMateInCategory = (categoryId: string | undefined): boolean =>
   /^mate[\s-]+in[\s-]+\d+$/i.test(categoryId || '');
 
+const getPuzzleSolutionLine = (puzzle: PuzzleData): string => {
+  const solutionMoves: string[] = [];
+  if (puzzle.moveTree?.length) {
+    let parentId: string | null = null;
+    for (let index = 0; index < puzzle.moveTree.length; index += 1) {
+      const nextNode = puzzle.moveTree.find(node => node.parentId === parentId);
+      if (!nextNode) break;
+      solutionMoves.push(nextNode.move);
+      parentId = nextNode.id;
+    }
+  } else {
+    solutionMoves.push(...(puzzle.solution || []));
+  }
+
+  const position = new Chess(puzzle.fen);
+  const notation: string[] = [];
+  const applyMove = (rawMove: string) => {
+    const candidate = rawMove.split(',')[0].trim();
+    const uciMove = candidate.match(/^([a-h][1-8])([a-h][1-8])([qrbn])?$/i);
+    return uciMove
+      ? position.move({
+        from: uciMove[1].toLowerCase() as Square,
+        to: uciMove[2].toLowerCase() as Square,
+        ...(uciMove[3] ? { promotion: uciMove[3].toLowerCase() as 'q' | 'r' | 'b' | 'n' } : {}),
+      })
+      : position.move(candidate);
+  };
+
+  if (puzzle.preloadedMove) {
+    try {
+      applyMove(puzzle.preloadedMove);
+    } catch {
+      return solutionMoves.join(' ');
+    }
+  }
+
+  for (const rawMove of solutionMoves) {
+    const fenParts = position.fen().split(' ');
+    const prefix = fenParts[1] === 'w'
+      ? `${fenParts[5]}. `
+      : notation.length === 0 ? `${fenParts[5]}... ` : '';
+    try {
+      notation.push(`${prefix}${applyMove(rawMove).san}`);
+    } catch {
+      return solutionMoves.join(' ');
+    }
+  }
+  return notation.join(' ');
+};
+
 const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
   const { user, token } = useAuth();
   const navigate = useNavigate();
@@ -233,6 +284,12 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
   const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white'); // Fixed orientation per puzzle
   const [moveHistory, setMoveHistory] = useState<HistoryStep[]>([]); // Full move history for Back/Next navigation
   const [historyIndex, setHistoryIndex] = useState<number>(0); // Current index in moveHistory being viewed
+  const [adminAnalysisMode, setAdminAnalysisMode] = useState(true);
+  const [adminModeSwitchStatus, setAdminModeSwitchStatus] = useState<
+    'switching-ai' | 'switching-analysis' | 'switched-ai' | 'switched-analysis' | null
+  >(null);
+  const [solutionControlsOpenFor, setSolutionControlsOpenFor] = useState<string | null>(null);
+  const [shownSolutionFor, setShownSolutionFor] = useState<string | null>(null);
 
   // Reorder mode state (admin only)
   const [isReorderMode, setIsReorderMode] = useState(false);
@@ -248,10 +305,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
   const currentPuzzle = categoryPuzzles[currentPuzzleIndex];
   const currentPuzzleId = currentPuzzle?._id;
   const getPuzzleDisplayNumber = (p: PuzzleData | undefined, idx: number) => {
-    if (!p) return `#${idx + 1}`;
-    const match = (p.name || '').match(/#(\d+)/);
-    if (match) return `#${match[1]}`;
-    return `#${idx + 1}`;
+    return `#${p?.originalIndex || idx + 1}`;
   };
 
   // Track page visit
@@ -552,6 +606,10 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
       setShowPracticeLossDialog(false);
       setMoveHistory([]);
       setHistoryIndex(0);
+      setAdminAnalysisMode(true);
+      setAdminModeSwitchStatus(null);
+      setSolutionControlsOpenFor(null);
+      setShownSolutionFor(null);
       return;
     }
 
@@ -570,6 +628,10 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
       setPracticeOffSolutionMoveCount(0);
       setPracticeResetPromptDismissed(false);
       setPracticeResetWarningVisible(false);
+      setAdminAnalysisMode(true);
+      setAdminModeSwitchStatus(null);
+      setSolutionControlsOpenFor(null);
+      setShownSolutionFor(null);
 
       const initialStep: HistoryStep = { fen: currentPuzzle.fen, label: 'Start position' };
       setMoveHistory([initialStep]);
@@ -1032,8 +1094,13 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
    */
   const handleMove = useCallback(
     (from: Square, to: Square): boolean => {
-      if (solved || !currentPuzzle) return false;
+      const isAdminAnalysis = isAdmin && practiceMode && adminAnalysisMode;
+      if (adminModeSwitchStatus?.startsWith('switching-')) return false;
+      if ((solved && !isAdminAnalysis) || !currentPuzzle) return false;
       if (!isAdmin && currentPuzzle.isLocked) return false;
+      if (isAdmin && practiceMode && preloadedMoveExecuted && historyIndex === 0) return false;
+      const adminPlayerColor = boardOrientation === 'white' ? 'w' : 'b';
+      if (isAdmin && practiceMode && !adminAnalysisMode && game.turn() !== adminPlayerColor) return false;
 
       const gameCopy = new Chess(game.fen());
 
@@ -1049,14 +1116,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
 
       setGame(gameCopy);
       setLastMove({ from, to });
-
-      const newAttempts = attempts + 1;
-      const attemptId = crypto.randomUUID();
-      setAttempts(newAttempts);
-
-      const categoryId = selectedCategory || '';
-      const isMateCategory = isMateInCategory(currentPuzzle.category);
-      const isLastFlatStep = currentMoveIndex + 1 >= currentPuzzle.solution.length;
+      if (isAdmin && practiceMode) setAdminModeSwitchStatus(null);
 
       const fromSq = from as Square;
       const toSq = to as Square;
@@ -1067,6 +1127,21 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
         to: toSq,
         label: `Your move: ${move.san}`
       };
+
+      if (isAdminAnalysis) {
+        const nextHistory = [...moveHistory.slice(0, historyIndex + 1), playerStep];
+        setMoveHistory(nextHistory);
+        setHistoryIndex(nextHistory.length - 1);
+        return true;
+      }
+
+      const newAttempts = attempts + 1;
+      const attemptId = crypto.randomUUID();
+      setAttempts(newAttempts);
+
+      const categoryId = selectedCategory || '';
+      const isMateCategory = isMateInCategory(currentPuzzle.category);
+      const isLastFlatStep = currentMoveIndex + 1 >= currentPuzzle.solution.length;
 
       if (practiceMode) {
         void processPracticeMove(gameCopy, move, game.fen(), playerStep);
@@ -1211,7 +1286,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
 
       return true;
     },
-    [game, solved, playSound, currentPuzzle, attempts, selectedCategory, puzzleCategories, trackPuzzleAttempt, currentMoveIndex, currentNodeId, practiceMode, processPracticeMove]
+    [game, solved, playSound, currentPuzzle, attempts, selectedCategory, trackPuzzleAttempt, currentMoveIndex, currentNodeId, currentPuzzleIndex, practiceMode, processPracticeMove, isAdmin, adminAnalysisMode, moveHistory, historyIndex, adminModeSwitchStatus, boardOrientation, preloadedMoveExecuted]
   );
 
   // Promotion modal state for puzzles
@@ -1220,6 +1295,8 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
 
   const handlePromotionSelect = (piece: 'q' | 'r' | 'b' | 'n') => {
     if (!pendingPromotion || !currentPuzzle) return;
+    if (adminModeSwitchStatus?.startsWith('switching-')) return;
+    const isAdminAnalysis = isAdmin && practiceMode && adminAnalysisMode;
     const { from, to, gameCopy } = pendingPromotion;
 
     try {
@@ -1233,14 +1310,9 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
 
       setGame(gameCopy);
       setLastMove({ from, to });
+      if (isAdmin && practiceMode) setAdminModeSwitchStatus(null);
       setPendingPromotion(null);
       setShowPromotion(false);
-
-      const newAttempts = attempts + 1;
-      const attemptId = crypto.randomUUID();
-      setAttempts(newAttempts);
-      const categoryId = selectedCategory || '';
-      const isMateCategory = isMateInCategory(currentPuzzle.category);
 
       const fromSq = from as Square;
       const toSq = to as Square;
@@ -1251,6 +1323,19 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
         to: toSq,
         label: `Your move: ${mv.san}`
       };
+
+      if (isAdminAnalysis) {
+        const nextHistory = [...moveHistory.slice(0, historyIndex + 1), playerStep];
+        setMoveHistory(nextHistory);
+        setHistoryIndex(nextHistory.length - 1);
+        return;
+      }
+
+      const newAttempts = attempts + 1;
+      const attemptId = crypto.randomUUID();
+      setAttempts(newAttempts);
+      const categoryId = selectedCategory || '';
+      const isMateCategory = isMateInCategory(currentPuzzle.category);
 
       if (practiceMode) {
         void processPracticeMove(gameCopy, mv, game.fen(), playerStep);
@@ -1420,6 +1505,19 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
     executePreloadedMove();
   };
 
+  const handleAdminAnalysisModeChange = async (enabled: boolean) => {
+    if (!isAdmin || !practiceMode || enabled === adminAnalysisMode || adminModeSwitchStatus?.startsWith('switching-')) return;
+
+    setAdminModeSwitchStatus(enabled ? 'switching-analysis' : 'switching-ai');
+    resetPuzzle();
+    setIsProcessingMove(true);
+
+    await delay(600);
+    setAdminAnalysisMode(enabled);
+    setIsProcessingMove(false);
+    setAdminModeSwitchStatus(enabled ? 'switched-analysis' : 'switched-ai');
+  };
+
   // Move Navigation Handlers for students (only navigates moves already made)
   const handleBackMove = useCallback(() => {
     if (historyIndex <= 0 || moveHistory.length === 0) return;
@@ -1442,6 +1540,22 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
       playSound('move');
     }
   }, [historyIndex, moveHistory, playSound]);
+
+  const handlePreloadedMoveTap = useCallback((_square: Square) => {
+    if (
+      !isAdmin ||
+      !practiceMode ||
+      !adminAnalysisMode ||
+      !currentPuzzle?.preloadedMove?.trim() ||
+      historyIndex !== 0 ||
+      !moveHistory[1]
+    ) {
+      return false;
+    }
+
+    handleNextMove();
+    return true;
+  }, [adminAnalysisMode, currentPuzzle?.preloadedMove, handleNextMove, historyIndex, isAdmin, moveHistory, practiceMode]);
 
   // Keyboard listener for Left and Right arrow keys (for laptop/keyboard users)
   useEffect(() => {
@@ -1857,10 +1971,11 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
               <div className="flex-1 overflow-x-auto">
                 <div className="flex gap-2 pb-1">
                   {categoryPuzzles.map((puzzle, index) => (
-                    <button
-                      key={puzzle._id}
-                      onClick={() => handlePuzzleSelect(index)}
-                      className={`
+                    <div key={puzzle._id} className="flex flex-shrink-0 items-center gap-1">
+                      <button
+                        onClick={() => handlePuzzleSelect(index)}
+                        disabled={adminModeSwitchStatus?.startsWith('switching-')}
+                        className={`
                         px-3 py-1.5 rounded-lg text-xs font-medium transition-all relative whitespace-nowrap flex-shrink-0
                         ${currentPuzzleIndex === index
                           ? 'bg-primary text-primary-foreground'
@@ -1868,22 +1983,56 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                             ? 'bg-secondary/50 text-secondary-foreground'
                             : 'bg-secondary hover:bg-secondary/80 text-secondary-foreground'
                         }
-                      `}
-                    >
-                      {puzzle.isLocked && <Lock className="w-2.5 h-2.5 inline mr-1" />}
-                      #{puzzle.originalIndex || index + 1}
-                    </button>
+                        `}
+                      >
+                        {puzzle.isLocked && <Lock className="w-2.5 h-2.5 inline mr-1" />}
+                        #{puzzle.originalIndex || index + 1}
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>
-
-              {/* Progress Indicator - Compact */}
-              <div className="flex items-center gap-2 text-xs text-muted-foreground flex-shrink-0">
-                <span className="font-medium">
-                  {getPuzzleDisplayNumber(currentPuzzle, currentPuzzleIndex)}
-                </span>
-              </div>
             </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-muted-foreground">
+                {getPuzzleDisplayNumber(currentPuzzle, currentPuzzleIndex)}
+              </span>
+              {isAdmin && practiceMode && currentPuzzle && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const isOpen = solutionControlsOpenFor === currentPuzzle._id;
+                      setSolutionControlsOpenFor(isOpen ? null : currentPuzzle._id);
+                      if (isOpen) setShownSolutionFor(null);
+                    }}
+                    className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label={`${solutionControlsOpenFor === currentPuzzle._id ? 'Hide' : 'Show'} solution controls for puzzle ${getPuzzleDisplayNumber(currentPuzzle, currentPuzzleIndex)}`}
+                    title={solutionControlsOpenFor === currentPuzzle._id ? 'Hide solution controls' : 'Reveal solution controls'}
+                  >
+                    {solutionControlsOpenFor === currentPuzzle._id
+                      ? <Eye className="h-3.5 w-3.5" />
+                      : <EyeOff className="h-3.5 w-3.5" />}
+                  </button>
+                  {solutionControlsOpenFor === currentPuzzle._id && (
+                    <button
+                      type="button"
+                      onClick={() => setShownSolutionFor(shownSolutionFor === currentPuzzle._id ? null : currentPuzzle._id)}
+                      className="rounded border px-2 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                      aria-pressed={shownSolutionFor === currentPuzzle._id}
+                    >
+                      SOL
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            {isAdmin && practiceMode && shownSolutionFor === currentPuzzle?._id && currentPuzzle && (
+              <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-sm" role="status">
+                <span className="font-semibold">Solution: </span>
+                <span className="font-mono">{getPuzzleSolutionLine(currentPuzzle) || 'No solution line available.'}</span>
+              </div>
+            )}
 
             {/* Main Content Area - 2 Column on Desktop, Stack on Mobile */}
             <div className="grid md:grid-cols-[1fr,300px] gap-4">
@@ -1916,11 +2065,49 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                       game={game}
                       onMove={handleMove}
                       orientation={boardOrientation}
-                      interactive={!solved && !isProcessingMove && !currentPuzzle?.isLocked && historyIndex === moveHistory.length - 1}
+                      interactive={(!solved || (isAdmin && practiceMode && adminAnalysisMode))
+                        && !isProcessingMove
+                        && !currentPuzzle?.isLocked
+                        && (historyIndex === moveHistory.length - 1 || (isAdmin && practiceMode && adminAnalysisMode))}
                       lastMove={lastMove}
                       suppressIllegalSound={practiceMode}
+                      annotationsEnabled={isAdmin && practiceMode && adminAnalysisMode}
+                      pieceDraggingEnabled={!isAdmin || !practiceMode || !adminAnalysisMode}
+                      selectableColor={isAdmin && practiceMode && !adminAnalysisMode
+                        ? boardOrientation === 'white' ? 'w' : 'b'
+                        : undefined}
+                      annotationKey={currentPuzzleId}
+                      pieceSelectionEnabled={!(isAdmin && practiceMode && preloadedMoveExecuted && historyIndex === 0)}
+                      onSquareTap={handlePreloadedMoveTap}
                     />
                   </div>
+                  {isAdmin && practiceMode && (
+                    <div className="mt-3 flex flex-col items-center gap-2">
+                      {adminModeSwitchStatus && (
+                        <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+                          {adminModeSwitchStatus.startsWith('switching-') && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                          <span>
+                            {adminModeSwitchStatus === 'switching-ai' && 'Switching to AI mode'}
+                            {adminModeSwitchStatus === 'switching-analysis' && 'Switching to Analyze mode'}
+                            {adminModeSwitchStatus === 'switched-ai' && 'Switched to AI mode'}
+                            {adminModeSwitchStatus === 'switched-analysis' && 'Switched to Analyze mode'}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-center gap-2">
+                        <Switch
+                          id="admin-puzzle-analysis-mode"
+                          checked={adminAnalysisMode}
+                          onCheckedChange={handleAdminAnalysisModeChange}
+                          disabled={adminModeSwitchStatus?.startsWith('switching-')}
+                          aria-label="Analyze puzzle without AI responses"
+                        />
+                        <Label htmlFor="admin-puzzle-analysis-mode" className="text-sm">
+                          Analyze locally (move both sides without AI)
+                        </Label>
+                      </div>
+                    </div>
+                  )}
                   <PromotionDialog
                     open={showPromotion}
                     onOpenChange={setShowPromotion}

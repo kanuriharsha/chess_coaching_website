@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import { Chess, Square, Move } from 'chess.js';
 import {
   getSquareColor,
@@ -38,6 +38,12 @@ interface ChessBoardProps {
   onSquareClick?: (square: string) => void;
   selectedSquare?: string | null;
   suppressIllegalSound?: boolean;
+  annotationsEnabled?: boolean;
+  pieceDraggingEnabled?: boolean;
+  selectableColor?: 'w' | 'b';
+  annotationKey?: string;
+  pieceSelectionEnabled?: boolean;
+  onSquareTap?: (square: Square) => boolean;
 }
 
 const ChessBoard: React.FC<ChessBoardProps> = ({
@@ -50,6 +56,12 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
   onSquareClick,
   selectedSquare: externalSelectedSquare,
   suppressIllegalSound = false,
+  annotationsEnabled = false,
+  pieceDraggingEnabled = true,
+  selectableColor,
+  annotationKey,
+  pieceSelectionEnabled = true,
+  onSquareTap,
 }) => {
   const [internalSelectedSquare, setInternalSelectedSquare] = useState<Square | null>(null);
   const [possibleMoves, setPossibleMoves] = useState<Move[]>([]);
@@ -61,6 +73,8 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
     hasMoved: boolean;
   } | null>(null);
   const suppressNextClick = useRef(false);
+  const annotationStart = useRef<Square | null>(null);
+  const [annotations, setAnnotations] = useState<Array<{ from: Square; to: Square | null }>>([]);
   const { playSound } = useChessSound();
 
   // Use external selected square if provided, otherwise use internal state
@@ -82,6 +96,19 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
     return rows;
   }, [game, orientation]);
 
+  useLayoutEffect(() => {
+    setAnnotations([]);
+    setInternalSelectedSquare(null);
+    setPossibleMoves([]);
+    setDragState(null);
+  }, [game, annotationKey, annotationsEnabled]);
+
+  const canSelectPiece = useCallback((square: Square) => {
+    const piece = game.get(square);
+    return !!piece && piece.color === game.turn() &&
+      (selectableColor === undefined || piece.color === selectableColor);
+  }, [game, selectableColor]);
+
   const handleSquareClick = useCallback(
     (square: Square) => {
       if (!interactive) return;
@@ -91,6 +118,9 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
         return;
       }
 
+      if (onSquareTap?.(square)) return;
+      if (!pieceSelectionEnabled) return;
+
       // If external onSquareClick is provided, use it instead
       if (onSquareClick) {
         onSquareClick(square);
@@ -99,8 +129,19 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
 
       const piece = game.get(square);
 
+      if (selectedSquare && !canSelectPiece(selectedSquare as Square)) {
+        setInternalSelectedSquare(null);
+        setPossibleMoves([]);
+      }
+
+      if (selectedSquare === square) {
+        setInternalSelectedSquare(null);
+        setPossibleMoves([]);
+        return;
+      }
+
       // If we have a selected piece and click on a possible move
-      if (selectedSquare) {
+      if (selectedSquare && canSelectPiece(selectedSquare as Square)) {
         const isValidMove = possibleMoves.some((m) => m.to === square);
 
         if (isValidMove && onMove) {
@@ -113,7 +154,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
         }
 
         // Clicking on own piece - select it instead
-        if (piece && piece.color === game.turn()) {
+        if (canSelectPiece(square)) {
           setInternalSelectedSquare(square);
           setPossibleMoves(getLegalMoves(game, square));
           return;
@@ -126,19 +167,19 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
       }
 
       // Select a piece
-      if (piece && piece.color === game.turn()) {
+      if (canSelectPiece(square)) {
         setInternalSelectedSquare(square);
         setPossibleMoves(getLegalMoves(game, square));
       }
     },
-    [game, interactive, selectedSquare, possibleMoves, onMove, onSquareClick]
+    [game, interactive, pieceSelectionEnabled, selectedSquare, possibleMoves, onMove, onSquareClick, onSquareTap, canSelectPiece]
   );
 
   const handlePointerDown = useCallback((event: React.PointerEvent, square: Square) => {
-    if (!interactive || !onMove || event.button !== 0) return;
+    if (!pieceDraggingEnabled || annotationsEnabled) return;
+    if (!interactive || !pieceSelectionEnabled || !onMove || event.button !== 0) return;
 
-    const piece = game.get(square);
-    if (!piece || piece.color !== game.turn()) return;
+    if (!canSelectPiece(square)) return;
 
     setInternalSelectedSquare(square);
     setPossibleMoves(getLegalMoves(game, square));
@@ -151,7 +192,35 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
     });
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
-  }, [game, interactive, onMove]);
+  }, [annotationsEnabled, canSelectPiece, game, interactive, onMove, pieceDraggingEnabled, pieceSelectionEnabled]);
+
+  const toggleAnnotation = useCallback((from: Square, to: Square | null) => {
+    setAnnotations(current => {
+      const index = current.findIndex(annotation => annotation.from === from && annotation.to === to);
+      if (index >= 0) return current.filter((_, annotationIndex) => annotationIndex !== index);
+      return [...current, { from, to }];
+    });
+  }, []);
+
+  const handleAnnotationMouseDown = (event: React.MouseEvent<HTMLDivElement>, square: Square) => {
+    if (!annotationsEnabled || event.button !== 0) return;
+    annotationStart.current = square;
+  };
+
+  const handleAnnotationMouseUp = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!annotationsEnabled || event.button !== 0 || !annotationStart.current) return;
+    const from = annotationStart.current;
+    annotationStart.current = null;
+    const target = event.target instanceof Element
+      ? event.target.closest<HTMLElement>('[data-chess-square]')?.dataset.chessSquare as Square | undefined
+      : undefined;
+    if (!target || target === from) return;
+    suppressNextClick.current = true;
+    window.setTimeout(() => {
+      suppressNextClick.current = false;
+    }, 0);
+    toggleAnnotation(from, target);
+  };
 
   const handlePointerMove = useCallback((event: React.PointerEvent) => {
     if (!dragState || event.pointerId !== dragState.pointerId) return;
@@ -173,6 +242,9 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
 
     if (dragState.hasMoved) {
       suppressNextClick.current = true;
+      window.setTimeout(() => {
+        suppressNextClick.current = false;
+      }, 0);
       const target = document.elementFromPoint(event.clientX, event.clientY);
       const targetSquare = target?.closest<HTMLElement>('[data-chess-square]')?.dataset.chessSquare as Square | undefined;
       const isLegalTarget = targetSquare && possibleMoves.some(move => move.to === targetSquare);
@@ -201,18 +273,21 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
 
   // If an external selected square is provided, compute its possible moves
   useEffect(() => {
-    if (selectedSquare) {
+    if (selectedSquare && canSelectPiece(selectedSquare as Square)) {
       setPossibleMoves(getLegalMoves(game, selectedSquare as Square));
     } else {
       setPossibleMoves([]);
+      if (externalSelectedSquare === undefined) {
+        setInternalSelectedSquare(null);
+      }
     }
-  }, [game, selectedSquare]);
+  }, [game, selectedSquare, canSelectPiece, externalSelectedSquare]);
 
   const isSelected = (square: Square) => selectedSquare === square;
   const isLastMove = (square: Square) =>
     lastMove && (lastMove.from === square || lastMove.to === square);
   const isPossibleMove = (square: Square) =>
-    possibleMoves.some((m) => m.to === square);
+    pieceSelectionEnabled && !!selectedSquare && possibleMoves.some((m) => m.to === square);
   const isPossibleCapture = (square: Square) => {
     if (!selectedSquare) return false;
     return (
@@ -232,6 +307,9 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
         <div
           className="relative aspect-square w-full max-w-[min(100vw-2rem,500px)] mx-auto select-none"
           style={{ touchAction: interactive && onMove ? 'none' : undefined }}
+          onMouseUp={handleAnnotationMouseUp}
+          onDragStart={annotationsEnabled ? event => event.preventDefault() : undefined}
+          onContextMenu={annotationsEnabled ? event => event.preventDefault() : undefined}
         >
           {board.map((row, rowIndex) => (
           <div key={rowIndex} className="flex" style={{ touchAction: interactive && onMove ? 'none' : undefined }}>
@@ -261,6 +339,12 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
                     transition-colors duration-100
                   `}
                   onClick={() => handleSquareClick(square)}
+                  onDoubleClick={(event) => {
+                    if (!annotationsEnabled || event.button !== 0) return;
+                    event.preventDefault();
+                    toggleAnnotation(square, null);
+                  }}
+                  onMouseDown={(event) => handleAnnotationMouseDown(event, square)}
                   onPointerDown={(event) => handlePointerDown(event, square)}
                   onPointerMove={handlePointerMove}
                   onPointerUp={finishPointerDrag}
@@ -322,6 +406,53 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
             })}
           </div>
         ))}
+        {annotations.length > 0 && (
+          <svg
+            className="pointer-events-none absolute inset-0 z-10 h-full w-full"
+            viewBox="0 0 8 8"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <defs>
+              <marker id="puzzle-annotation-arrowhead" markerWidth="4" markerHeight="4" refX="3.2" refY="2" orient="auto">
+                <path d="M0,0 L4,2 L0,4 Z" fill="#16a34a" />
+              </marker>
+            </defs>
+            {annotations.map(({ from, to }, index) => {
+              const fromFile = orientation === 'white' ? from.charCodeAt(0) - 97 : 7 - (from.charCodeAt(0) - 97);
+              const fromRank = orientation === 'white' ? 8 - Number(from[1]) : Number(from[1]) - 1;
+              if (!to) {
+                return (
+                  <circle
+                    key={`puzzle-annotation-circle-${from}-${index}`}
+                    cx={fromFile + 0.5}
+                    cy={fromRank + 0.5}
+                    r="0.39"
+                    fill="none"
+                    stroke="#16a34a"
+                    strokeOpacity="0.8"
+                    strokeWidth="0.08"
+                  />
+                );
+              }
+              const toFile = orientation === 'white' ? to.charCodeAt(0) - 97 : 7 - (to.charCodeAt(0) - 97);
+              const toRank = orientation === 'white' ? 8 - Number(to[1]) : Number(to[1]) - 1;
+              return (
+                <line
+                  key={`puzzle-annotation-arrow-${from}-${to}-${index}`}
+                  x1={fromFile + 0.5}
+                  y1={fromRank + 0.5}
+                  x2={toFile + 0.5}
+                  y2={toRank + 0.5}
+                  stroke="#16a34a"
+                  strokeWidth="0.12"
+                  strokeLinecap="round"
+                  markerEnd="url(#puzzle-annotation-arrowhead)"
+                />
+              );
+            })}
+          </svg>
+        )}
         </div>
 
         {dragState?.hasMoved && game.get(dragState.from) && (
