@@ -462,7 +462,7 @@ const LiveChessGame = ({ game: initialGame, onLeave }: LiveChessGameProps) => {
         open={showPromotionDialog} 
         onOpenChange={setShowPromotionDialog} 
         onSelect={handlePromotionSelect}
-        color={(pendingPromotion && game.get(pendingPromotion.from)?.color) as 'w' | 'b' | undefined}
+        color={pendingPromotion ? chess.get(pendingPromotion.from)?.color : undefined}
       />
       
       <AlertDialog open={showResignDialog} onOpenChange={setShowResignDialog}>

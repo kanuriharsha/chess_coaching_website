@@ -13,8 +13,13 @@ export function buildPuzzleProgress(puzzles, progressRecords) {
       puzzleId,
       puzzleName: puzzle.name,
       solved: progress?.completed === true,
-      attempts: progress?.a || 0,
-      solvedAt: null
+      attempts: progress?.attemptCount ?? progress?.a ?? 0,
+      correctAttempts: progress?.correctCount ?? (progress?.completed ? 1 : 0),
+      timeSpentSeconds: progress?.timeSpentSeconds || 0,
+      solvedAt: null,
+      lastAttemptAt: progress?.lastAttemptAt || null,
+      lastResult: progress?.lastResult || null,
+      dailyMetrics: progress?.dailyMetrics || []
     });
     puzzlesByCategory.set(puzzle.category, categoryPuzzles);
   }
@@ -105,7 +110,22 @@ export function reconstructPuzzleProgress(activities) {
   return Array.from(progressByKey.values());
 }
 
-export function buildPuzzleProgressAttemptUpdate(solved) {
+export function buildPuzzleProgressAttemptUpdate(
+  solved,
+  dateKey = new Date().toISOString().slice(0, 10),
+  timeSpentSeconds = 0
+) {
+  const dailyMetrics = { $ifNull: ['$dailyMetrics', []] };
+  const today = {
+    $arrayElemAt: [{
+      $filter: {
+        input: dailyMetrics,
+        as: 'day',
+        cond: { $eq: ['$$day.date', dateKey] }
+      }
+    }, 0]
+  };
+
   return [{
     $set: {
       a: {
@@ -115,12 +135,50 @@ export function buildPuzzleProgressAttemptUpdate(solved) {
           { $add: [{ $ifNull: ['$a', 0] }, 1] }
         ]
       },
+      timeSpentSeconds: {
+        $add: [{ $ifNull: ['$timeSpentSeconds', 0] }, timeSpentSeconds]
+      },
       completed: {
         $cond: [
           { $eq: ['$completed', true] },
           true,
           solved
         ]
+      },
+      attemptCount: { $add: [{ $ifNull: ['$attemptCount', '$a', 0] }, 1] },
+      correctCount: {
+        $add: [
+          { $ifNull: ['$correctCount', { $cond: [{ $eq: ['$completed', true] }, 1, 0] }] },
+          solved ? 1 : 0
+        ]
+      },
+      lastAttemptAt: '$$NOW',
+      lastResult: solved ? 'passed' : 'failed',
+      dailyMetrics: {
+        $let: {
+          vars: { today },
+          in: {
+            $slice: [{
+              $concatArrays: [
+                {
+                  $filter: {
+                    input: dailyMetrics,
+                    as: 'day',
+                    cond: { $ne: ['$$day.date', dateKey] }
+                  }
+                },
+                [{
+                  date: dateKey,
+                  attempts: { $add: [{ $ifNull: ['$$today.attempts', 0] }, 1] },
+                  correct: { $add: [{ $ifNull: ['$$today.correct', 0] }, solved ? 1 : 0] },
+                  timeSpentSeconds: {
+                    $add: [{ $ifNull: ['$$today.timeSpentSeconds', 0] }, timeSpentSeconds]
+                  }
+                }]
+              ]
+            }, -60]
+          }
+        }
       }
     }
   }];

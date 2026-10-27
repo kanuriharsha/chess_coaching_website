@@ -304,6 +304,39 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
   const reorderablePuzzleCategories = puzzleCategories.filter(category => category.count > 0);
   const currentPuzzle = categoryPuzzles[currentPuzzleIndex];
   const currentPuzzleId = currentPuzzle?._id;
+  const puzzleAttemptStartedAt = useRef(Date.now());
+  useEffect(() => {
+    puzzleAttemptStartedAt.current = Date.now();
+  }, [currentPuzzleId]);
+
+  const recordPuzzleAttempt = useCallback((
+    puzzleId: string,
+    puzzleName: string,
+    category: string,
+    result: 'passed' | 'failed',
+    attemptNumber: number,
+    attemptId?: string,
+    puzzleNumber?: number,
+    isPracticeMode = false
+  ) => {
+    const timeSpentSeconds = Math.min(
+      3600,
+      Math.max(0, Math.round((Date.now() - puzzleAttemptStartedAt.current) / 1000))
+    );
+    puzzleAttemptStartedAt.current = Date.now();
+    return trackPuzzleAttempt(
+      puzzleId,
+      puzzleName,
+      category,
+      result,
+      attemptNumber,
+      attemptId,
+      puzzleNumber,
+      isPracticeMode,
+      timeSpentSeconds
+    );
+  }, [trackPuzzleAttempt]);
+
   const getPuzzleDisplayNumber = (p: PuzzleData | undefined, idx: number) => {
     return `#${p?.originalIndex || idx + 1}`;
   };
@@ -921,7 +954,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
         toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', {
           description: 'You solved the puzzle!'
         });
-        void trackPuzzleAttempt(
+        void recordPuzzleAttempt(
           currentPuzzle._id,
           currentPuzzle.name,
           selectedCategory || currentPuzzle.category,
@@ -1090,7 +1123,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
     practiceResetPromptDismissed,
     requestPracticeResetDecision,
     playSound,
-    trackPuzzleAttempt
+    recordPuzzleAttempt
   ]);
 
   /**
@@ -1162,7 +1195,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
           // Wrong move
           playSound('illegal');
           toast.error('Wrong move, try again', { description: 'Think carefully about the correct move.' });
-          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+          recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
           setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
           return true;
         }
@@ -1176,7 +1209,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
           setSolved(true);
           playSound('checkmate');
           toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
-          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+          recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
           setMoveHistory(prev => {
             const nextHist = [...prev, playerStep];
             setHistoryIndex(nextHist.length - 1);
@@ -1215,7 +1248,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                   setSolved(true);
                   playSound('checkmate');
                   toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
-                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+                  recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }
             } catch (err) { console.error('Error playing opponent move:', err); }
@@ -1231,7 +1264,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
       if (!moveMatches) {
         playSound('illegal');
         toast.error('Wrong move, try again', { description: 'Think carefully about the correct move.' });
-        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
         setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
         return true;
       }
@@ -1242,7 +1275,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
         setSolved(true);
         playSound('checkmate');
         toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
-        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
         setMoveHistory(prev => {
           const nextHist = [...prev, playerStep];
           setHistoryIndex(nextHist.length - 1);
@@ -1280,7 +1313,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                   setSolved(true);
                   playSound('checkmate');
                   toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔', { description: 'You solved the puzzle!' });
-                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+                  recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }
             } catch (err) { console.error('Error playing opponent move:', err); }
@@ -1290,7 +1323,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
 
       return true;
     },
-    [game, solved, playSound, currentPuzzle, attempts, selectedCategory, trackPuzzleAttempt, currentMoveIndex, currentNodeId, currentPuzzleIndex, practiceMode, processPracticeMove, isAdmin, adminAnalysisMode, moveHistory, historyIndex, adminModeSwitchStatus, boardOrientation, preloadedMoveExecuted]
+    [game, solved, playSound, currentPuzzle, attempts, selectedCategory, recordPuzzleAttempt, currentMoveIndex, currentNodeId, currentPuzzleIndex, practiceMode, processPracticeMove, isAdmin, adminAnalysisMode, moveHistory, historyIndex, adminModeSwitchStatus, boardOrientation, preloadedMoveExecuted]
   );
 
   // Promotion modal state for puzzles
@@ -1355,7 +1388,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
         if (!matchedNode) {
           playSound('illegal');
           toast.error('Wrong move, try again');
-          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+          recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
           setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
           return;
         }
@@ -1367,7 +1400,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
           setSolved(true);
           playSound('checkmate');
           toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
-          trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+          recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
           setMoveHistory(prev => {
             const nextHist = [...prev, playerStep];
             setHistoryIndex(nextHist.length - 1);
@@ -1403,7 +1436,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                   setSolved(true);
                   playSound('checkmate');
                   toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
-                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+                  recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }
             } catch (err) { console.error('Error playing opponent move:', err); }
@@ -1420,7 +1453,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
       if (!moveMatches) {
         playSound('illegal');
         toast.error('Wrong move, try again');
-        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'failed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
         setTimeout(() => { setGame(new Chess(game.fen())); setLastMove(null); }, 300);
         return;
       }
@@ -1430,7 +1463,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
         setSolved(true);
         playSound('checkmate');
         toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
-        trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+        recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
         setMoveHistory(prev => {
           const nextHist = [...prev, playerStep];
           setHistoryIndex(nextHist.length - 1);
@@ -1468,7 +1501,7 @@ const Puzzles = ({ practiceMode = false }: PuzzlesProps) => {
                   setSolved(true);
                   playSound('checkmate');
                   toast.success(currentPuzzle.successMessage || 'Checkmate! Brilliant move! ♔');
-                  trackPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
+                  recordPuzzleAttempt(currentPuzzle._id, currentPuzzle.name, categoryId, 'passed', newAttempts, attemptId, currentPuzzle.originalIndex || currentPuzzleIndex + 1);
                 }
               }
             } catch (err) { console.error('Error playing opponent move:', err); }

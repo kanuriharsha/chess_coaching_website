@@ -194,6 +194,10 @@ interface PuzzleProgress {
     solved: boolean;
     solvedAt?: string;
     attempts: number;
+    correctAttempts: number;
+    lastAttemptAt?: string | null;
+    lastResult?: 'passed' | 'failed' | null;
+    dailyMetrics: { date: string; attempts: number; correct: number }[];
   }[];
 }
 
@@ -220,7 +224,6 @@ interface UserActivity {
   type: 'puzzle_attempt' | 'puzzle_solved' | 'puzzle_failed' | 'login' | 'logout';
   description: string;
   timestamp: string;
-  duration?: number;
   details?: {
     page?: string;
     puzzleId?: string;
@@ -229,7 +232,6 @@ interface UserActivity {
     category?: string;
     attempts?: number;
     result?: 'passed' | 'failed';
-    timeSpent?: number;
   };
 }
 
@@ -319,7 +321,6 @@ const AdminDashboard = () => {
   const [selectedUserForDetail, setSelectedUserForDetail] = useState<User | null>(null);
   const [userAttendance, setUserAttendance] = useState<AttendanceRecord[]>([]);
   const [userPuzzleProgress, setUserPuzzleProgress] = useState<PuzzleProgress[]>([]);
-  const [userActivity, setUserActivity] = useState<UserActivity[]>([]);
   const [userFees, setUserFees] = useState<any[]>([]);
   const [isLoadingFees, setIsLoadingFees] = useState(false);
   
@@ -341,70 +342,53 @@ const AdminDashboard = () => {
   const [expandedPuzzleCategories, setExpandedPuzzleCategories] = useState<Set<string>>(new Set());
   
   const [activityFilter, setActivityFilter] = useState<'all' | 'solved' | 'failed'>('all');
-  const [activityCategory, setActivityCategory] = useState<'all' | 'puzzles' | 'bestgames'>('all');
   const [isEditingUserProfile, setIsEditingUserProfile] = useState(false);
 
-  // Filtered activities and totals for admin live feed
+  // The compact progress records expose each puzzle's latest attempt, not a full event history.
   const filteredActivities = useMemo(() => {
-    // first filter by solved/failed/all
-    const byResult = userActivity.filter(a => {
-      if (activityFilter === 'all') return true;
-      if (activityFilter === 'solved') return a.type === 'puzzle_solved';
-      return a.type === 'puzzle_failed';
-    });
-
-    // then by category
-    return byResult.filter(a => {
-      if (activityCategory === 'all') return true;
-      if (activityCategory === 'puzzles') return a.type?.startsWith?.('puzzle');
-      if (activityCategory === 'bestgames') return a.details?.category === 'bestgames';
-      return true;
-    });
-  }, [userActivity, activityFilter, activityCategory]);
+    return userPuzzleProgress.flatMap(category => category.puzzleDetails
+      .filter(puzzle => puzzle.lastAttemptAt)
+      .map(puzzle => {
+        const type = puzzle.lastResult === 'passed'
+          ? 'puzzle_solved'
+          : puzzle.lastResult === 'failed' ? 'puzzle_failed' : 'puzzle_attempt';
+        return {
+          type,
+          description: `${
+            puzzle.lastResult === 'passed' ? 'Solved' :
+              puzzle.lastResult === 'failed' ? 'Failed' : 'Attempted'
+          } ${puzzle.puzzleName}`,
+          timestamp: puzzle.lastAttemptAt as string,
+          details: {
+            puzzleId: puzzle.puzzleId,
+            puzzleName: puzzle.puzzleName,
+            category: category.category,
+            attempts: puzzle.attempts,
+            result: puzzle.lastResult || undefined
+          }
+        } satisfies UserActivity;
+      }))
+      .filter(activity => activityFilter === 'all' ||
+        (activityFilter === 'solved' && activity.type === 'puzzle_solved') ||
+        (activityFilter === 'failed' && activity.type === 'puzzle_failed'))
+      .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime());
+  }, [userPuzzleProgress, activityFilter]);
 
   const activityRowsCount = filteredActivities.length;
-  const activityTotalSeconds = useMemo(() => {
-    return filteredActivities.reduce((acc, a) => acc + (a.details?.timeSpent || 0), 0);
-  }, [filteredActivities]);
 
-  const formatSecondsToHM = (secs: number) => {
-    if (!secs || secs <= 0) return '0m';
-    const hours = Math.floor(secs / 3600);
-    const minutes = Math.floor((secs % 3600) / 60);
-    if (hours > 0) return `${hours}h ${minutes}m`;
-    return `${minutes}m`;
-  };
-
-  // Calculate accuracy per category from activity data
   const categoryAccuracy = useMemo(() => {
     const accuracyByCategory: { [key: string]: { correct: number; total: number; accuracy: number } } = {};
-    
-    // Filter puzzle activities
-    const puzzleActivities = userActivity.filter(a => 
-      a.type === 'puzzle_solved' || a.type === 'puzzle_failed'
-    );
-    
-    // Group by category
-    puzzleActivities.forEach(activity => {
-      const category = activity.details?.category || 'unknown';
-      if (!accuracyByCategory[category]) {
-        accuracyByCategory[category] = { correct: 0, total: 0, accuracy: 0 };
-      }
-      
-      accuracyByCategory[category].total++;
-      if (activity.type === 'puzzle_solved') {
-        accuracyByCategory[category].correct++;
-      }
+    userPuzzleProgress.forEach(category => {
+      const total = category.puzzleDetails.reduce((sum, puzzle) => sum + puzzle.attempts, 0);
+      const correct = category.puzzleDetails.reduce((sum, puzzle) => sum + puzzle.correctAttempts, 0);
+      accuracyByCategory[category.category] = {
+        correct,
+        total,
+        accuracy: total > 0 ? Math.round((correct / total) * 100) : 0
+      };
     });
-    
-    // Calculate accuracy percentage
-    Object.keys(accuracyByCategory).forEach(category => {
-      const data = accuracyByCategory[category];
-      data.accuracy = data.total > 0 ? Math.round((data.correct / data.total) * 100) : 0;
-    });
-    
     return accuracyByCategory;
-  }, [userActivity]);
+  }, [userPuzzleProgress]);
 
   const [editUserProfile, setEditUserProfile] = useState<Partial<StudentProfile>>({});
   const [editUserUsername, setEditUserUsername] = useState('');
@@ -1225,7 +1209,6 @@ const AdminDashboard = () => {
     await Promise.all([
       loadUserAttendance(u.id),
       loadUserPuzzleProgress(u.id),
-      loadUserActivity(u.id),
       loadUserFees(u.id)
     ]);
   };
@@ -1234,7 +1217,7 @@ const AdminDashboard = () => {
   useEffect(() => {
     if (selectedUserForDetail) {
       const interval = setInterval(() => {
-        loadUserActivity(selectedUserForDetail.id);
+        loadUserPuzzleProgress(selectedUserForDetail.id);
       }, 10000); // Refresh every 10 seconds
       
       return () => clearInterval(interval);
@@ -1278,6 +1261,8 @@ const AdminDashboard = () => {
       if (response.ok) {
         const data = await response.json();
         setUserPuzzleProgress(data);
+      } else {
+        throw new Error(`Puzzle progress request failed with status ${response.status}`);
       }
     } catch (error) {
       console.error('Load user puzzle progress error:', error);
@@ -1303,20 +1288,6 @@ const AdminDashboard = () => {
     } catch (error) {
       console.error('Load puzzle recommendations error:', error);
       return false;
-    }
-  };
-
-  const loadUserActivity = async (userId: string) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/users/${userId}/activity`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setUserActivity(data);
-      }
-    } catch (error) {
-      console.error('Load user activity error:', error);
     }
   };
 
@@ -2690,16 +2661,12 @@ const AdminDashboard = () => {
                 )}
               </div>
 
-              {/* Live Activity Feed */}
+              {/* Latest per-puzzle progress from the compact progress collection */}
               <div className="card-premium p-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                   <h3 className="font-serif text-base md:text-lg font-semibold text-foreground flex items-center gap-2">
                     <Activity className="w-4 h-4 md:w-5 md:h-5 text-primary" />
-                    Live Activity Feed
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-success"></span>
-                    </span>
+                    Recent Puzzle Progress
                   </h3>
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                     {/* Status Filter */}
@@ -2724,38 +2691,14 @@ const AdminDashboard = () => {
                       </button>
                     </div>
 
-                    {/* Category Filter */}
-                    <div className="inline-flex items-center bg-secondary rounded-md p-1">
-                      <button
-                        onClick={() => setActivityCategory('all')}
-                        className={`flex-1 sm:flex-none px-2 py-1.5 text-xs rounded whitespace-nowrap ${activityCategory === 'all' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
-                      >
-                        All
-                      </button>
-                      <button
-                        onClick={() => setActivityCategory('puzzles')}
-                        className={`flex-1 sm:flex-none px-2 py-1.5 text-xs rounded whitespace-nowrap ${activityCategory === 'puzzles' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'}`}
-                      >
-                        Puzzles
-                      </button>
-                      <button
-                        onClick={() => setActivityCategory('bestgames')}
-                        className={`flex-1 sm:flex-none px-2 py-1.5 text-xs rounded whitespace-nowrap ${activityCategory === 'bestgames' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground'}`}
-                      >
-                        Best Games
-                      </button>
-                    </div>
-
-                    {/* Summary - Hidden on very small screens */}
                     <div className="hidden md:flex text-xs text-muted-foreground px-2 gap-3">
-                      <div>Rows: <span className="font-medium text-foreground">{activityRowsCount}</span></div>
-                      <div>Time: <span className="font-medium text-foreground">{formatSecondsToHM(activityTotalSeconds)}</span></div>
+                      <div>Puzzles: <span className="font-medium text-foreground">{activityRowsCount}</span></div>
                     </div>
 
                     <Button 
                       variant="outline" 
                       size="sm"
-                      onClick={() => loadUserActivity(selectedUserForDetail.id)}
+                      onClick={() => loadUserPuzzleProgress(selectedUserForDetail.id)}
                       className="flex items-center gap-2 w-full sm:w-auto"
                     >
                           <RotateCcw className="w-3 h-3" />
@@ -2810,14 +2753,6 @@ const AdminDashboard = () => {
                                     🎯 {activity.details.attempts} attempt{activity.details.attempts > 1 ? 's' : ''}
                                   </span>
                                 )}
-                                {activity.details.timeSpent && (
-                                  <span className="inline-flex items-center gap-1">
-                                    ⏱️ {activity.details.timeSpent >= 60 
-                                      ? `${Math.floor(activity.details.timeSpent / 60)} min ${activity.details.timeSpent % 60} sec`
-                                      : `${activity.details.timeSpent} sec`
-                                    }
-                                  </span>
-                                )}
                               </div>
                             )}
                             <div className="flex items-center gap-2 mt-1">
@@ -2848,9 +2783,9 @@ const AdminDashboard = () => {
                 ) : (
                   <div className="text-center py-8">
                     <Activity className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-50" />
-                    <p className="text-muted-foreground">No activity recorded yet</p>
+                    <p className="text-muted-foreground">No dated puzzle attempts recorded yet</p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Activity will appear here as the student uses the platform
+                      The feed shows each puzzle's latest recorded attempt, not a full event history.
                     </p>
                   </div>
                 )}

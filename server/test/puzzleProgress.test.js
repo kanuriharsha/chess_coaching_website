@@ -12,7 +12,17 @@ test('compact records drive category completion and attempt totals', () => {
     { _id: 'puzzle-1', name: 'Puzzle One', category: 'mate-in-1' },
     { _id: 'puzzle-2', name: 'Puzzle Two', category: 'forks' }
   ], [
-    { puzzleId: 'puzzle-1', a: 4, completed: true }
+    {
+      puzzleId: 'puzzle-1',
+      a: 4,
+      completed: true,
+      attemptCount: 6,
+      correctCount: 2,
+      timeSpentSeconds: 240,
+      lastAttemptAt: new Date('2026-10-27T10:00:00Z'),
+      lastResult: 'passed',
+      dailyMetrics: [{ date: '2026-10-27', attempts: 2, correct: 1, timeSpentSeconds: 90 }]
+    }
   ]);
 
   assert.equal(result[0].category, 'mate-in-1');
@@ -21,12 +31,28 @@ test('compact records drive category completion and attempt totals', () => {
     puzzleId: 'puzzle-1',
     puzzleName: 'Puzzle One',
     solved: true,
-    attempts: 4,
-    solvedAt: null
+    attempts: 6,
+    correctAttempts: 2,
+    timeSpentSeconds: 240,
+    solvedAt: null,
+    lastAttemptAt: new Date('2026-10-27T10:00:00Z'),
+    lastResult: 'passed',
+    dailyMetrics: [{ date: '2026-10-27', attempts: 2, correct: 1, timeSpentSeconds: 90 }]
   });
   assert.equal(result[1].category, 'forks');
   assert.equal(result[1].puzzleDetails[0].attempts, 0);
+  assert.equal(result[1].puzzleDetails[0].correctAttempts, 0);
   assert.equal(result[1].puzzleDetails[0].solved, false);
+});
+
+test('legacy compact records retain their known first-solve accuracy', () => {
+  const [category] = buildPuzzleProgress([
+    { _id: 'puzzle-1', name: 'Puzzle One', category: 'mate-in-1' }
+  ], [{ puzzleId: 'puzzle-1', a: 3, completed: true }]);
+
+  assert.equal(category.puzzleDetails[0].attempts, 3);
+  assert.equal(category.puzzleDetails[0].correctAttempts, 1);
+  assert.deepEqual(category.puzzleDetails[0].dailyMetrics, []);
 });
 
 test('progress is isolated by both user id and puzzle id', () => {
@@ -79,8 +105,8 @@ test('migration orders same-time attempts by legacy ordinal and rejects contradi
 });
 
 test('atomic progress update increments failures, completes once, and freezes after completion', () => {
-  const failureUpdate = buildPuzzleProgressAttemptUpdate(false);
-  const successUpdate = buildPuzzleProgressAttemptUpdate(true);
+  const failureUpdate = buildPuzzleProgressAttemptUpdate(false, '2026-10-27', 45);
+  const successUpdate = buildPuzzleProgressAttemptUpdate(true, '2026-10-27', 30);
 
   assert.deepEqual(failureUpdate[0].$set.a.$cond[1], { $ifNull: ['$a', 0] });
   assert.deepEqual(failureUpdate[0].$set.a.$cond[2], {
@@ -96,6 +122,15 @@ test('atomic progress update increments failures, completes once, and freezes af
     true,
     true
   ]);
+  assert.deepEqual(failureUpdate[0].$set.attemptCount, {
+    $add: [{ $ifNull: ['$attemptCount', '$a', 0] }, 1]
+  });
+  assert.equal(failureUpdate[0].$set.lastResult, 'failed');
+  assert.deepEqual(failureUpdate[0].$set.timeSpentSeconds, {
+    $add: [{ $ifNull: ['$timeSpentSeconds', 0] }, 45]
+  });
+  assert.equal(failureUpdate[0].$set.dailyMetrics.$let.vars.today.$arrayElemAt[0].$filter.cond.$eq[1], '2026-10-27');
+  assert.equal(successUpdate[0].$set.correctCount.$add[1], 1);
 });
 
 test('progress schema declares the required unique user/puzzle compound index', () => {

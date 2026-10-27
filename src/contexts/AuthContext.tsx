@@ -20,6 +20,7 @@ export interface Achievement {
 export interface User {
   id: string;
   username: string;
+  email?: string;
   role: 'admin' | 'superadmin' | 'student';
   verificationStatus?: 'under_review' | 'verified' | 'rejected';
   adminId?: string | null;

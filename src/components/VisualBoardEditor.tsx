@@ -1297,7 +1297,7 @@ const VisualBoardEditor: React.FC<VisualBoardEditorProps> = ({
                     onKeyDown={(e) => { if (e.key === 'Enter') loadFromFen(); }}
                     className="flex-1 text-sm h-9"
                   />
-                  <Button variant="secondary" size="sm" onClick={loadFromFen} className="shrink-0">
+                  <Button variant="secondary" size="sm" onClick={() => loadFromFen()} className="shrink-0">
                     <Upload className="w-4 h-4 mr-1" /> Load FEN
                   </Button>
                 </div>

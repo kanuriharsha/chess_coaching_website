@@ -811,10 +811,22 @@ async function getVisiblePuzzles(viewer, category, accessKey = 'puzzleAccess') {
       isOwned: String(puzzle.adminId) === String(viewer._id)
     }));
   }
-  const effectiveAccess = accessKey === 'practiceWithAiAccess'
-    ? { ...access, practiceWithAiAccess: getPracticeWithAiAccess(access) }
-    : access;
-  return filterVisiblePuzzles(puzzles, effectiveAccess, categorySettings, viewer, accessKey);
+  const accessKeys = accessKey === 'bothPuzzleAccess'
+    ? ['puzzleAccess', 'practiceWithAiAccess']
+    : [accessKey];
+  const visiblePuzzles = accessKeys.flatMap(key => {
+    const effectiveAccess = key === 'practiceWithAiAccess'
+      ? { ...access, practiceWithAiAccess: getPracticeWithAiAccess(access) }
+      : access;
+    return filterVisiblePuzzles(puzzles, effectiveAccess, categorySettings, viewer, key);
+  });
+  const puzzlesById = new Map();
+  visiblePuzzles.forEach(puzzle => {
+    const id = String(puzzle._id);
+    const existing = puzzlesById.get(id);
+    if (!existing || (existing.isLocked && !puzzle.isLocked)) puzzlesById.set(id, puzzle);
+  });
+  return Array.from(puzzlesById.values());
 }
 
 // Get compact puzzle progress and recommendations for the admin access modal.
@@ -2293,6 +2305,7 @@ app.post('/api/users/:id/puzzle-attempt', async (req, res) => {
     const { type, details } = req.body;
     const puzzleId = details?.puzzleId;
     const result = details?.result;
+    const timeSpentSeconds = details?.timeSpentSeconds ?? 0;
     const requestingUser = req.authUser;
     const targetUser = req.targetUser;
     if (!requestingUser || !targetUser) {
@@ -2309,9 +2322,12 @@ app.post('/api/users/:id/puzzle-attempt', async (req, res) => {
       !mongoose.isValidObjectId(puzzleId) ||
       !['puzzle_solved', 'puzzle_failed'].includes(type) ||
       !['passed', 'failed'].includes(result) ||
+      !Number.isSafeInteger(timeSpentSeconds) ||
+      timeSpentSeconds < 0 ||
+      timeSpentSeconds > 3600 ||
       ((type === 'puzzle_solved') !== (result === 'passed'))
     ) {
-      return res.status(400).json({ message: 'A valid puzzle id and result are required' });
+      return res.status(400).json({ message: 'A valid puzzle id, result, and duration are required' });
     }
 
     const adminPuzzleQuery = await getAdminPuzzleQuery(targetUser.adminId);
@@ -2334,7 +2350,11 @@ app.post('/api/users/:id/puzzle-attempt', async (req, res) => {
 
     const progress = await PuzzleProgress.findOneAndUpdate(
       { userId: targetUser._id, puzzleId: String(puzzle._id) },
-      buildPuzzleProgressAttemptUpdate(result === 'passed'),
+      buildPuzzleProgressAttemptUpdate(
+        result === 'passed',
+        new Date().toISOString().slice(0, 10),
+        timeSpentSeconds
+      ),
       { new: true, upsert: true }
     );
     res.status(200).json(progress);
@@ -2370,19 +2390,21 @@ app.get('/api/users/:id/puzzle-progress', async (req, res) => {
     if (decoded.id !== req.params.id && !isAdminRole(requestingUser)) {
       return res.status(403).json({ message: 'Access denied' });
     }
-    const student = await User.findOne({ _id: req.params.id, role: 'student' }).select('_id adminId');
+    const student = await User.findOne({ _id: req.params.id, role: 'student' })
+      .select('_id role groupId adminId');
     if (!student || (isAdminRole(requestingUser) && !student.adminId?.equals(requestingUser._id))) {
       return res.status(404).json({ message: 'Student not found' });
     }
 
-    const adminPuzzleQuery = await getAdminPuzzleQuery(student.adminId);
-    const [progressRecords, allPuzzles] = await Promise.all([
+    const [progressRecords, visiblePuzzles] = await Promise.all([
       PuzzleProgress.find({ userId: student._id }).lean(),
-      Puzzle.find({ $and: [adminPuzzleQuery, { isEnabled: true }] })
-        .sort({ order: 1, createdAt: 1 })
+      getVisiblePuzzles(student, undefined, 'bothPuzzleAccess')
     ]);
 
-    res.json(buildPuzzleProgress(allPuzzles, progressRecords));
+    res.json(buildPuzzleProgress(
+      visiblePuzzles.filter(puzzle => !puzzle.isLocked),
+      progressRecords
+    ));
   } catch (error) {
     console.error('Get puzzle progress error:', error);
     res.status(500).json({ message: 'Server error' });
