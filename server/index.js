@@ -29,6 +29,7 @@ import {
   migrateLegacyAdminPuzzleAccess
 } from './adminPuzzleAccess.js';
 import PuzzleProgress from './puzzleProgressModel.js';
+import { cleanupAdminAccountData, cleanupStudentAccountData } from './accountCleanup.js';
 
 const app = express();
 const httpServer = createServer(app);
@@ -1749,8 +1750,25 @@ app.delete('/api/superadmin/admins/:id', requireRole('superadmin'), async (req, 
     if (!mongoose.isValidObjectId(req.params.id)) {
       return res.status(400).json({ message: 'Invalid admin id' });
     }
-    const deletedAdmin = await User.findOneAndDelete({ _id: req.params.id, role: 'admin' });
+    const deletedAdmin = await User.findOne({ _id: req.params.id, role: 'admin', adminId: req.authUser._id });
     if (!deletedAdmin) return res.status(404).json({ message: 'Admin not found' });
+    await cleanupAdminAccountData(deletedAdmin._id, {
+      User,
+      Group,
+      Puzzle,
+      Opening,
+      FamousMate,
+      BestGame,
+      Column,
+      ColumnContent,
+      PuzzleCategory,
+      PuzzleCategoryOrder,
+      ContentAccess,
+      AdminPuzzleAccess,
+      PuzzleProgress,
+      database: mongoose.connection.db
+    });
+    await deletedAdmin.deleteOne();
     res.json({ success: true, message: 'Admin deleted' });
   } catch (error) {
     console.error('Delete admin error:', error);
@@ -1830,6 +1848,11 @@ app.delete('/api/users/:id', async (req, res) => {
 
     const user = await User.findOne({ _id: req.params.id, role: 'student', adminId: requestingUser._id });
     if (!user) return res.status(404).json({ message: 'User not found' });
+    await cleanupStudentAccountData([user._id], {
+      PuzzleProgress,
+      ContentAccess,
+      database: mongoose.connection.db
+    });
     await user.deleteOne();
     res.json({ success: true, message: 'User deleted' });
   } catch (error) {
