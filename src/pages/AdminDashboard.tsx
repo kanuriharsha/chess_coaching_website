@@ -2919,25 +2919,6 @@ const AdminDashboard = () => {
     { label: 'Total Students', value: stats.totalStudents, icon: Users, color: 'text-primary' },
     { label: 'Active Students', value: stats.activeStudents, icon: UserCheck, color: 'text-success' },
     { label: 'Total Puzzles', value: stats.totalPuzzles, icon: Puzzle, color: 'text-accent' },
-    ...populatedColumns.map(({ column, contents }) => {
-      const ColumnIcon = ({
-        BookOpen,
-        Trophy,
-        Crown,
-        Puzzle,
-        Star,
-        Target,
-        Lightbulb,
-        Swords
-      } as Record<string, typeof BookOpen>)[column.icon] || BookOpen;
-      return {
-        label: column.title,
-        value: contents.length,
-        icon: ColumnIcon,
-        color: 'text-warning',
-        href: `/columns/${column._id}`
-      };
-    }),
   ];
   const filteredUsers = users.filter(u => {
     if (groupFilter === 'all') return true;
@@ -3127,23 +3108,16 @@ const AdminDashboard = () => {
             {columnsError || columnContentQueries.some(query => query.error) ? (
               <p className="mb-4 text-sm text-destructive">Some column content could not be loaded. Refresh the page to try again.</p>
             ) : null}
-            <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-              {statCards.map((stat) => {
-                const card = (
-                  <div className="card-premium h-full p-5">
-                    <div className="mb-3 flex items-center justify-between">
-                      <stat.icon className={`h-6 w-6 ${stat.color}`} />
-                    </div>
-                    <p className="text-2xl font-bold text-foreground">{stat.value}</p>
-                    <p className="text-sm text-muted-foreground">{stat.label}</p>
+            <div className="mb-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {statCards.map((stat) => (
+                <div key={stat.label} className="card-premium h-full p-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <stat.icon className={`h-6 w-6 ${stat.color}`} />
                   </div>
-                );
-                return 'href' in stat ? (
-                  <Link key={stat.label} to={stat.href} className="block transition-transform hover:-translate-y-0.5">
-                    {card}
-                  </Link>
-                ) : <div key={stat.label}>{card}</div>;
-              })}
+                  <p className="text-2xl font-bold text-foreground">{stat.value}</p>
+                  <p className="text-sm text-muted-foreground">{stat.label}</p>
+                </div>
+              ))}
             </div>
 
         {/* Tabs for Management */}
@@ -3160,74 +3134,12 @@ const AdminDashboard = () => {
             <TabsTrigger value="access" className="flex items-center gap-2 flex-1 min-w-[60px]">
               <Settings className="w-4 h-4" /> <span className="hidden sm:inline">Content Access</span>
             </TabsTrigger>
-            {populatedColumns.map(({ column }) => {
-              const ColumnIcon = ({
-                BookOpen,
-                Trophy,
-                Crown,
-                Puzzle,
-                Star,
-                Target,
-                Lightbulb,
-                Swords
-              } as Record<string, typeof BookOpen>)[column.icon] || BookOpen;
-              return (
-                <TabsTrigger key={column._id} value={`column-${column._id}`} className="flex min-w-[60px] flex-1 items-center gap-2">
-                  <ColumnIcon className="h-4 w-4" />
-                  <span>{column.title}</span>
-                </TabsTrigger>
-              );
-            })}
             {user?.role === 'superadmin' && (
               <TabsTrigger value="admins" className="flex items-center gap-2 flex-1 min-w-[60px]">
                 <UserCheck className="w-4 h-4" /> <span className="hidden sm:inline">Admin Management</span>
               </TabsTrigger>
             )}
           </TabsList>
-
-          {populatedColumns.map(({ column, contents }) => (
-            <TabsContent key={column._id} value={`column-${column._id}`}>
-              <div className="card-premium space-y-5 p-6">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="font-serif text-xl font-semibold">{column.title}</h2>
-                    <p className="text-sm text-muted-foreground">
-                      {contents.length} {contents.length === 1 ? 'item' : 'items'} added to this column
-                    </p>
-                  </div>
-                  <Button asChild variant="outline">
-                    <Link to={`/columns/${column._id}`}>Manage Column</Link>
-                  </Button>
-                </div>
-                <div className="grid gap-3">
-                  {contents.map(content => (
-                    <Link
-                      key={content._id}
-                      to={`/columns/${column._id}`}
-                      className="flex items-start justify-between gap-4 rounded-lg border bg-secondary/30 p-4 transition-colors hover:bg-secondary/60"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate font-medium text-foreground">
-                          {content.title || content.name || 'Untitled content'}
-                        </p>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          {[content.category, content.players, `${content.moves?.length || 0} moves`]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </p>
-                        {content.description && (
-                          <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">{content.description}</p>
-                        )}
-                      </div>
-                      <span className={`shrink-0 text-xs ${content.isEnabled === false ? 'text-muted-foreground' : 'text-success'}`}>
-                        {content.isEnabled === false ? 'Disabled' : 'Enabled'}
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            </TabsContent>
-          ))}
 
           {/* Users Tab */}
           <TabsContent value="users">
@@ -3356,7 +3268,7 @@ const AdminDashboard = () => {
                           key={u.id} 
                           className={`border-b last:border-0 cursor-pointer transition-colors ${
                             hasUnpaid 
-                              ? 'bg-red-100/80 hover:bg-red-100' 
+                              ? 'bg-red-100/80 hover:bg-red-100 dark:bg-red-950/40 dark:hover:bg-red-950/60'
                               : 'border-border hover:bg-secondary/30'
                           }`}
                           onClick={() => handleViewUserDetail(u)}
@@ -3843,7 +3755,7 @@ const AdminDashboard = () => {
                                   : 'Completed'
                               : 'Loading recommendation...';
                             return (
-                              <div key={cat.id} className={`rounded-lg p-4 transition-colors ${hasIncomplete ? 'border-2 border-red-400 bg-red-100' : 'bg-secondary/50'}`}>
+                              <div key={cat.id} className={`rounded-lg p-4 transition-colors ${hasIncomplete ? 'border-2 border-red-400 bg-red-100 dark:border-red-700 dark:bg-red-950/40' : 'bg-secondary/50'}`}>
                                 <div className="mb-3 flex items-center justify-between gap-3">
                                   <div className="flex items-center gap-2">
                                     <span className="text-xl">{cat.icon}</span>
@@ -3948,11 +3860,11 @@ const AdminDashboard = () => {
                                     : <p className="text-muted-foreground">🔒 Category locked</p>}
                                 </div>
                                 {enabled && getIncompletePuzzles(cat.id).length > 0 && (
-                                  <div className="mt-3 rounded-md border border-red-300 bg-red-50 p-2 text-xs">
-                                    <p className="mb-1 font-semibold text-red-700">Not Completed:</p>
+                                  <div className="mt-3 rounded-md border border-red-300 bg-red-50 p-2 text-xs dark:border-red-800 dark:bg-red-950/30">
+                                    <p className="mb-1 font-semibold text-red-700 dark:text-red-300">Not Completed:</p>
                                     <ul className="max-h-32 space-y-0.5 overflow-y-auto">
                                       {incompletePuzzles.map(puzzle => (
-                                        <li key={puzzle.number} className="text-red-600">
+                                        <li key={puzzle.number} className="text-red-600 dark:text-red-300">
                                           Puzzle #{puzzle.number} ({puzzle.name})
                                         </li>
                                       ))}
@@ -3969,7 +3881,7 @@ const AdminDashboard = () => {
                     <section className="order-3 space-y-3">
                       <div>
                         <h3 className="text-lg font-semibold">Column Access</h3>
-                        <p className="text-sm text-muted-foreground">Allow this student to see all or selected enabled content in each column.</p>
+                        <p className="text-sm text-muted-foreground">Unlock content for this student and choose which items to hide from their column.</p>
                       </div>
                       <ColumnStudentAccess
                         value={userContentAccess.columnAccess || {}}
@@ -4192,11 +4104,23 @@ const AdminDashboard = () => {
                         const updatedAllowedIds = shouldAllow
                           ? [...new Set([...allowedIds, selectedContent._id])]
                           : allowedIds.filter(id => id !== selectedContent._id);
+                        const hiddenContentIds = new Set(current.hiddenContentIds ?? selectedBulkColumn.contents
+                          .filter(content => !allowedIds.includes(content._id))
+                          .map(content => content._id));
+                        const visibleContentIds = new Set(current.visibleContentIds || []);
+                        if (shouldAllow) hiddenContentIds.delete(selectedContent._id);
+                        if (shouldAllow) visibleContentIds.delete(selectedContent._id);
+                        else {
+                          hiddenContentIds.add(selectedContent._id);
+                          visibleContentIds.delete(selectedContent._id);
+                        }
                         const columnAccess = {
                           ...(access.columnAccess || {}),
                           [selectedBulkColumn.column._id]: {
                             enabled: shouldAllow || updatedAllowedIds.length > 0,
-                            allowedContentIds: updatedAllowedIds
+                            allowedContentIds: updatedAllowedIds,
+                            hiddenContentIds: [...hiddenContentIds],
+                            visibleContentIds: [...visibleContentIds]
                           }
                         };
                         await updateUserContentAccess(stu.id, { columnAccess });

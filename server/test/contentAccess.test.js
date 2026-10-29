@@ -146,11 +146,11 @@ test('opening, famous-mate, and best-game entitlements require enabled access an
   }
 });
 
-test('student columns require enabled columns, enabled content, and both student and admin grants', () => {
+test('student columns expose unlocked content and safe locked cards while hiding hidden or unassigned content', () => {
   const column = { _id: 'column-1', isEnabled: true };
   const contents = [
-    { _id: 'c1', isEnabled: true },
-    { _id: 'c2', isEnabled: true },
+    { _id: 'c1', isEnabled: true, moves: ['e4'], startFen: 'private' },
+    { _id: 'c2', isEnabled: true, moves: ['d4'] },
     { _id: 'c3', isEnabled: false }
   ];
   const viewer = { _id: 'student-1', role: 'student' };
@@ -158,17 +158,55 @@ test('student columns require enabled columns, enabled content, and both student
 
   assert.deepEqual(
     filterVisibleColumnContents(contents, access, column, viewer, ['c1', 'c3']),
-    [contents[0]]
+    [{ ...contents[0], isLocked: false }]
   );
   assert.deepEqual(
     filterVisibleColumnContents(contents, {
-      columnAccess: { 'column-1': { enabled: true, allowedContentIds: ['c2'] } }
+      columnAccess: { 'column-1': { enabled: true, allowedContentIds: ['c2'], hiddenContentIds: ['c1'] } }
     }, column, viewer, ['c1', 'c2']),
-    [contents[1]]
+    [{ ...contents[1], isLocked: false }]
   );
   assert.deepEqual(
     filterVisibleColumnContents(contents, {
-      columnAccess: { 'column-1': { enabled: false, allowedContentIds: [] } }
+      columnAccess: {
+        'column-1': { enabled: false, allowedContentIds: ['c1'], hiddenContentIds: [], visibleContentIds: [] }
+      }
+    }, column, viewer),
+    []
+  );
+  assert.deepEqual(
+    filterVisibleColumnContents(contents, {
+      columnAccess: {
+        'column-1': {
+          enabled: true,
+          allowedContentIds: ['c2'],
+          hiddenContentIds: [],
+          visibleContentIds: ['c1']
+        }
+      }
+    }, column, viewer),
+    [
+      { _id: 'c1', isEnabled: true, isLocked: true },
+      { ...contents[1], isLocked: false }
+    ]
+  );
+  const visibleLocked = filterVisibleColumnContents(contents, {
+    columnAccess: {
+      'column-1': { enabled: true, allowedContentIds: [], hiddenContentIds: ['c2'], visibleContentIds: ['c1'] }
+    }
+  }, column, viewer);
+  assert.deepEqual(visibleLocked, [{
+    _id: 'c1',
+    isEnabled: true,
+    isLocked: true
+  }]);
+  assert.equal('moves' in visibleLocked[0], false);
+  assert.equal('startFen' in visibleLocked[0], false);
+  assert.deepEqual(
+    filterVisibleColumnContents(contents, {
+      columnAccess: {
+        'column-1': { enabled: true, allowedContentIds: ['c1'], hiddenContentIds: ['c1'] }
+      }
     }, column, viewer),
     []
   );

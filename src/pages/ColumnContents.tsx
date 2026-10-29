@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Chess } from 'chess.js';
-import { ChevronLeft, ChevronRight, Edit, Plus, SkipBack, SkipForward, Star, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Edit, Plus, RotateCcw, SkipBack, SkipForward, Star, Trash2 } from 'lucide-react';
 import AppLayout from '@/components/AppLayout';
 import ChessBoard from '@/components/ChessBoard';
 import { Button } from '@/components/ui/button';
@@ -22,10 +22,11 @@ interface ColumnContent {
   description?: string;
   category?: string;
   startFen?: string;
-  moves: Array<string | { san: string; comment?: string; evaluation?: string }>;
+  moves?: Array<string | { san: string; comment?: string; evaluation?: string }>;
   highlights?: number[];
   isEnabled?: boolean;
   isShared?: boolean;
+  isLocked?: boolean;
 }
 
 function moveSan(move: ColumnContent['moves'][number]) {
@@ -47,6 +48,7 @@ export default function ColumnContents() {
   const [contents, setContents] = useState<ColumnContent[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [moveIndex, setMoveIndex] = useState(-1);
+  const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white');
   const [game, setGame] = useState(new Chess());
   const [loading, setLoading] = useState(true);
   const isAdmin = isAdminRole(user?.role);
@@ -85,6 +87,10 @@ export default function ColumnContents() {
   }, [column?.title, trackPageVisit]);
 
   const sans = useMemo(() => selected?.moves?.map(moveSan) || [], [selected]);
+  const visibleContents = useMemo(() => ({
+    unlocked: contents.filter(content => !content.isLocked),
+    locked: contents.filter(content => content.isLocked)
+  }), [contents]);
 
   useEffect(() => {
     if (!selected) return;
@@ -125,6 +131,7 @@ export default function ColumnContents() {
   }, [selected, sans, moveIndex]);
 
   const selectContent = (content: ColumnContent) => {
+    if (content.isLocked) return;
     setSelectedId(content._id);
     setMoveIndex(-1);
     if (content._id) trackOpeningViewed(itemTitle(content), content.category || column?.title || 'Column');
@@ -199,41 +206,68 @@ export default function ColumnContents() {
               </p>
             </div>
           ) : (
-            <div className="grid gap-4">
-              {contents.map(content => (
-                <article key={content._id} className="card-premium group relative flex items-start gap-4 p-5 hover:border-primary/50">
-                  <button className="min-w-0 flex-1 text-left" onClick={() => selectContent(content)}>
-                    <span className="rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-                      {content.category || column.title}
-                    </span>
-                    <h2 className="mb-1 mt-2 font-serif text-xl font-semibold text-foreground">
-                      {itemTitle(content)}
-                    </h2>
-                    {content.players && <p className="mb-1 text-sm font-medium text-primary">{content.players}</p>}
-                    <p className="text-sm text-muted-foreground">{content.description}</p>
-                  </button>
-                  {canManage && !content.isShared && (
-                    <div className="flex shrink-0 items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => navigate(`/columns/${columnId}/edit/${content._id}`)}
-                        aria-label={`Edit ${itemTitle(content)}`}
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => void deleteContent(content)}
-                        aria-label={`Delete ${itemTitle(content)}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
-                </article>
-              ))}
+            <div className="space-y-6">
+              {visibleContents.unlocked.length > 0 && (
+                <section className="space-y-3">
+                  {!isAdmin && <h2 className="font-semibold text-foreground">Unlocked</h2>}
+                  <div className="grid gap-4">
+                    {visibleContents.unlocked.map(content => (
+                      <article key={content._id} className="card-premium group relative flex items-start gap-4 p-5 hover:border-primary/50">
+                        <button className="min-w-0 flex-1 text-left" onClick={() => selectContent(content)}>
+                          <span className="rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
+                            {content.category || column.title}
+                          </span>
+                          <h2 className="mb-1 mt-2 font-serif text-xl font-semibold text-foreground">
+                            {itemTitle(content)}
+                          </h2>
+                          {content.players && <p className="mb-1 text-sm font-medium text-primary">{content.players}</p>}
+                          <p className="text-sm text-muted-foreground">{content.description}</p>
+                        </button>
+                        {canManage && !content.isShared && (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => navigate(`/columns/${columnId}/edit/${content._id}`)}
+                              aria-label={`Edit ${itemTitle(content)}`}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void deleteContent(content)}
+                              aria-label={`Delete ${itemTitle(content)}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
+              {visibleContents.locked.length > 0 && (
+                <section className="space-y-3">
+                  <h2 className="font-semibold text-muted-foreground">Locked</h2>
+                  <div className="grid gap-4">
+                    {visibleContents.locked.map(content => (
+                      <article key={content._id} className="card-premium flex items-start gap-4 p-5 opacity-75">
+                        <div className="min-w-0 flex-1">
+                          <span className="rounded-full bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
+                            {content.category || column.title}
+                          </span>
+                          <h2 className="mb-1 mt-2 font-serif text-xl font-semibold text-foreground">{itemTitle(content)}</h2>
+                          {content.players && <p className="mb-1 text-sm font-medium text-muted-foreground">{content.players}</p>}
+                          <p className="text-sm text-muted-foreground">{content.description}</p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">Locked</span>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              )}
             </div>
           )
         ) : (
@@ -246,12 +280,26 @@ export default function ColumnContents() {
             </button>
             <div className="grid gap-6 md:grid-cols-[1fr,320px]">
               <div>
-                <ChessBoard game={game} interactive={false} />
+                <ChessBoard
+                  game={game}
+                  orientation={boardOrientation}
+                  interactive={false}
+                  lastMove={game.history({ verbose: true }).slice(-1)[0] || null}
+                />
                 <div className="mt-4 flex justify-center gap-2">
                   <Button variant="outline" size="icon" onClick={() => setMoveIndex(-1)} disabled={moveIndex < 0} aria-label="Go to start"><SkipBack className="h-5 w-5" /></Button>
                   <Button variant="outline" size="icon" onClick={() => setMoveIndex(index => Math.max(-1, index - 1))} disabled={moveIndex < 0} aria-label="Previous move"><ChevronLeft className="h-5 w-5" /></Button>
                   <Button variant="outline" size="icon" onClick={() => setMoveIndex(index => Math.min(sans.length - 1, index + 1))} disabled={moveIndex >= sans.length - 1} aria-label="Next move"><ChevronRight className="h-5 w-5" /></Button>
                   <Button variant="outline" size="icon" onClick={() => setMoveIndex(sans.length - 1)} disabled={moveIndex >= sans.length - 1} aria-label="Go to end"><SkipForward className="h-5 w-5" /></Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setBoardOrientation(orientation => orientation === 'white' ? 'black' : 'white')}
+                    aria-label={`Flip board to ${boardOrientation === 'white' ? 'black' : 'white'} perspective`}
+                    title="Flip board"
+                  >
+                    <RotateCcw className="h-5 w-5" />
+                  </Button>
                 </div>
                 <p className="mt-2 text-center text-xs text-muted-foreground">
                   Use the ← and → arrow keys to move through the game.

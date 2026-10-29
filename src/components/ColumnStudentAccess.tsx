@@ -22,6 +22,8 @@ interface StudentColumn {
 export interface StudentColumnAccess {
   enabled: boolean;
   allowedContentIds: string[];
+  hiddenContentIds?: string[];
+  visibleContentIds?: string[];
 }
 interface Props {
   value: Record<string, StudentColumnAccess>;
@@ -67,32 +69,85 @@ export default function ColumnStudentAccess({ value, onChange }: Props) {
     return () => { cancelled = true; };
   }, [token, columnsLoading, columnsError, visibleColumns]);
 
-  const changeColumn = (column: StudentColumn, update: Partial<StudentColumnAccess>) => {
+  const changeContentAccess = (column: StudentColumn, contentId: string, checked: boolean) => {
     const current = value[column._id] || { enabled: false, allowedContentIds: [] };
+    const allSelected = current.enabled && current.allowedContentIds.length === 0 &&
+      current.hiddenContentIds === undefined && current.visibleContentIds === undefined;
+    const selected = allSelected
+      ? column.contents.map(content => content._id)
+      : [...current.allowedContentIds];
+    const nextSelected = checked
+      ? [...new Set([...selected, contentId])]
+      : selected.filter(id => id !== contentId);
+    const hiddenIds = new Set(current.hiddenContentIds ?? column.contents
+      .filter(content => !selected.includes(content._id))
+      .map(content => content._id));
+    const visibleIds = new Set(current.visibleContentIds || []);
+    if (checked) hiddenIds.delete(contentId);
+    if (checked) visibleIds.delete(contentId);
+    else {
+      hiddenIds.add(contentId);
+      visibleIds.delete(contentId);
+    }
     onChange({
       ...value,
       [column._id]: {
-        ...current,
-        ...update,
-        allowedContentIds: update.allowedContentIds || current.allowedContentIds
+        enabled: current.enabled || checked,
+        allowedContentIds: nextSelected,
+        hiddenContentIds: [...hiddenIds],
+        visibleContentIds: [...visibleIds]
       }
     });
   };
 
-  const changeContent = (column: StudentColumn, contentId: string, checked: boolean) => {
+  const changeContentVisibility = (column: StudentColumn, contentId: string, hidden: boolean) => {
     const current = value[column._id] || { enabled: false, allowedContentIds: [] };
-    const allSelected = current.enabled && current.allowedContentIds.length === 0;
-    let selected = allSelected
+    const allSelected = current.enabled && current.allowedContentIds.length === 0 &&
+      current.hiddenContentIds === undefined && current.visibleContentIds === undefined;
+    const selected = allSelected
       ? column.contents.map(content => content._id)
       : [...current.allowedContentIds];
-    if (checked && !selected.includes(contentId)) selected.push(contentId);
-    if (!checked) selected = selected.filter(id => id !== contentId);
-    const normalizedIds = selected.length === column.contents.length
-      ? []
-      : [...new Set(selected)];
-    changeColumn(column, {
-      enabled: checked || normalizedIds.length > 0,
-      allowedContentIds: normalizedIds
+    const hiddenIds = new Set(current.hiddenContentIds ?? column.contents
+      .filter(content => !selected.includes(content._id))
+      .map(content => content._id));
+    const visibleIds = new Set(current.visibleContentIds || []);
+    if (hidden) {
+      hiddenIds.add(contentId);
+      visibleIds.delete(contentId);
+    } else {
+      hiddenIds.delete(contentId);
+      if (!selected.includes(contentId)) visibleIds.add(contentId);
+    }
+    onChange({
+      ...value,
+      [column._id]: {
+        enabled: current.enabled,
+        allowedContentIds: selected,
+        hiddenContentIds: [...hiddenIds],
+        visibleContentIds: [...visibleIds]
+      }
+    });
+  };
+
+  const changeColumnAccess = (column: StudentColumn, enabled: boolean) => {
+    const current = value[column._id] || { enabled: false, allowedContentIds: [] };
+    const allSelected = current.enabled && current.allowedContentIds.length === 0 &&
+      current.hiddenContentIds === undefined && current.visibleContentIds === undefined;
+    const allowedContentIds = allSelected
+      ? column.contents.map(content => content._id)
+      : [...current.allowedContentIds];
+    const hiddenContentIds = current.hiddenContentIds ?? column.contents
+      .filter(content => !allowedContentIds.includes(content._id))
+      .map(content => content._id);
+    onChange({
+      ...value,
+      [column._id]: {
+        ...current,
+        enabled,
+        allowedContentIds,
+        hiddenContentIds,
+        visibleContentIds: current.visibleContentIds || []
+      }
     });
   };
 
@@ -104,33 +159,56 @@ export default function ColumnStudentAccess({ value, onChange }: Props) {
     <div className="space-y-4">
       {columns.map(column => {
         const settings = value[column._id] || { enabled: false, allowedContentIds: [] };
-        const allSelected = settings.enabled && settings.allowedContentIds.length === 0;
+        const allSelected = settings.enabled && settings.allowedContentIds.length === 0 &&
+          settings.hiddenContentIds === undefined && settings.visibleContentIds === undefined;
         return (
           <section key={column._id} className="rounded-lg border bg-card p-4">
             <div className="mb-3 flex items-center justify-between gap-3">
               <h4 className="flex items-center gap-2 font-medium"><BookOpen className="h-4 w-4 text-primary" />{column.title}</h4>
-              <Switch checked={settings.enabled} onCheckedChange={enabled => changeColumn(column, { enabled })} aria-label={`Allow ${column.title}`} />
+              <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>Allow column</span>
+                <Switch
+                  checked={settings.enabled}
+                  onCheckedChange={enabled => changeColumnAccess(column, enabled)}
+                  aria-label={`Allow ${column.title} for student`}
+                />
+              </label>
             </div>
-            {settings.enabled && (column.contents.length === 0 ? (
+            {column.contents.length === 0 ? (
               <p className="text-sm text-muted-foreground">No content items.</p>
             ) : (
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2">
                 {column.contents.map(content => {
-                  const checked = allSelected || settings.allowedContentIds.includes(content._id);
+                  const unlocked = allSelected || settings.allowedContentIds.includes(content._id);
+                  const hidden = Boolean(settings.hiddenContentIds?.includes(content._id)) ||
+                    (!unlocked && !settings.visibleContentIds?.includes(content._id));
                   return (
-                    <label key={content._id} className="flex items-center gap-2 rounded-md bg-secondary/40 p-2 text-sm">
-                      <Checkbox
-                        checked={checked}
-                        onCheckedChange={next => changeContent(column, content._id, next === true)}
-                      />
-                      <span>{content.title || content.name || 'Untitled content'}</span>
-                    </label>
+                    <div key={content._id} className="flex flex-col gap-3 rounded-md bg-secondary/40 p-3 text-sm sm:flex-row sm:items-center">
+                      <label className="flex min-w-0 flex-1 items-center gap-2">
+                        <Checkbox
+                          checked={unlocked}
+                          onCheckedChange={next => changeContentAccess(column, content._id, next === true)}
+                          aria-label={`Unlock ${content.title || content.name || 'content'}`}
+                        />
+                        <span className="truncate">{content.title || content.name || 'Untitled content'}</span>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
+                          unlocked ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
+                        }`}>
+                          {unlocked ? 'Unlocked' : 'Locked'}
+                        </span>
+                      </label>
+                      <label className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                        <Checkbox
+                          checked={hidden}
+                          onCheckedChange={next => changeContentVisibility(column, content._id, next === true)}
+                          aria-label={`Hide ${content.title || content.name || 'content'} from student`}
+                        />
+                        Hide
+                      </label>
+                    </div>
                   );
                 })}
               </div>
-            ))}
-            {settings.enabled && settings.allowedContentIds.length === 0 && column.contents.length > 0 && (
-              <p className="mt-2 text-xs text-muted-foreground">All enabled content in this column is allowed.</p>
             )}
           </section>
         );

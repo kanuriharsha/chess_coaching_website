@@ -53,16 +53,40 @@ export function filterVisibleColumnContents(items, access, column, viewer, grant
   if (viewer?.role !== 'student' || column?.isEnabled === false) return [];
 
   const settings = access?.columnAccess?.[String(column._id)];
-  if (settings?.enabled !== true) return [];
+  if (!settings || typeof settings !== 'object' || settings.enabled !== true) return [];
   const allowedIds = Array.isArray(settings.allowedContentIds)
     ? new Set(settings.allowedContentIds.map(String))
     : new Set();
   const grantIds = grantedContentIds ? new Set(grantedContentIds.map(String)) : null;
-  return items.filter(item =>
-    item.isEnabled !== false &&
-    (allowedIds.size === 0 || allowedIds.has(String(item._id ?? item.id))) &&
-    (!grantIds || grantIds.has(String(item._id ?? item.id)))
-  );
+  const hiddenIds = Array.isArray(settings.hiddenContentIds)
+    ? new Set(settings.hiddenContentIds.map(String))
+    : null;
+  const visibleIds = Array.isArray(settings.visibleContentIds)
+    ? new Set(settings.visibleContentIds.map(String))
+    : new Set();
+  return items.flatMap(item => {
+    const itemId = String(item._id ?? item.id);
+    if (item.isEnabled === false || (grantIds && !grantIds.has(itemId))) return [];
+
+    const isUnlocked = (
+      allowedIds.size === 0 &&
+      !Array.isArray(settings.hiddenContentIds) &&
+      !Array.isArray(settings.visibleContentIds)
+    ) || allowedIds.has(itemId);
+    const isHidden = Boolean(hiddenIds?.has(itemId)) || (!isUnlocked && !visibleIds.has(itemId));
+    if (isHidden) return [];
+    if (isUnlocked) return [{ ...item, isLocked: false }];
+
+    const safeItem = typeof item.toObject === 'function' ? item.toObject() : { ...item };
+    delete safeItem.moves;
+    delete safeItem.startFen;
+    delete safeItem.solution;
+    delete safeItem.moveTree;
+    delete safeItem.preloadedMove;
+    delete safeItem.hint;
+    delete safeItem.highlights;
+    return [{ ...safeItem, isLocked: true }];
+  });
 }
 
 export function areColumnsCompatible(sourceColumn, adminColumn) {

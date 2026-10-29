@@ -3270,7 +3270,15 @@ app.put('/api/content-access/:userId', async (req, res) => {
           !settings || typeof settings !== 'object' || Array.isArray(settings) ||
           typeof settings.enabled !== 'boolean' ||
           !Array.isArray(settings.allowedContentIds) ||
-          settings.allowedContentIds.some(id => !mongoose.isValidObjectId(id))
+          settings.allowedContentIds.some(id => !mongoose.isValidObjectId(id)) ||
+          (settings.hiddenContentIds !== undefined && (
+            !Array.isArray(settings.hiddenContentIds) ||
+            settings.hiddenContentIds.some(id => !mongoose.isValidObjectId(id))
+          )) ||
+          (settings.visibleContentIds !== undefined && (
+            !Array.isArray(settings.visibleContentIds) ||
+            settings.visibleContentIds.some(id => !mongoose.isValidObjectId(id))
+          ))
         ) {
           return res.status(400).json({ message: 'Invalid column access settings' });
         }
@@ -3289,20 +3297,31 @@ app.put('/api/content-access/:userId', async (req, res) => {
       for (const column of accessibleColumns) {
         const settings = columnAccess[String(column._id)];
         const allowedContentIds = [...new Set(settings.allowedContentIds.map(String))];
+        const hiddenContentIds = Array.isArray(settings.hiddenContentIds)
+          ? [...new Set(settings.hiddenContentIds.map(String))]
+          : undefined;
+        const visibleContentIds = Array.isArray(settings.visibleContentIds)
+          ? [...new Set(settings.visibleContentIds.map(String))]
+          : undefined;
+        const managedContentIds = [...new Set([
+          ...allowedContentIds,
+          ...(hiddenContentIds || []),
+          ...(visibleContentIds || [])
+        ])];
         let matchingContentCount = 0;
         if (String(column.adminId) !== String(requestingUser._id)) {
           const grantedIds = new Set(getGrantedColumnContentIds(adminGrant, column));
-          if (allowedContentIds.some(id => !grantedIds.has(id))) {
+          if (managedContentIds.some(id => !grantedIds.has(id))) {
             return res.status(400).json({ message: 'Column access includes content not granted to your admin' });
           }
           matchingContentCount = await ColumnContent.countDocuments({
-            _id: { $in: allowedContentIds },
+            _id: { $in: managedContentIds },
             columnId: column._id,
             adminId: column.adminId
           });
         } else {
           const ownContentIds = new Set((await ColumnContent.find({
-            _id: { $in: allowedContentIds },
+            _id: { $in: managedContentIds },
             columnId: column._id,
             adminId: requestingUser._id
           }).distinct('_id')).map(String));
@@ -3315,12 +3334,12 @@ app.put('/api/content-access/:userId', async (req, res) => {
             const grantedIds = getGrantedColumnContentIds(adminGrant, sourceColumn);
             grantedIds.forEach(id => sharedIds.add(id));
           }
-          if (allowedContentIds.some(id => !ownContentIds.has(id) && !sharedIds.has(id))) {
+          if (managedContentIds.some(id => !ownContentIds.has(id) && !sharedIds.has(id))) {
             return res.status(400).json({ message: 'Column access includes content not granted to your admin' });
           }
           const sharedContentCount = compatibleSources.length
             ? await ColumnContent.countDocuments({
-              _id: { $in: allowedContentIds.filter(id => !ownContentIds.has(id)) },
+              _id: { $in: managedContentIds.filter(id => !ownContentIds.has(id)) },
               columnId: { $in: compatibleSources.map(source => source._id) },
               adminId: adminGrant.grantedBy,
               isEnabled: { $ne: false }
@@ -3328,10 +3347,12 @@ app.put('/api/content-access/:userId', async (req, res) => {
             : 0;
           matchingContentCount = ownContentIds.size + sharedContentCount;
         }
-        if (matchingContentCount !== allowedContentIds.length) {
+        if (matchingContentCount !== managedContentIds.length) {
           return res.status(400).json({ message: 'Column access contains unavailable content' });
         }
         settings.allowedContentIds = allowedContentIds;
+        if (hiddenContentIds) settings.hiddenContentIds = hiddenContentIds;
+        if (visibleContentIds) settings.visibleContentIds = visibleContentIds;
       }
     }
 
